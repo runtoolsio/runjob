@@ -110,7 +110,7 @@ class RunnerJobInstance(JobInstance):
         return self._phaser.get_typed_phase(phase_type, phase_name)
 
     def job_run_info(self) -> JobRun:
-        return JobRun(self.metadata, self._phaser.run_info(), self.tracking.copy() if self.tracking else None)  # TODO
+        return JobRun(self.metadata, self._phaser.run_info())
 
     def fetch_output(self, mode=Mode.HEAD, *, lines=0):
         return self._output.fetch(mode, lines=lines)
