@@ -1,13 +1,13 @@
 from datetime import datetime
 
-from tarotools.taro.track import MutableTrackedTask, Fields
+from tarotools.taro.track import Task
 from tarotools.taro.util import KVParser, iso_date_time_parser
 
-from runtoolsio.runjob.task import TaskOutputParser
+from runtoolsio.runjob.task import TaskOutputParser, Fields
 
 
 def test_parse_event():
-    task = MutableTrackedTask('task')
+    task = Task('task')
     tracker = TaskOutputParser(task, [KVParser()])
 
     tracker.new_output('no events here')
@@ -26,7 +26,7 @@ def test_parse_event():
 
 
 def test_operation_without_name():
-    task = MutableTrackedTask('task')
+    task = Task('task')
     tracker = TaskOutputParser(task, [KVParser()])
 
     tracker.new_output('operation without name completed=[5]')
@@ -35,7 +35,7 @@ def test_operation_without_name():
 
 
 def test_parse_timestamps():
-    task = MutableTrackedTask('task')
+    task = Task('task')
     tracker = TaskOutputParser(task, [KVParser(post_parsers=[(iso_date_time_parser(Fields.TIMESTAMP.value))])])
 
     tracker.new_output('2020-10-01 10:30:30 event=[e1]')
@@ -46,7 +46,7 @@ def test_parse_timestamps():
 
 
 def test_parse_progress():
-    task = MutableTrackedTask('task')
+    task = Task('task')
     tracker = TaskOutputParser(task, [KVParser(aliases={'count': 'completed'})])
 
     tracker.new_output("event=[downloaded] count=[10] total=[100] unit=[files]")
@@ -60,7 +60,7 @@ def test_multiple_parsers_and_tasks():
     def fake_parser(_):
         return {'timestamp': '2020-10-01 10:30:30'}
 
-    task = MutableTrackedTask('main')
+    task = Task('main')
     # Test multiple parsers can be used together to parse the same input
     tracker = TaskOutputParser(task, [KVParser(value_split=":"), KVParser(field_split="&"), fake_parser])
 
@@ -74,7 +74,7 @@ def test_multiple_parsers_and_tasks():
 
 
 def test_operation_resets_last_event():
-    task = MutableTrackedTask()
+    task = Task()
     tracker = TaskOutputParser(task, [KVParser()])
     tracker.new_output("event=[upload]")
     tracker.new_output("event=[decoding] completed=[10]")
@@ -83,7 +83,7 @@ def test_operation_resets_last_event():
 
 
 def test_event_deactivate_completed_operation():
-    task = MutableTrackedTask()
+    task = Task()
     tracker = TaskOutputParser(task, [KVParser()])
 
     tracker.new_output("event=[encoding] completed=[10] total=[10]")
@@ -94,7 +94,7 @@ def test_event_deactivate_completed_operation():
 
 
 def test_subtask_deactivate_current_task():
-    task = MutableTrackedTask()
+    task = Task()
     tracker = TaskOutputParser(task, [KVParser()])
 
     tracker.new_output("event=[event_in_main_task]")
@@ -110,7 +110,7 @@ def test_subtask_deactivate_current_task():
 
 
 def test_task_started_and_update_on_event():
-    task = MutableTrackedTask()
+    task = Task()
     tracker = TaskOutputParser(task, [KVParser(), iso_date_time_parser(Fields.TIMESTAMP.value)])
     tracker.new_output('2020-10-01 10:30:30 event=[e1]')
     tracker.new_output('2020-10-01 11:45:00 event=[e2]')
@@ -119,7 +119,7 @@ def test_task_started_and_update_on_event():
 
 
 def test_task_started_and_updated_on_operation():
-    task = MutableTrackedTask()
+    task = Task()
     tracker = TaskOutputParser(task, [KVParser(), iso_date_time_parser(Fields.TIMESTAMP.value)])
     tracker.new_output('2020-10-01 14:40:00 event=[op1] total=[200]')
     tracker.new_output('2020-10-01 15:30:30 event=[op1] total=[400]')
@@ -132,7 +132,7 @@ def test_task_started_and_updated_on_operation():
 
 
 def test_op_end_date():
-    task = MutableTrackedTask()
+    task = Task()
     tracker = TaskOutputParser(task, [KVParser(), iso_date_time_parser(Fields.TIMESTAMP.value)])
     tracker.new_output('2020-10-01 14:40:00 event=[op1] completed=[5] total=[10]')
     assert task.operation('op1').ended_at is None
@@ -142,7 +142,7 @@ def test_op_end_date():
 
 
 def test_subtask_started_and_updated_set():
-    task = MutableTrackedTask()
+    task = Task()
     tracker = TaskOutputParser(task, [KVParser(), iso_date_time_parser(Fields.TIMESTAMP.value)])
     tracker.new_output('2020-10-01 12:30:00 task=[t1]')
     tracker.new_output('2020-10-01 13:50:00 task=[t1] event=[e1]')
@@ -155,7 +155,7 @@ def test_subtask_started_and_updated_set():
 
 
 def test_timestamps():
-    task = MutableTrackedTask('task')
+    task = Task('task')
     tracker = TaskOutputParser(task, [KVParser()])
 
     tracker.new_output('2020-10-01 10:30:30 event=[e1]')
