@@ -50,7 +50,7 @@ from tarotools.taro.job import JobInstance, JobInstanceMetadata, JobRun, Instanc
     InstanceOutputObserver, \
     InstanceStatusObserver
 from tarotools.taro.output import InMemoryOutput, Mode
-from tarotools.taro.run import PhaseRun, Outcome, RunState, P
+from tarotools.taro.run import PhaseRun, Outcome, RunState, P, PhaseMetadata
 from tarotools.taro.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
 log = logging.getLogger(__name__)
@@ -67,19 +67,22 @@ _status_observers = ObservableNotification[InstanceStatusObserver](error_hook=lo
 
 class RunnerJobInstance(JobInstance):
 
-    def __init__(self, job_id, phaser, output=None, *, run_id=None, instance_id_gen=util.unique_timestamp_hex, **user_params):
+    def __init__(self, job_id, phaser, output=None, *, run_id=None, instance_id_gen=util.unique_timestamp_hex,
+                 **user_params):
         instance_id = instance_id_gen()
         parameters = {}  # TODO
         self._metadata = JobInstanceMetadata(job_id, run_id or instance_id, instance_id, parameters, user_params)
         self._phaser = phaser
         self._output = output or InMemoryOutput()
         self._tracking = None
-        self._transition_notification = ObservableNotification[InstanceTransitionObserver](error_hook=log_observer_error)
+        self._transition_notification = ObservableNotification[InstanceTransitionObserver](
+            error_hook=log_observer_error)
         self._output_notification = ObservableNotification[InstanceOutputObserver](error_hook=log_observer_error)
         self._status_notification = ObservableNotification[InstanceStatusObserver](error_hook=log_observer_error)
 
         # TODO Move the below out of constructor?
         self._phaser.transition_hook = self._transition_hook
+        self._phaser.output_hook = self._process_output
         self._phaser.prime()  # TODO
 
     def _log(self, event: str, msg: str = '', *params):
@@ -115,28 +118,18 @@ class RunnerJobInstance(JobInstance):
     def fetch_output(self, mode=Mode.HEAD, *, lines=0):
         return self._output.fetch(mode, lines=lines)
 
-    def _process_output_callback(self, phase_meta):
-        def process_output(output: str, is_error: bool):
-            self._output.add(phase_meta.phase_name, output, is_error)
-            self._output_notification.observer_proxy.new_instance_output(self.metadata, phase_meta, output, is_error)
-
-        return process_output
+    def _process_output(self, phase_meta: PhaseMetadata, output: str, is_error: bool):
+        self._output.add(phase_meta.phase_name, output, is_error)
+        self._output_notification.observer_proxy.new_instance_output(self.metadata, phase_meta, output, is_error)
 
     def run(self):
         self._transition_notification.add_observer(_transition_observer.observer_proxy)
         self._output_notification.add_observer(_output_observers.observer_proxy)
         self._status_notification.add_observer(_status_observers.observer_proxy)
 
-        for phase in self._phaser.phases.values():
-            phase.add_callback_output(self._process_output_callback(phase.metadata))
-            phase.add_observer_status(self._status_notification.observer_proxy)
         try:
             self._phaser.run()
         finally:
-            for phase in self._phaser.phases.values():
-                phase.remove_callback_output(self._output_notification.observer_proxy)
-                phase.remove_observer_status(self._status_notification.observer_proxy)
-
             self._transition_notification.remove_observer(_transition_observer.observer_proxy)
             self._output_notification.remove_observer(_output_observers.observer_proxy)
             self._status_notification.remove_observer(_status_observers.observer_proxy)
@@ -156,7 +149,7 @@ class RunnerJobInstance(JobInstance):
         All execution implementations must cope with such scenario.
         """
         self._phaser.stop()  # TODO Interrupt
-        
+
     def wait_for_transition(self, phase_name=None, run_state=RunState.NONE, *, timeout=None):
         return self._phaser.wait_for_transition(phase_name, run_state, timeout=timeout)
 
