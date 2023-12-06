@@ -68,8 +68,8 @@ class TaskOutputParser:
         else:
             rel_task = self.task
 
-        if not rel_task.phase_started_at:
-            rel_task.phase_started_at = fields.get(Fields.TIMESTAMP)
+        if not rel_task.first_updated_at:
+            rel_task.first_updated_at = fields.get(Fields.TIMESTAMP)
         rel_task.last_update_at = fields.get(Fields.TIMESTAMP)
         rel_task.active = True
         rel_task.deactivate_subtasks()

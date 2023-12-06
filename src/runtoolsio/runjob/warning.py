@@ -2,9 +2,9 @@ import re
 from threading import Timer
 from typing import Sequence
 
-from tarotools.taro import util, JobInstance
+from tarotools.taro import util
 from tarotools.taro.instance import Warn
-from tarotools.taro.job import JobRun, InstanceTransitionObserver, InstanceStatusObserver
+from tarotools.taro.job import JobRun, InstanceTransitionObserver, InstanceStatusObserver, JobInstance
 from tarotools.taro.run import RunState
 
 
