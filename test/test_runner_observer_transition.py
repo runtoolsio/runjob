@@ -4,14 +4,14 @@ Tests that :mod:`runner` sends correct notification to state observers.
 """
 
 import pytest
-from tarotools.taro.job import JobRun, InstanceTransitionObserver
-from tarotools.taro.run import TerminationStatus, RunState, PhaseNames
-from tarotools.taro.test.observer import TestTransitionObserver
 
 import runtoolsio.runjob
 from runtoolsio.runjob import runner
 from runtoolsio.runjob.execution import ExecutionException
 from runtoolsio.runjob.test.execution import TestExecution
+from tarotools.taro.job import JobRun, InstanceTransitionObserver
+from tarotools.taro.run import TerminationStatus, RunState, PhaseNames
+from tarotools.taro.test.observer import TestTransitionObserver
 
 
 @pytest.fixture
@@ -31,7 +31,8 @@ def test_passed_args(observer: TestTransitionObserver):
 
 
 def test_raise_exc(observer: TestTransitionObserver):
-    runtoolsio.runjob.run_uncoordinated('j1', TestExecution(raise_exc=Exception))
+    with pytest.raises(Exception):
+        runtoolsio.runjob.run_uncoordinated('j1', TestExecution(raise_exc=Exception))
 
     assert observer.run_states == [RunState.EXECUTING, RunState.ENDED]
     assert observer.job_runs[-1].run.termination.error.category == 'Exception'

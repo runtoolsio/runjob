@@ -4,13 +4,12 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from threading import Condition, Event, Lock
 
+from tarotools import taro
 from tarotools.taro.criteria import JobRunIdCriterion, TerminationCriterion, JobRunAggregatedCriteria
 from tarotools.taro.job import JobRun, JobRuns, InstanceTransitionObserver
 from tarotools.taro.listening import InstanceTransitionReceiver
 from tarotools.taro.run import RunState, Phase, TerminationStatus, PhaseRun, TerminateRun
 from tarotools.taro.util import lock
-
-from tarotools import taro
 
 log = logging.getLogger(__name__)
 
@@ -26,7 +25,7 @@ class ApprovalPhase(Phase):
         self._timeout = timeout
         self._event = Event()
 
-    def run(self):
+    def run(self, run_ctx):
         approved = self._event.wait(self._timeout or None)
         if not approved:
             raise TerminateRun(TerminationStatus.TIMEOUT)
@@ -61,7 +60,7 @@ class NoOverlapPhase(Phase):
         super().__init__(phase_name, RunState.EVALUATING, params)
         self._no_overlap_id = no_overlap_id
 
-    def run(self):
+    def run(self, run_ctx):
         # TODO Phase params criteria
         runs, _ = taro.client.get_active_runs()
         if any(r for r in runs if self._in_no_overlap_phase(r)):
@@ -108,7 +107,7 @@ class DependencyPhase(Phase):
     def parameters(self):
         return self._parameters
 
-    def run(self):
+    def run(self, run_ctx):
         instances, _ = taro.client.get_active_runs()
         if not any(i for i in instances if self._dependency_match.matches(i)):
             raise TerminateRun(TerminationStatus.UNSATISFIED)
@@ -133,7 +132,7 @@ class WaitingPhase(Phase):
         self._event = Event()
         self._term_status = TerminationStatus.NONE
 
-    def run(self):
+    def run(self, run_ctx):
         for condition in self._observable_conditions:
             condition.add_result_listener(self._result_observer)
             condition.start_evaluating()

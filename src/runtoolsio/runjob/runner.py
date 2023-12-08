@@ -171,8 +171,16 @@ class RunnerJobInstance(JobInstance):
         snapshot = self.job_run_info()
         termination = snapshot.run.termination
 
-        log_level = logging.INFO
+        log.info(self._log('new_phase', "prev_phase=[{}] new_phase=[{}] run_state=[{}]",
+                           old_phase.phase_name, new_phase.phase_name, new_phase.run_state.name))
+
         if termination:
+            if termination.status.outcome == Outcome.REJECT:
+                log.warning(self._log('run_rejected'))
+
+            if termination.status.outcome == Outcome.FAULT:
+                log.warning(self._log('run_fault'))
+
             if termination.error:
                 log.error(self._log('unexpected_error', "error_type=[{}] reason=[{}]",
                                     termination.error.category, termination.error.reason))
@@ -180,12 +188,7 @@ class RunnerJobInstance(JobInstance):
                 log.warning(self._log('run_failed', "error_type=[{}] reason=[{}]",
                                       termination.failure.category, termination.failure.reason))
 
-            if termination.status.outcome in (Outcome.REJECT, Outcome.FAULT):
-                log_level = logging.WARN
-
-        log.log(log_level,
-                self._log('new_phase', "prev_phase=[{}] prev_state=[{}] new_phase=[{}] new_state=[{}]",
-                          old_phase.phase_name, old_phase.run_state, new_phase.run_state, new_phase.phase_name))
+            log.info(self._log('run_terminated', "termination_status=[{}]", termination.status.name))
 
         self._transition_notification.observer_proxy.new_instance_phase(snapshot, old_phase, new_phase, ordinal)
 
