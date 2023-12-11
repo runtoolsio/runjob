@@ -3,9 +3,9 @@ from threading import Timer
 from typing import Sequence
 
 from tarotools.taro import util
-from tarotools.taro.instance import Warn
 from tarotools.taro.job import JobRun, InstanceTransitionObserver, InstanceStatusObserver, JobInstance
 from tarotools.taro.run import RunState
+from tarotools.taro.track import Warn
 
 
 def exec_time_exceeded(job_instance: JobInstance, warning_name: str, time: float):
