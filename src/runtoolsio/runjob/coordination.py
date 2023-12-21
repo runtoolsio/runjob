@@ -26,9 +26,15 @@ class ApprovalPhase(Phase):
         self._event = Event()
 
     def run(self, run_ctx):
+        approval_task = run_ctx.task_tracker.subtask('Approval')
+        approval_task.event('waiting for approval')
+
         approved = self._event.wait(self._timeout or None)
         if not approved:
+            approval_task.result('not approved')
             raise TerminateRun(TerminationStatus.TIMEOUT)
+
+        approval_task.result('approved')
 
     def approve(self):
         self._event.set()

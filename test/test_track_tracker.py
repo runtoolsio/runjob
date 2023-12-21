@@ -1,9 +1,8 @@
 from datetime import datetime
 
+from runtoolsio.runjob.task import TaskOutputParser, Fields
 from tarotools.taro.track import TaskTrackerMem
 from tarotools.taro.util import KVParser, iso_date_time_parser
-
-from runtoolsio.runjob.task import TaskOutputParser, Fields
 
 
 def test_parse_event():
@@ -158,4 +157,4 @@ def test_timestamps():
 
     tracker.new_output('2020-10-01 10:30:30 event=[e1]')
     tracker.new_output('result=[res]')
-    assert task.result == 'res'
+    assert task.finished == 'res'

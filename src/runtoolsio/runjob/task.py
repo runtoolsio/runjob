@@ -6,6 +6,7 @@ from tarotools.taro.util import convert_if_number
 
 class Fields(Enum):
     EVENT = 'event'
+    OPERATION = 'operation'
     TASK = 'task'
     TIMESTAMP = 'timestamp'
     COMPLETED = 'completed'
@@ -36,7 +37,7 @@ def field_conversion(parsed):
 class TaskOutputParser:
 
     def __init__(self, task_tracker, parsers, conversion=field_conversion):
-        self.task = task_tracker
+        self.tracker = task_tracker
         self.parsers = parsers
         self.conversion = conversion
 
@@ -46,42 +47,43 @@ class TaskOutputParser:
     def new_output(self, output, is_error=False):
         parsed = {}
         for parser in self.parsers:
-            if p := parser(output):
-                parsed.update(p)
+            if parsed_kv := parser(output):
+                parsed.update(parsed_kv)
 
         if not parsed:
             return
 
-        fields = self.conversion(parsed)
-        if not fields:
+        kv = self.conversion(parsed)
+        if not kv:
             return
 
-        task = self._update_task(fields)
-        if not self._update_operation(task, fields):
-            task.add_event(fields.get(Fields.EVENT), fields.get(Fields.TIMESTAMP))
+        self._update_task(kv)
 
     def _update_task(self, fields):
         task = fields.get(Fields.TASK)
+        prev_task = self.tracker.tasks[-1] if self.tracker.tasks else None
+        is_finished = False
         if task:
-            rel_task = self.task.subtask(task)
-            self.task.active = False
+            current_task = self.tracker.task(task)
+            if prev_task == current_task:
+                is_finished = True
         else:
-            rel_task = self.task
+            if prev_task and not prev_task.is_finished:
+                current_task = prev_task
+            else:
+                current_task = self.tracker
 
-        if not rel_task.first_updated_at:
-            rel_task.first_updated_at = fields.get(Fields.TIMESTAMP)
-        rel_task.last_update_at = fields.get(Fields.TIMESTAMP)
-        rel_task.active = True
-        rel_task.deactivate_subtasks()
-        rel_task.deactivate_finished_operations()
+        is_op = self._update_operation(task, fields)
+        if event := fields.get(Fields.EVENT) and not is_op:
+            task.add_event(event, fields.get(Fields.TIMESTAMP))
+
         result = fields.get(Fields.RESULT)
-        if result:
-            rel_task.result = result
+        if result or is_finished:
+            current_task.finished(fields.get(Fields.RESULT))
 
-        return rel_task
-
-    def _update_operation(self, task, fields):
-        op_name = fields.get(Fields.EVENT)
+    @staticmethod
+    def _update_operation(task, fields):
+        op_name = fields.get(Fields.OPERATION) or fields.get(Fields.EVENT)
         ts = fields.get(Fields.TIMESTAMP)
         completed = fields.get(Fields.COMPLETED)
         increment = fields.get(Fields.INCREMENT)
@@ -91,8 +93,6 @@ class TaskOutputParser:
         if not completed and not increment and not total and not unit:
             return False
 
-        if not task.has_operation(op_name):
-            task.reset_current_event()
-
-        task.operation(op_name).update(completed or increment, total, unit, ts, increment=increment is not None)
+        op = task.operation(op_name)
+        op.update(completed or increment, total, unit, increment=increment is not None, timestamp=ts)
         return True
