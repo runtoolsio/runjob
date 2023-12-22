@@ -34,7 +34,7 @@ def field_conversion(parsed):
     return {key: value for key, value in converted.items() if value is not None}
 
 
-class TaskOutputParser:
+class TaskOutputToTracker:
 
     def __init__(self, task_tracker, parsers, conversion=field_conversion):
         self.tracker = task_tracker
@@ -61,10 +61,10 @@ class TaskOutputParser:
 
     def _update_task(self, fields):
         task = fields.get(Fields.TASK)
-        prev_task = self.tracker.tasks[-1] if self.tracker.tasks else None
+        prev_task = self.tracker.subtasks[-1] if self.tracker.subtasks else None
         is_finished = False
         if task:
-            current_task = self.tracker.task(task)
+            current_task = self.tracker.subtask(task)
             if prev_task == current_task:
                 is_finished = True
         else:
@@ -73,9 +73,9 @@ class TaskOutputParser:
             else:
                 current_task = self.tracker
 
-        is_op = self._update_operation(task, fields)
-        if event := fields.get(Fields.EVENT) and not is_op:
-            task.add_event(event, fields.get(Fields.TIMESTAMP))
+        is_op = self._update_operation(current_task, fields)
+        if (event := fields.get(Fields.EVENT)) and not is_op:
+            current_task.event(event, timestamp=fields.get(Fields.TIMESTAMP))
 
         result = fields.get(Fields.RESULT)
         if result or is_finished:
