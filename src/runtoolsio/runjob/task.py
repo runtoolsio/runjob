@@ -64,7 +64,7 @@ class TaskOutputToTracker:
         prev_task = self.tracker.subtasks[-1] if self.tracker.subtasks else None
         is_finished = False
         if task:
-            current_task = self.tracker.subtask(task)
+            current_task = self.tracker.subtask(task, timestamp=fields.get(Fields.TIMESTAMP))
             if prev_task == current_task:
                 is_finished = True
         else:
@@ -93,6 +93,6 @@ class TaskOutputToTracker:
         if not completed and not increment and not total and not unit:
             return False
 
-        op = task.operation(op_name)
+        op = task.operation(op_name, timestamp=ts)
         op.update(completed or increment, total, unit, increment=increment is not None, timestamp=ts)
         return True

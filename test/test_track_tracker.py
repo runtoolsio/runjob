@@ -109,25 +109,25 @@ def test_subtask_deactivate_current_task():
 
 
 def test_task_started_and_update_on_event():
-    task = TaskTrackerMem()
-    tracker = TaskOutputToTracker(task, [KVParser(), iso_date_time_parser(Fields.TIMESTAMP.value)])
-    tracker.new_output('2020-10-01 10:30:30 event=[e1]')
-    tracker.new_output('2020-10-01 11:45:00 event=[e2]')
-    assert task.first_updated_at == datetime(2020, 10, 1, 10, 30, 30)
-    assert task.last_update_at == datetime(2020, 10, 1, 11, 45, 0)
+    tracker = TaskTrackerMem()
+    sut = TaskOutputToTracker(tracker, [KVParser(), iso_date_time_parser(Fields.TIMESTAMP.value)])
+    sut.new_output('2020-10-01 10:30:30 event=[e1]')
+    sut.new_output('2020-10-01 11:45:00 event=[e2]')
+    assert tracker.tracked_task.first_updated_at == datetime(2020, 10, 1, 10, 30, 30)
+    assert tracker.tracked_task.last_updated_at == datetime(2020, 10, 1, 11, 45, 0)
 
 
 def test_task_started_and_updated_on_operation():
-    task = TaskTrackerMem()
-    tracker = TaskOutputToTracker(task, [KVParser(), iso_date_time_parser(Fields.TIMESTAMP.value)])
-    tracker.new_output('2020-10-01 14:40:00 event=[op1] total=[200]')
-    tracker.new_output('2020-10-01 15:30:30 event=[op1] total=[400]')
+    tracker = TaskTrackerMem()
+    sut = TaskOutputToTracker(tracker, [KVParser(), iso_date_time_parser(Fields.TIMESTAMP.value)])
+    sut.new_output('2020-10-01 14:40:00 event=[op1] completed=[200]')
+    sut.new_output('2020-10-01 15:30:30 event=[op1] completed=[400]')
     started_ts = datetime(2020, 10, 1, 14, 40, 0)
     updated_ts = datetime(2020, 10, 1, 15, 30, 30)
-    assert task.first_updated_at == started_ts
-    assert task.operation('op1').first_updated_at == started_ts
-    assert task.last_update_at == updated_ts
-    assert task.operation('op1').last_update_at == updated_ts
+    assert tracker.tracked_task.first_updated_at == started_ts
+    assert tracker.tracked_task.find_operation('op1').first_updated_at == started_ts
+    assert tracker.tracked_task.last_updated_at == updated_ts
+    assert tracker.tracked_task.find_operation('op1').last_updated_at == updated_ts
 
 
 def test_op_end_date():
