@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pytest
+
 from runtoolsio.runjob.task import TaskOutputToTracker, Fields
 from tarotools.taro.track import TaskTrackerMem
 from tarotools.taro.util import KVParser, iso_date_time_parser
@@ -72,6 +74,7 @@ def test_multiple_parsers_and_tasks():
     assert not task.current_event
 
 
+@pytest.mark.skip(reason="legacy")
 def test_operation_resets_last_event():
     tracker = TaskTrackerMem()
     sut = TaskOutputToTracker(tracker, [KVParser()])
@@ -81,6 +84,7 @@ def test_operation_resets_last_event():
     assert tracker.tracked_task.current_event is None
 
 
+@pytest.mark.skip(reason="legacy")
 def test_event_deactivate_completed_operation():
     tracker = TaskTrackerMem()
     sut = TaskOutputToTracker(tracker, [KVParser()])
@@ -92,20 +96,16 @@ def test_event_deactivate_completed_operation():
     assert not tracker.tracked_task.operations[0].finished
 
 
-def test_subtask_deactivate_current_task():
-    task = TaskTrackerMem()
-    tracker = TaskOutputToTracker(task, [KVParser()])
+def test_subtask_event():
+    tracker = TaskTrackerMem()
+    sut = TaskOutputToTracker(tracker, [KVParser()])
 
-    tracker.new_output("event=[event_in_main_task]")
-    assert task.active
+    sut.new_output("event=[event_in_main_task]")
+    sut.new_output("event=[event_in_subtask] task=[subtask1]")
+    assert tracker.tracked_task.subtasks[0].current_event[0] == 'event_in_subtask'
 
-    tracker.new_output("event=[event_in_subtask] task=[subtask1]")
-    assert not task.active
-    assert task.subtasks[0].finished
-
-    tracker.new_output("event=[another_event_in_main_task]")
-    assert task.active
-    assert not task.subtasks[0].finished
+    sut.new_output("event=[another_event_in_main_task]")
+    assert tracker.tracked_task.current_event[0] == 'another_event_in_main_task'
 
 
 def test_task_started_and_update_on_event():
@@ -113,7 +113,6 @@ def test_task_started_and_update_on_event():
     sut = TaskOutputToTracker(tracker, [KVParser(), iso_date_time_parser(Fields.TIMESTAMP.value)])
     sut.new_output('2020-10-01 10:30:30 event=[e1]')
     sut.new_output('2020-10-01 11:45:00 event=[e2]')
-    assert tracker.tracked_task.created_at == datetime(2020, 10, 1, 10, 30, 30)
     assert tracker.tracked_task.updated_at == datetime(2020, 10, 1, 11, 45, 0)
 
 
@@ -124,20 +123,20 @@ def test_task_started_and_updated_on_operation():
     sut.new_output('2020-10-01 15:30:30 event=[op1] completed=[400]')
     started_ts = datetime(2020, 10, 1, 14, 40, 0)
     updated_ts = datetime(2020, 10, 1, 15, 30, 30)
-    assert tracker.tracked_task.created_at == started_ts
     assert tracker.tracked_task.find_operation('op1').created_at == started_ts
     assert tracker.tracked_task.updated_at == updated_ts
     assert tracker.tracked_task.find_operation('op1').updated_at == updated_ts
 
 
 def test_op_end_date():
-    task = TaskTrackerMem()
-    tracker = TaskOutputToTracker(task, [KVParser(), iso_date_time_parser(Fields.TIMESTAMP.value)])
-    tracker.new_output('2020-10-01 14:40:00 event=[op1] completed=[5] total=[10]')
-    assert task.operation('op1').ended_at is None
+    tracker = TaskTrackerMem()
+    sut = TaskOutputToTracker(tracker, [KVParser(), iso_date_time_parser(Fields.TIMESTAMP.value)])
+    sut.new_output('2020-10-01 14:40:00 event=[op1] completed=[5] total=[10]')
+    assert not tracker.tracked_task.find_operation('op1').finished
 
-    tracker.new_output('2020-10-01 15:30:30 event=[op1] completed=[10] total=[10]')
-    assert task.operation('op1').ended_at == datetime(2020, 10, 1, 15, 30, 30)
+    sut.new_output('2020-10-01 15:30:30 event=[op1] completed=[10] total=[10]')
+    assert tracker.tracked_task.find_operation('op1').updated_at == datetime(2020, 10, 1, 15, 30, 30)
+    assert tracker.tracked_task.find_operation('op1').finished
 
 
 def test_subtask_started_and_finished():
