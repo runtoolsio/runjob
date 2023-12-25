@@ -86,10 +86,10 @@ def test_event_deactivate_completed_operation():
     sut = TaskOutputToTracker(tracker, [KVParser()])
 
     sut.new_output("event=[encoding] completed=[10] total=[10]")
-    assert tracker.tracked_task.operations[0].active
+    assert tracker.tracked_task.operations[0].finished
 
     sut.new_output("event=[new_event]")
-    assert not tracker.tracked_task.operations[0].active
+    assert not tracker.tracked_task.operations[0].finished
 
 
 def test_subtask_deactivate_current_task():
@@ -101,11 +101,11 @@ def test_subtask_deactivate_current_task():
 
     tracker.new_output("event=[event_in_subtask] task=[subtask1]")
     assert not task.active
-    assert task.subtasks[0].active
+    assert task.subtasks[0].finished
 
     tracker.new_output("event=[another_event_in_main_task]")
     assert task.active
-    assert not task.subtasks[0].active
+    assert not task.subtasks[0].finished
 
 
 def test_task_started_and_update_on_event():
@@ -113,8 +113,8 @@ def test_task_started_and_update_on_event():
     sut = TaskOutputToTracker(tracker, [KVParser(), iso_date_time_parser(Fields.TIMESTAMP.value)])
     sut.new_output('2020-10-01 10:30:30 event=[e1]')
     sut.new_output('2020-10-01 11:45:00 event=[e2]')
-    assert tracker.tracked_task.first_updated_at == datetime(2020, 10, 1, 10, 30, 30)
-    assert tracker.tracked_task.last_updated_at == datetime(2020, 10, 1, 11, 45, 0)
+    assert tracker.tracked_task.created_at == datetime(2020, 10, 1, 10, 30, 30)
+    assert tracker.tracked_task.updated_at == datetime(2020, 10, 1, 11, 45, 0)
 
 
 def test_task_started_and_updated_on_operation():
@@ -124,10 +124,10 @@ def test_task_started_and_updated_on_operation():
     sut.new_output('2020-10-01 15:30:30 event=[op1] completed=[400]')
     started_ts = datetime(2020, 10, 1, 14, 40, 0)
     updated_ts = datetime(2020, 10, 1, 15, 30, 30)
-    assert tracker.tracked_task.first_updated_at == started_ts
-    assert tracker.tracked_task.find_operation('op1').first_updated_at == started_ts
-    assert tracker.tracked_task.last_updated_at == updated_ts
-    assert tracker.tracked_task.find_operation('op1').last_updated_at == updated_ts
+    assert tracker.tracked_task.created_at == started_ts
+    assert tracker.tracked_task.find_operation('op1').created_at == started_ts
+    assert tracker.tracked_task.updated_at == updated_ts
+    assert tracker.tracked_task.find_operation('op1').updated_at == updated_ts
 
 
 def test_op_end_date():
@@ -140,23 +140,23 @@ def test_op_end_date():
     assert task.operation('op1').ended_at == datetime(2020, 10, 1, 15, 30, 30)
 
 
-def test_subtask_started_and_updated_set():
-    task = TaskTrackerMem()
-    tracker = TaskOutputToTracker(task, [KVParser(), iso_date_time_parser(Fields.TIMESTAMP.value)])
-    tracker.new_output('2020-10-01 12:30:00 task=[t1]')
-    tracker.new_output('2020-10-01 13:50:00 task=[t1] event=[e1]')
+def test_subtask_started_and_finished():
+    tracker = TaskTrackerMem()
+    sut = TaskOutputToTracker(tracker, [KVParser(), iso_date_time_parser(Fields.TIMESTAMP.value)])
+    sut.new_output('2020-10-01 12:30:00 task=[t1]')
+    sut.new_output('2020-10-01 13:50:00 task=[t1] event=[e1]')
 
     started_ts = datetime(2020, 10, 1, 12, 30, 0)
     updated_ts = datetime(2020, 10, 1, 13, 50, 0)
-    assert task.subtask('t1').first_updated_at == started_ts
-    assert task.subtask('t1').last_update_at == updated_ts
-    assert task.first_updated_at is None  # TODO should this be set too?
+    assert tracker.tracked_task.find_subtask('t1').created_at == started_ts
+    assert tracker.tracked_task.find_subtask('t1').updated_at == updated_ts
+    assert tracker.tracked_task.finished
 
 
 def test_timestamps():
-    task = TaskTrackerMem('task')
-    tracker = TaskOutputToTracker(task, [KVParser()])
+    tracker = TaskTrackerMem('task')
+    sut = TaskOutputToTracker(tracker, [KVParser()])
 
-    tracker.new_output('2020-10-01 10:30:30 event=[e1]')
-    tracker.new_output('result=[res]')
-    assert task.finished == 'res'
+    sut.new_output('2020-10-01 10:30:30 event=[e1]')
+    sut.new_output('result=[res]')
+    assert tracker.tracked_task.result == 'res'

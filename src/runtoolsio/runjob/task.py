@@ -79,7 +79,7 @@ class TaskOutputToTracker:
 
         result = fields.get(Fields.RESULT)
         if result or is_finished:
-            current_task.finished(fields.get(Fields.RESULT))
+            current_task.finished(fields.get(Fields.RESULT), timestamp=fields.get(Fields.TIMESTAMP))
 
     @staticmethod
     def _update_operation(task, fields):
