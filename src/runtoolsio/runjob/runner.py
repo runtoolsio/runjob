@@ -46,11 +46,11 @@ import logging
 from typing import Type, Optional
 
 from tarotools.taro import util
-from tarotools.taro.job import JobInstance, JobInstanceMetadata, JobRun, InstanceTransitionObserver, \
-    InstanceOutputObserver, \
-    InstanceStatusObserver
+from tarotools.taro.job import (JobInstance, JobInstanceMetadata, JobRun, InstanceTransitionObserver,
+                                InstanceOutputObserver)
 from tarotools.taro.output import InMemoryOutput, Mode
 from tarotools.taro.run import PhaseRun, Outcome, RunState, P, PhaseMetadata
+from tarotools.taro.track import TaskTrackerMem
 from tarotools.taro.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
 log = logging.getLogger(__name__)
@@ -62,23 +62,23 @@ def log_observer_error(observer, args, exc):
 
 _transition_observer = ObservableNotification[InstanceTransitionObserver](error_hook=log_observer_error)
 _output_observers = ObservableNotification[InstanceOutputObserver](error_hook=log_observer_error)
-_status_observers = ObservableNotification[InstanceStatusObserver](error_hook=log_observer_error)
 
 
 class RunnerJobInstance(JobInstance):
 
-    def __init__(self, job_id, phaser, output=None, *, run_id=None, instance_id_gen=util.unique_timestamp_hex,
+    def __init__(self, job_id, phaser,
+                 output=None, task_tracker=None,
+                 *, run_id=None, instance_id_gen=util.unique_timestamp_hex,
                  **user_params):
         instance_id = instance_id_gen()
         parameters = {}  # TODO
         self._metadata = JobInstanceMetadata(job_id, run_id or instance_id, instance_id, parameters, user_params)
         self._phaser = phaser
         self._output = output or InMemoryOutput()
-        self._tracking = None
+        self._task_tracker = task_tracker or TaskTrackerMem()
         self._transition_notification = ObservableNotification[InstanceTransitionObserver](
             error_hook=log_observer_error)
         self._output_notification = ObservableNotification[InstanceOutputObserver](error_hook=log_observer_error)
-        self._status_notification = ObservableNotification[InstanceStatusObserver](error_hook=log_observer_error)
 
         # TODO Move the below out of constructor?
         self._phaser.transition_hook = self._transition_hook
@@ -98,12 +98,8 @@ class RunnerJobInstance(JobInstance):
         return self._metadata
 
     @property
-    def tracking(self):
-        return self._tracking
-
-    @property
-    def status_observer(self):
-        return self._status_notification.observer_proxy
+    def task_tracker(self):
+        return self._task_tracker
 
     @property
     def phases(self):
@@ -113,7 +109,7 @@ class RunnerJobInstance(JobInstance):
         return self._phaser.get_typed_phase(phase_type, phase_name)
 
     def job_run_info(self) -> JobRun:
-        return JobRun(self.metadata, self._phaser.run_info())
+        return JobRun(self.metadata, self._phaser.run_info(), self._task_tracker.tracked_task)
 
     def fetch_output(self, mode=Mode.HEAD, *, lines=0):
         return self._output.fetch(mode, lines=lines)
@@ -125,14 +121,12 @@ class RunnerJobInstance(JobInstance):
     def run(self):
         self._transition_notification.add_observer(_transition_observer.observer_proxy)
         self._output_notification.add_observer(_output_observers.observer_proxy)
-        self._status_notification.add_observer(_status_observers.observer_proxy)
 
         try:
-            self._phaser.run()
+            self._phaser.run(self._task_tracker)
         finally:
             self._transition_notification.remove_observer(_transition_observer.observer_proxy)
             self._output_notification.remove_observer(_output_observers.observer_proxy)
-            self._status_notification.remove_observer(_status_observers.observer_proxy)
 
     def stop(self):
         """
@@ -198,12 +192,6 @@ class RunnerJobInstance(JobInstance):
     def remove_observer_output(self, observer):
         self._output_notification.remove_observer(observer)
 
-    def add_observer_status(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        self._status_notification.add_observer(observer, priority)
-
-    def remove_observer_status(self, observer):
-        self._status_notification.remove_observer(observer)
-
 
 def register_transition_observer(observer, priority=DEFAULT_OBSERVER_PRIORITY):
     global _transition_observer
@@ -213,13 +201,3 @@ def register_transition_observer(observer, priority=DEFAULT_OBSERVER_PRIORITY):
 def deregister_transition_observer(observer):
     global _transition_observer
     _transition_observer.remove_observer(observer)
-
-
-def register_status_observer(observer, priority=DEFAULT_OBSERVER_PRIORITY):
-    global _status_observers
-    _status_observers.add_observer(observer, priority)
-
-
-def deregister_status_observer(observer):
-    global _status_observers
-    _status_observers.remove_observer(observer)
