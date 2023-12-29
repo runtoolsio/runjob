@@ -15,16 +15,15 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Optional, Tuple, Callable, TypeVar, Generic, Dict
 
+from runtoolsio.runjob.api import APIServer
+from runtoolsio.runjob.events import TransitionDispatcher, OutputDispatcher
 from tarotools.taro import persistence as persistence_mod
 from tarotools.taro import plugins as plugins_mod
 from tarotools.taro.common import InvalidStateError
-from tarotools.taro.job import JobRun, InstanceTransitionObserver, InstanceStatusObserver, JobInstanceManager, \
+from tarotools.taro.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver, JobInstanceManager, \
     JobInstance
 from tarotools.taro.plugins import Plugin
 from tarotools.taro.run import RunState
-
-from runtoolsio.runjob.api import APIServer
-from runtoolsio.runjob.events import TransitionDispatcher, OutputDispatcher
 
 log = logging.getLogger(__name__)
 
@@ -241,7 +240,7 @@ class FeaturedContext(InstanceTransitionObserver):
     def __init__(self, instance_managers=(), state_observers=(), output_observers=(), *, transient=False):
         self._instance_managers: Tuple[ManagerFeature[JobInstanceManager]] = tuple(instance_managers)
         self._state_observers: Tuple[ObserverFeature[InstanceTransitionObserver]] = tuple(state_observers)
-        self._output_observers: Tuple[ObserverFeature[InstanceStatusObserver]] = tuple(output_observers)
+        self._output_observers: Tuple[ObserverFeature[InstanceOutputObserver]] = tuple(output_observers)
         self._keep_removed = not transient
         self._managed_instances: Dict[str, _ManagedInstance] = {}
         self._ctx_lock = Lock()
@@ -328,7 +327,7 @@ class FeaturedContext(InstanceTransitionObserver):
             ctx_observer_priority = max(ctx_observer_priority, state_observer_feat.priority)
 
         for output_observer_feat in self._output_observers:
-            job_instance.add_observer_status(output_observer_feat.component, output_observer_feat.priority)
+            job_instance.add_observer_output(output_observer_feat.component, output_observer_feat.priority)
 
         # #  TODO optional plugins
         # if cfg.plugins_enabled and cfg.plugins_load:
@@ -388,7 +387,7 @@ class FeaturedContext(InstanceTransitionObserver):
             job_instance.remove_observer_transition(self)
 
             for output_observer_feat in self._output_observers:
-                job_instance.remove_observer_status(output_observer_feat.component)
+                job_instance.remove_observer_output(output_observer_feat.component)
 
             for state_observer_feat in self._state_observers:
                 job_instance.remove_observer_transition(state_observer_feat.component)

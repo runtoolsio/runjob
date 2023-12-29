@@ -10,10 +10,9 @@ import logging
 from threading import Event
 from typing import Type
 
+from runtoolsio.runjob.execution import OutputExecution, ExecutionResult
 from tarotools.taro.common import InvalidStateError
 from tarotools.taro.util.observer import CallableNotification
-
-from runtoolsio.runjob.execution import OutputExecution, ExecutionResult
 
 log = logging.getLogger(__name__)
 
@@ -50,7 +49,7 @@ class TestExecution(OutputExecution):
             self.output_notification(*self.output_text)
         self.executed_latch.set()
         if self._wait:
-            self._wait.wait(2)
+            self._wait.wait(20)
         if self.raise_exc:
             log.info('event=[executed] raised_exception=[%s]', self.raise_exc)
             raise self.raise_exc()

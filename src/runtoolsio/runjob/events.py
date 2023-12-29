@@ -12,7 +12,7 @@ import json
 import logging
 
 from tarotools.taro import util, paths
-from tarotools.taro.job import JobInstanceMetadata, JobRun, InstanceTransitionObserver, InstanceStatusObserver
+from tarotools.taro.job import JobInstanceMetadata, JobRun, InstanceTransitionObserver, InstanceOutputObserver
 from tarotools.taro.run import PhaseMetadata
 from tarotools.taro.util.socket import SocketClient, PayloadTooLarge
 
@@ -69,7 +69,7 @@ class TransitionDispatcher(EventDispatcher, InstanceTransitionObserver):
         self._send_event("instance_phase_transition", job_run.metadata, event)
 
 
-class OutputDispatcher(EventDispatcher, InstanceStatusObserver):
+class OutputDispatcher(EventDispatcher, InstanceOutputObserver):
     """
     This producer emits an event when a job instance generates a new output. This dispatcher should be registered to
     the job instance as an `JobOutputObserver`.

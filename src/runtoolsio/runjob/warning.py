@@ -3,9 +3,9 @@ from threading import Timer
 from typing import Sequence
 
 from tarotools.taro import util
-from tarotools.taro.job import JobRun, InstanceTransitionObserver, InstanceStatusObserver, JobInstance
-from tarotools.taro.run import RunState
-from tarotools.taro.track import Warn
+from tarotools.taro.job import JobRun, InstanceTransitionObserver, JobInstance, \
+    InstanceOutputObserver, JobInstanceMetadata
+from tarotools.taro.run import RunState, PhaseRun, PhaseMetadata
 
 
 def exec_time_exceeded(job_instance: JobInstance, warning_name: str, time: float):
@@ -13,7 +13,7 @@ def exec_time_exceeded(job_instance: JobInstance, warning_name: str, time: float
 
 
 def output_matches(job_instance: JobInstance, warning_name: str, regex: str):
-    job_instance.add_observer_status(_OutputMatchesWarning(job_instance, warning_name, regex))
+    job_instance.add_observer_output(_OutputMatchesWarning(job_instance, warning_name, regex))
 
 
 def register(job_instance: JobInstance, *, warn_times: Sequence[str] = (), warn_outputs: Sequence[str] = ()):
@@ -33,33 +33,32 @@ class _ExecTimeWarning(InstanceTransitionObserver):
         self.time = time
         self.timer = None
 
-    def new_instance_phase(self, job_run: JobRun, previous_phase, new_phase, ordinal, changed):
-        if new_phase.run_state == RunState.EXECUTING:
+    def new_instance_phase(self, job_run: JobRun, previous_phase: PhaseRun, new_phase: PhaseRun, ordinal: int):
+        if new_phase.run_state == RunState.ENDED:
+            if self.timer is not None:
+                self.timer.cancel()
+        elif ordinal == 2:
             assert self.timer is None
             self.timer = Timer(self.time, self._check)
             self.timer.start()
-        elif new_phase.run_state == RunState.ENDED and self.timer is not None:
-            self.timer.cancel()
 
     def _check(self):
-        if not self.job_instance.lifecycle.run_state == RunState.ENDED:
-            warn = Warn(self.name, {'exceeded_sec': self.time})
-            self.job_instance.add_warning(warn)
+        if self.job_instance.job_run_info().run.lifecycle.run_state != RunState.ENDED:
+            self.job_instance.task_tracker.warning(f"Slow execution - exceeded {self.time} seconds")
 
     def __repr__(self):
         return "{}({!r}, {!r}, {!r})".format(
             self.__class__.__name__, self.job_instance, self.name, self.time)
 
 
-class _OutputMatchesWarning(InstanceStatusObserver):
+class _OutputMatchesWarning(InstanceOutputObserver):
 
     def __init__(self, job_instance, w_id, regex):
         self.job_instance = job_instance
         self.id = w_id
         self.regex = re.compile(regex)
 
-    def new_instance_output(self, _, output, is_error):
+    def new_instance_output(self, instance_meta: JobInstanceMetadata, phase: PhaseMetadata, output: str, is_err: bool):
         m = self.regex.search(output)
         if m:
-            warn = Warn(self.id, {'matches': output})
-            self.job_instance.add_warning(warn)
+            self.job_instance.task_tracker.warning(output)
