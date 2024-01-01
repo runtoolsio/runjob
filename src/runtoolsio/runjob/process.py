@@ -13,8 +13,8 @@ from queue import Full
 from typing import Union, Tuple
 
 import sys
-from tarotools.taro.util.observer import CallableNotification
 
+from runtoolsio.runcore.util.observer import CallableNotification
 from runtoolsio.runjob.execution import OutputExecution, ExecutionResult, ExecutionException
 
 log = logging.getLogger(__name__)

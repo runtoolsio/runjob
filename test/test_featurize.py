@@ -1,10 +1,9 @@
 from dataclasses import dataclass
 
-from tarotools.taro.job import JobInstanceManager
-from tarotools.taro.run import RunState
-from tarotools.taro.test.job import FakeJobInstanceBuilder, FakeJobInstance
-from tarotools.taro.test.observer import TestTransitionObserver, TestOutputObserver
-
+from runtoolsio.runcore.job import JobInstanceManager
+from runtoolsio.runcore.run import RunState
+from runtoolsio.runcore.test.job import FakeJobInstanceBuilder, FakeJobInstance
+from runtoolsio.runcore.test.observer import TestTransitionObserver, TestOutputObserver
 from runtoolsio.runjob import FeaturedContextBuilder
 
 

@@ -2,9 +2,9 @@ from datetime import datetime
 
 import pytest
 
+from runtoolsio.runcore.track import TaskTrackerMem
+from runtoolsio.runcore.util import KVParser, iso_date_time_parser
 from runtoolsio.runjob.task import TaskOutputToTracker, Fields
-from tarotools.taro.track import TaskTrackerMem
-from tarotools.taro.util import KVParser, iso_date_time_parser
 
 
 def test_parse_event():

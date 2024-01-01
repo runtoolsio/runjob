@@ -11,10 +11,10 @@ import abc
 import json
 import logging
 
-from tarotools.taro import util, paths
-from tarotools.taro.job import JobInstanceMetadata, JobRun, InstanceTransitionObserver, InstanceOutputObserver
-from tarotools.taro.run import PhaseMetadata
-from tarotools.taro.util.socket import SocketClient, PayloadTooLarge
+from runtoolsio.runcore import util, paths
+from runtoolsio.runcore.job import JobInstanceMetadata, JobRun, InstanceTransitionObserver, InstanceOutputObserver
+from runtoolsio.runcore.run import PhaseMetadata
+from runtoolsio.runcore.util.socket import SocketClient, PayloadTooLarge
 
 TRANSITION_LISTENER_FILE_EXTENSION = '.tlistener'
 OUTPUT_LISTENER_FILE_EXTENSION = '.olistener'

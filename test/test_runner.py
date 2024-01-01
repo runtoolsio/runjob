@@ -1,9 +1,9 @@
 """
 Tests :mod:`runner` module
 """
-from tarotools.taro.output import Mode
-from tarotools.taro.run import Phaser
-from tarotools.taro.test.observer import TestOutputObserver
+from runtoolsio.runcore.output import Mode
+from runtoolsio.runcore.run import Phaser
+from runtoolsio.runcore.test.observer import TestOutputObserver
 
 from runtoolsio.runjob import RunnerJobInstance
 from runtoolsio.runjob.execution import ExecutingPhase

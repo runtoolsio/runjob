@@ -12,11 +12,11 @@ import logging
 from abc import ABC, abstractmethod
 from json import JSONDecodeError
 
-from tarotools.taro import paths
-from tarotools.taro.criteria import JobRunAggregatedCriteria
-from tarotools.taro.job import JobInstanceManager
-from tarotools.taro.run import util
-from tarotools.taro.util.socket import SocketServer
+from runtoolsio.runcore import paths
+from runtoolsio.runcore.criteria import JobRunAggregatedCriteria
+from runtoolsio.runcore.job import JobInstanceManager
+from runtoolsio.runcore.run import util
+from runtoolsio.runcore.util.socket import SocketServer
 
 log = logging.getLogger(__name__)
 

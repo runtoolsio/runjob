@@ -8,11 +8,10 @@ IMPLEMENTATION NOTE:
 """
 from threading import Thread
 
-from tarotools.taro import cfg, log, persistence
-from tarotools.taro.job import JobInstance
-from tarotools.taro.run import Phaser, PhaseNames
-from tarotools.taro.util import lock
-
+from runtoolsio.runcore import cfg, log, persistence
+from runtoolsio.runcore.job import JobInstance
+from runtoolsio.runcore.run import Phaser, PhaseNames
+from runtoolsio.runcore.util import lock
 from runtoolsio.runjob.execution import ExecutingPhase
 from runtoolsio.runjob.featurize import FeaturedContextBuilder
 from runtoolsio.runjob.runner import RunnerJobInstance

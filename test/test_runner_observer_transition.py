@@ -6,12 +6,12 @@ Tests that :mod:`runner` sends correct notification to state observers.
 import pytest
 
 import runtoolsio.runjob
+from runtoolsio.runcore.job import JobRun, InstanceTransitionObserver
+from runtoolsio.runcore.run import TerminationStatus, RunState, PhaseNames
+from runtoolsio.runcore.test.observer import TestTransitionObserver
 from runtoolsio.runjob import runner
 from runtoolsio.runjob.execution import ExecutionException
 from runtoolsio.runjob.test.execution import TestExecution
-from tarotools.taro.job import JobRun, InstanceTransitionObserver
-from tarotools.taro.run import TerminationStatus, RunState, PhaseNames
-from tarotools.taro.test.observer import TestTransitionObserver
 
 
 @pytest.fixture

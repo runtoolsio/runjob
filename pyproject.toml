@@ -11,7 +11,7 @@ classifiers = ["License :: OSI Approved :: MIT License"]
 requires-python = ">=3.10"
 dynamic = ["version", "description"]
 dependencies = [
-    "taro-core @ git+ssh://git@github.com/tarotools/taro-core",
+    "runtoolsio-runcore @ git+ssh://git@github.com/runtoolsio/runcore",
     "portalocker>=2.6.0",
     "pygrok>=1.0.0",
     "urllib3>=1.26.2",
@@ -30,4 +30,4 @@ addopts = [
 pythonpath = "src"
 
 [project.urls]
-Home = "https://github.com/tarotools/runjob"
+Home = "https://github.com/runtoolsio/runjob"

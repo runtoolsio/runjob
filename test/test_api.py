@@ -1,10 +1,10 @@
 import pytest
-from tarotools.taro import client
-from tarotools.taro.client import APIClient, APIErrorType, ErrorCode, ApprovalResult, StopResult
-from tarotools.taro.criteria import parse_criteria
-from tarotools.taro.run import RunState, PhaseNames, TerminationStatus
-from tarotools.taro.test.job import FakeJobInstanceBuilder, FakePhase
 
+from runtoolsio.runcore import client
+from runtoolsio.runcore.client import APIClient, APIErrorType, ErrorCode, ApprovalResult, StopResult
+from runtoolsio.runcore.criteria import parse_criteria
+from runtoolsio.runcore.run import RunState, PhaseNames, TerminationStatus
+from runtoolsio.runcore.test.job import FakeJobInstanceBuilder, FakePhase
 from runtoolsio.runjob.api import APIServer
 
 

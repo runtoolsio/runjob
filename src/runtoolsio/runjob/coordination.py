@@ -5,11 +5,12 @@ from enum import Enum, auto
 from threading import Condition, Event, Lock
 
 from tarotools import taro
-from tarotools.taro.criteria import JobRunIdCriterion, TerminationCriterion, JobRunAggregatedCriteria
-from tarotools.taro.job import JobRun, JobRuns, InstanceTransitionObserver
-from tarotools.taro.listening import InstanceTransitionReceiver
-from tarotools.taro.run import RunState, Phase, TerminationStatus, PhaseRun, TerminateRun
-from tarotools.taro.util import lock
+
+from runtoolsio.runcore.criteria import JobRunIdCriterion, TerminationCriterion, JobRunAggregatedCriteria
+from runtoolsio.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
+from runtoolsio.runcore.listening import InstanceTransitionReceiver
+from runtoolsio.runcore.run import RunState, Phase, TerminationStatus, PhaseRun, TerminateRun
+from runtoolsio.runcore.util import lock
 
 log = logging.getLogger(__name__)
 

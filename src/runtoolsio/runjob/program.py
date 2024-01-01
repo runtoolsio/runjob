@@ -11,8 +11,8 @@ from threading import Thread
 from typing import Union, Optional
 
 import sys
-from tarotools.taro.util.observer import CallableNotification
 
+from runtoolsio.runcore.util.observer import CallableNotification
 from runtoolsio.runjob.execution import OutputExecution, \
     ExecutionException, ExecutionResult
 
