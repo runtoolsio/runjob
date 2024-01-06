@@ -169,11 +169,8 @@ class RunnerJobInstance(JobInstance):
                            old_phase.phase_name, new_phase.phase_name, new_phase.run_state.name))
 
         if termination:
-            if termination.status.outcome == Outcome.REJECT:
-                log.warning(self._log('run_rejected'))
-
-            if termination.status.outcome == Outcome.FAULT:
-                log.warning(self._log('run_fault'))
+            if termination.status.is_outcome(Outcome.NON_SUCCESS):
+                log.warning(self._log('run_incomplete'))
 
             if termination.error:
                 log.error(self._log('unexpected_error', "error_type=[{}] reason=[{}]",

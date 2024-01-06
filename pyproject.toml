@@ -11,7 +11,7 @@ classifiers = ["License :: OSI Approved :: MIT License"]
 requires-python = ">=3.10"
 dynamic = ["version", "description"]
 dependencies = [
-    "runtoolsio-runcore @ git+ssh://git@github.com/runtoolsio/runcore",
+#    "runtoolsio-runcore @ git+ssh://git@github.com/runtoolsio/runcore",
     "portalocker>=2.6.0",
     "pygrok>=1.0.0",
     "urllib3>=1.26.2",
