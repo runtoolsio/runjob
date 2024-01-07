@@ -6,7 +6,7 @@ from threading import Condition, Event, Lock
 
 from tarotools import taro
 
-from runtoolsio.runcore.criteria import JobRunIdCriterion, TerminationCriterion, JobRunAggregatedCriteria
+from runtoolsio.runcore.criteria import EntityRunIdCriterion, TerminationCriterion, EntityRunAggregatedCriteria
 from runtoolsio.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
 from runtoolsio.runcore.listening import InstanceTransitionReceiver
 from runtoolsio.runcore.run import RunState, Phase, TerminationStatus, PhaseRun, TerminateRun
@@ -394,7 +394,7 @@ class ExecutionQueue(Queue, InstanceTransitionObserver):
         self._state_receiver.start()
 
     def _dispatch_next(self):
-        criteria = JobRunAggregatedCriteria(
+        criteria = EntityRunAggregatedCriteria(
             state_criteria=TerminationCriterion(phases={Phase.QUEUED, Phase.EXECUTING}),
             param_sets=set(self._parameters)
         )
@@ -407,7 +407,7 @@ class ExecutionQueue(Queue, InstanceTransitionObserver):
 
         for next_proceed in group_jobs_sorted.queued:
             # TODO Use identity ID
-            signal_resp = taro.client.signal_dispatch(JobRunAggregatedCriteria(JobRunIdCriterion.for_instance(next_proceed)))
+            signal_resp = taro.client.signal_dispatch(EntityRunAggregatedCriteria(EntityRunIdCriterion.for_instance(next_proceed)))
             for r in signal_resp.responses:
                 if r.executed:
                     next_count -= 1

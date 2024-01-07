@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from json import JSONDecodeError
 
 from runtoolsio.runcore import paths
-from runtoolsio.runcore.criteria import JobRunAggregatedCriteria
+from runtoolsio.runcore.criteria import EntityRunAggregatedCriteria
 from runtoolsio.runcore.job import JobInstanceManager
 from runtoolsio.runcore.run import util
 from runtoolsio.runcore.util.socket import SocketServer
@@ -193,7 +193,7 @@ class APIServer(SocketServer, JobInstanceManager):
             return self._job_instances
 
         try:
-            matching_criteria = JobRunAggregatedCriteria.deserialize(run_match)
+            matching_criteria = EntityRunAggregatedCriteria.deserialize(run_match)
         except ValueError:
             raise _ApiError(422, f"Invalid run match: {run_match}")
         return [job_instance for job_instance in self._job_instances if matching_criteria.matches(job_instance)]
