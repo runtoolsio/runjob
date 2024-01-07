@@ -1,7 +1,5 @@
-
-from runtoolsio.runcore.job import JobInstanceMetadata
 from runtoolsio.runcore.listening import InstanceTransitionReceiver, InstanceOutputReceiver
-from runtoolsio.runcore.run import PhaseRun, RunState, PhaseMetadata
+from runtoolsio.runcore.run import PhaseRun, RunState, PhaseMetadata, JobInstanceMetadata
 from runtoolsio.runcore.test.job import ended_run
 from runtoolsio.runcore.test.observer import GenericObserver
 from runtoolsio.runcore.util import utc_now
@@ -26,7 +24,7 @@ def test_state_dispatching():
         receiver.close()
 
     instance_meta, prev_run, new_run, ordinal = observer.updates.get(timeout=2)[1]
-    assert instance_meta.metadata.job_id == 'j1'
+    assert instance_meta.metadata.entity_id == 'j1'
     assert prev_run == prev
     assert new_run == new
     assert ordinal == 2

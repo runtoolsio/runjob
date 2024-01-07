@@ -46,10 +46,10 @@ import logging
 from typing import Type, Optional
 
 from runtoolsio.runcore import util
-from runtoolsio.runcore.job import (JobInstance, JobInstanceMetadata, JobRun, InstanceTransitionObserver,
+from runtoolsio.runcore.job import (JobInstance, JobRun, InstanceTransitionObserver,
                                     InstanceOutputObserver)
 from runtoolsio.runcore.output import InMemoryOutput, Mode
-from runtoolsio.runcore.run import PhaseRun, Outcome, RunState, P, PhaseMetadata
+from runtoolsio.runcore.run import PhaseRun, Outcome, RunState, P, PhaseMetadata, JobInstanceMetadata
 from runtoolsio.runcore.track import TaskTrackerMem
 from runtoolsio.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
@@ -87,7 +87,7 @@ class RunnerJobInstance(JobInstance):
 
     def _log(self, event: str, msg: str = '', *params):
         return ("event=[{}] job_run=[{}@{}] " + msg).format(
-            event, self._metadata.job_id, self._metadata.run_id, *params)
+            event, self._metadata.entity_id, self._metadata.run_id, *params)
 
     @property
     def instance_id(self):

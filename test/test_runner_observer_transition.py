@@ -25,7 +25,7 @@ def observer():
 def test_passed_args(observer: TestTransitionObserver):
     runtoolsio.runjob.run_uncoordinated('j1', TestExecution())
 
-    assert observer.job_runs[0].metadata.job_id == 'j1'
+    assert observer.job_runs[0].metadata.entity_id == 'j1'
     assert observer.phases == [(PhaseNames.INIT, PhaseNames.EXEC), (PhaseNames.EXEC, PhaseNames.TERMINAL)]
     assert observer.run_states == [RunState.EXECUTING, RunState.ENDED]
 

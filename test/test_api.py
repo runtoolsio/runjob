@@ -52,9 +52,9 @@ def test_approve_pending_instance(job_instances):
     instances, errors = client.approve_pending_instances(PhaseNames.APPROVAL)
 
     assert not errors
-    assert instances[0].instance_metadata.job_id == 'j1'
+    assert instances[0].instance_metadata.entity_id == 'j1'
     assert instances[0].release_result == ApprovalResult.NOT_APPLICABLE
-    assert instances[1].instance_metadata.job_id == 'j2'
+    assert instances[1].instance_metadata.entity_id == 'j2'
     assert instances[1].release_result == ApprovalResult.APPROVED
 
     _, j2 = job_instances
@@ -65,7 +65,7 @@ def test_stop(job_instances):
     instances, errors = client.stop_instances(parse_criteria('j1'))
     assert not errors
     assert len(instances) == 1
-    assert instances[0].instance_metadata.job_id == 'j1'
+    assert instances[0].instance_metadata.entity_id == 'j1'
     assert instances[0].stop_result == StopResult.INITIATED
 
     j1, j2 = job_instances
@@ -80,8 +80,8 @@ def test_tail(job_instances):
     instances, errors = client.fetch_output()
     assert not errors
 
-    assert instances[0].instance_metadata.job_id == 'j1'
+    assert instances[0].instance_metadata.entity_id == 'j1'
     assert instances[0].output == [['Meditate, do not delay, lest you later regret it.', False]]
 
-    assert instances[1].instance_metadata.job_id == 'j2'
+    assert instances[1].instance_metadata.entity_id == 'j2'
     assert not instances[1].output
