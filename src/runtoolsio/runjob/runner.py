@@ -45,7 +45,6 @@ State lock
 import logging
 from typing import Type, Optional
 
-from runtoolsio.runcore import util
 from runtoolsio.runcore.job import (JobInstance, JobRun, InstanceTransitionObserver,
                                     InstanceOutputObserver)
 from runtoolsio.runcore.output import InMemoryOutput, Mode
@@ -66,11 +65,10 @@ _output_observers = ObservableNotification[InstanceOutputObserver](error_hook=lo
 
 class RunnerJobInstance(JobInstance):
 
-    def __init__(self, job_id, phaser,
+    def __init__(self, job_id, instance_id, phaser,
                  output=None, task_tracker=None,
-                 *, run_id=None, instance_id_gen=util.unique_timestamp_hex,
+                 *, run_id=None,
                  **user_params):
-        instance_id = instance_id_gen()
         parameters = {}  # TODO
         self._metadata = JobInstanceMetadata(job_id, run_id or instance_id, instance_id, parameters, user_params)
         self._phaser = phaser

@@ -39,6 +39,9 @@ def configure(**kwargs):
     log.init_by_config()
 
 
+def run_job(job_id, phases, output=None, task_tracker=None, *, run_id=None, instance_id=None, **user_params):
+    pass
+
 def execute(job_id, job_execution, coordinations=None, *, instance_id=None):
     plugins_ = cfg.plugins_load if cfg.plugins_enabled else None
     with FeaturedContextBuilder().standard_features(plugins=plugins_).build_as_run() as ctx:
@@ -60,7 +63,7 @@ def close():
 
 
 def job_instance(job_id, exec_, *, instance_id=None, **user_params) -> RunnerJobInstance:
-    return RunnerJobInstance(job_id, Phaser([ExecutingPhase(PhaseNames.EXEC, exec_)]), run_id=instance_id, user_params=user_params)
+    return RunnerJobInstance(job_id, instance_id, Phaser([ExecutingPhase(PhaseNames.EXEC, exec_)]), run_id=instance_id, user_params=user_params)
 
 
 def run(job_id, execution, sync_=None, state_locker=lock.default_queue_locker(), *, instance_id=None,
@@ -72,7 +75,7 @@ def run(job_id, execution, sync_=None, state_locker=lock.default_queue_locker(),
 
 def job_instance_uncoordinated(job_id, exec_, *, instance_id=None, **user_params) \
         -> JobInstance:
-    return RunnerJobInstance(job_id, Phaser([ExecutingPhase(PhaseNames.EXEC, exec_)]), run_id=instance_id,
+    return RunnerJobInstance(job_id, instance_id, Phaser([ExecutingPhase(PhaseNames.EXEC, exec_)]), run_id=instance_id,
                              user_params=user_params)
 
 

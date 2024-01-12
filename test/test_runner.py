@@ -15,7 +15,7 @@ def test_output_observer():
         print("Hello, lucky boy. Where are you today?")
 
     execution = ProcessExecution(print_it)
-    instance = RunnerJobInstance('j1', Phaser([ExecutingPhase('Printing', execution)]))
+    instance = RunnerJobInstance('j1', 'i1', Phaser([ExecutingPhase('Printing', execution)]))
     observer = TestOutputObserver()
     instance.add_observer_output(observer)
 
@@ -33,7 +33,7 @@ def test_last_output():
             print(line)
 
     execution = ProcessExecution(print_it)
-    instance = RunnerJobInstance('j1', Phaser([ExecutingPhase('Printing', execution)]))
+    instance = RunnerJobInstance('j1', 'i1', Phaser([ExecutingPhase('Printing', execution)]))
     instance.run()
     assert ([out for out, _ in instance.fetch_output(Mode.TAIL, lines=10)] ==
             "1 everyone in the world is doing something without me".split())
