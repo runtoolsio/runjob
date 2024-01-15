@@ -66,7 +66,7 @@ def test_stop(job_instances):
     assert not errors
     assert len(instances) == 1
     assert instances[0].instance_metadata.entity_id == 'j1'
-    assert instances[0].stop_result == StopResult.INITIATED
+    assert instances[0].stop_result == StopResult.STOP_INITIATED
 
     j1, j2 = job_instances
     assert j1.job_run_info().run.termination.status == TerminationStatus.STOPPED
