@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from json import JSONDecodeError
 
 from runtoolsio.runcore import paths
+from runtoolsio.runcore.client import StopResult
 from runtoolsio.runcore.criteria import EntityRunCriteria
 from runtoolsio.runcore.job import JobInstanceManager
 from runtoolsio.runcore.run import util
@@ -94,7 +95,7 @@ class StopResource(APIResource):
 
     def handle(self, job_instance, req_body):
         job_instance.stop()
-        return {"stop_result": "INITIATED"}
+        return {"stop_result": StopResult.STOP_INITIATED.name}
 
 
 class OutputResource(APIResource):
