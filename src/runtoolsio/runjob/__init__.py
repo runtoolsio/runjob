@@ -8,13 +8,14 @@ IMPLEMENTATION NOTE:
 """
 from threading import Thread
 
-from runtoolsio.runcore import cfg, log, persistence, util
+from runtoolsio.runcore import cfg, persistence, util
 from runtoolsio.runcore.job import JobInstance
 from runtoolsio.runcore.run import Phaser, PhaseNames
 from runtoolsio.runcore.util import lock
 from runtoolsio.runjob.execution import ExecutingPhase
 from runtoolsio.runjob.featurize import FeaturedContextBuilder
 from runtoolsio.runjob.runner import RunnerJobInstance
+from src.runtoolsio.runcli import log
 
 __version__ = "0.11.0"
 
