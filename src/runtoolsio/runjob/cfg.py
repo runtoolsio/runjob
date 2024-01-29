@@ -12,7 +12,7 @@ from enum import Enum, auto
 import sys
 
 from runtoolsio.runcore import util, paths
-from runtoolsio.runcore.common import ConfigFileNotFoundError, TaroException
+from runtoolsio.runcore.common import ConfigFileNotFoundError, RuntoolsException
 from runtoolsio.runcore.util.attr import get_module_attributes
 
 
@@ -171,5 +171,5 @@ def copy_default_config_to_search_path(overwrite: bool):
         raise ConfigFileAlreadyExists(str(e)) from e
 
 
-class ConfigFileAlreadyExists(TaroException, FileExistsError):
+class ConfigFileAlreadyExists(RuntoolsException, FileExistsError):
     pass
