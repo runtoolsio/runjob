@@ -12,7 +12,7 @@ from enum import Enum, auto
 import sys
 
 from runtoolsio.runcore import util, paths
-from runtoolsio.runcore.common import ConfigFileNotFoundError, RuntoolsException
+from runtoolsio.runcore.common import ConfigFileNotFoundError
 from runtoolsio.runcore.util.attr import get_module_attributes
 
 
@@ -157,19 +157,3 @@ def load_from_file(config=None):
 
     global loaded_config_path
     loaded_config_path = config_path
-
-
-def copy_default_config_to_search_path(overwrite: bool):
-    cfg_to_copy = paths.default_config_file_path()
-    # Copy to first dir in search path
-    # TODO Specify where to copy the file - do not use XDG search path
-    copy_to = paths.taro_config_file_search_path(exclude_cwd=True)[0] / paths.CONFIG_FILE
-    try:
-        util.copy_resource(cfg_to_copy, copy_to, overwrite)
-        return copy_to
-    except FileExistsError as e:
-        raise ConfigFileAlreadyExists(str(e)) from e
-
-
-class ConfigFileAlreadyExists(RuntoolsException, FileExistsError):
-    pass
