@@ -1,13 +1,13 @@
 """
 Tests :mod:`runner` module
 """
-from runtoolsio.runcore.output import Mode
-from runtoolsio.runcore.run import Phaser
-from runtoolsio.runcore.test.observer import TestOutputObserver
+from runtools.runcore.output import Mode
+from runtools.runcore.run import Phaser
+from runtools.runcore.test.observer import TestOutputObserver
 
-from runtoolsio.runjob import RunnerJobInstance
-from runtoolsio.runjob.execution import ExecutingPhase
-from runtoolsio.runjob.process import ProcessExecution
+from runtools.runjob import RunnerJobInstance
+from runtools.runjob.execution import ExecutingPhase
+from runtools.runjob.process import ProcessExecution
 
 
 def test_output_observer():

@@ -12,7 +12,7 @@ import abc
 from enum import auto
 from typing import Tuple
 
-from runtoolsio.runcore.run import TerminationStatus, Phase, RunState, TerminateRun, FailedRun, RunContext
+from runtools.runcore.run import TerminationStatus, Phase, RunState, TerminateRun, FailedRun, RunContext
 
 
 class ExecutionException(Exception):

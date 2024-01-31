@@ -12,8 +12,8 @@ from typing import Union, Optional
 
 import sys
 
-from runtoolsio.runcore.util.observer import CallableNotification
-from runtoolsio.runjob.execution import OutputExecution, \
+from runtools.runcore.util.observer import CallableNotification
+from runtools.runjob.execution import OutputExecution, \
     ExecutionException, ExecutionResult
 
 USE_SHELL = False  # For testing only

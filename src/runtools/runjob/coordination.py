@@ -6,11 +6,11 @@ from threading import Condition, Event, Lock
 
 from tarotools import taro
 
-from runtoolsio.runcore.criteria import InstanceMetadataCriterion, TerminationCriterion, EntityRunCriteria
-from runtoolsio.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
-from runtoolsio.runcore.listening import InstanceTransitionReceiver
-from runtoolsio.runcore.run import RunState, Phase, TerminationStatus, PhaseRun, TerminateRun
-from runtoolsio.runcore.util import lock
+from runtools.runcore.criteria import InstanceMetadataCriterion, TerminationCriterion, EntityRunCriteria
+from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
+from runtools.runcore.listening import InstanceTransitionReceiver
+from runtools.runcore.run import RunState, Phase, TerminationStatus, PhaseRun, TerminateRun
+from runtools.runcore.util import lock
 
 log = logging.getLogger(__name__)
 

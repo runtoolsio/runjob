@@ -5,13 +5,13 @@ Tests that :mod:`runner` sends correct notification to state observers.
 
 import pytest
 
-import runtoolsio.runjob
-from runtoolsio.runcore.job import JobRun, InstanceTransitionObserver
-from runtoolsio.runcore.run import TerminationStatus, RunState, PhaseNames
-from runtoolsio.runcore.test.observer import TestTransitionObserver
-from runtoolsio.runjob import runner
-from runtoolsio.runjob.execution import ExecutionException
-from runtoolsio.runjob.test.execution import TestExecution
+import runtools.runjob
+from runtools.runcore.job import JobRun, InstanceTransitionObserver
+from runtools.runcore.run import TerminationStatus, RunState, PhaseNames
+from runtools.runcore.test.observer import TestTransitionObserver
+from runtools.runjob import runner
+from runtools.runjob.execution import ExecutionException
+from runtools.runjob.test.execution import TestExecution
 
 
 @pytest.fixture
@@ -23,7 +23,7 @@ def observer():
 
 
 def test_passed_args(observer: TestTransitionObserver):
-    runtoolsio.runjob.run_uncoordinated('j1', TestExecution())
+    runtools.runjob.run_uncoordinated('j1', TestExecution())
 
     assert observer.job_runs[0].metadata.entity_id == 'j1'
     assert observer.phases == [(PhaseNames.INIT, PhaseNames.EXEC), (PhaseNames.EXEC, PhaseNames.TERMINAL)]
@@ -32,14 +32,14 @@ def test_passed_args(observer: TestTransitionObserver):
 
 def test_raise_exc(observer: TestTransitionObserver):
     with pytest.raises(Exception):
-        runtoolsio.runjob.run_uncoordinated('j1', TestExecution(raise_exc=Exception))
+        runtools.runjob.run_uncoordinated('j1', TestExecution(raise_exc=Exception))
 
     assert observer.run_states == [RunState.EXECUTING, RunState.ENDED]
     assert observer.job_runs[-1].run.termination.error.category == 'Exception'
 
 
 def test_raise_exec_exc(observer: TestTransitionObserver):
-    runtoolsio.runjob.run_uncoordinated('j1', TestExecution(raise_exc=ExecutionException))
+    runtools.runjob.run_uncoordinated('j1', TestExecution(raise_exc=ExecutionException))
 
     assert observer.run_states == [RunState.EXECUTING, RunState.ENDED]
     assert observer.job_runs[-1].run.termination.failure.category == 'ExecutionException'
@@ -51,7 +51,7 @@ def test_observer_raises_exception():
     """
     observer = ExceptionRaisingObserver(Exception('Should be captured by runner'))
     execution = TestExecution()
-    job_instance = runtoolsio.runjob.job_instance('j1', execution)
+    job_instance = runtools.runjob.job_instance('j1', execution)
     job_instance.add_observer_transition(observer)
     job_instance.run()
     assert execution.executed_latch.is_set()

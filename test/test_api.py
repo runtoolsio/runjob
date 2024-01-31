@@ -1,11 +1,11 @@
 import pytest
 
-from runtoolsio.runcore import client
-from runtoolsio.runcore.client import APIClient, APIErrorType, ErrorCode, ApprovalResult, StopResult
-from runtoolsio.runcore.criteria import parse_criteria
-from runtoolsio.runcore.run import RunState, PhaseNames, TerminationStatus
-from runtoolsio.runcore.test.job import FakeJobInstanceBuilder, FakePhase
-from runtoolsio.runjob.api import APIServer
+from runtools.runcore import client
+from runtools.runcore.client import APIClient, APIErrorType, ErrorCode, ApprovalResult, StopResult
+from runtools.runcore.criteria import parse_criteria
+from runtools.runcore.run import RunState, PhaseNames, TerminationStatus
+from runtools.runcore.test.job import FakeJobInstanceBuilder, FakePhase
+from runtools.runjob.api import APIServer
 
 
 @pytest.fixture(autouse=True)

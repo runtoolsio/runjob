@@ -3,9 +3,9 @@ from threading import Thread
 import pytest
 import time
 
-import runtoolsio.runjob
-from runtoolsio.runjob import warning
-from runtoolsio.runjob.test.execution import TestExecution
+import runtools.runjob
+from runtools.runjob import warning
+from runtools.runjob.test.execution import TestExecution
 
 
 @pytest.fixture
@@ -15,7 +15,7 @@ def execution():
 
 @pytest.fixture
 def job(execution):
-    return runtoolsio.runjob.job_instance('j1', execution)
+    return runtools.runjob.job_instance('j1', execution)
 
 
 def test_exec_time_warning(execution, job):

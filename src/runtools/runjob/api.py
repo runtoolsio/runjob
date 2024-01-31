@@ -12,12 +12,12 @@ import logging
 from abc import ABC, abstractmethod
 from json import JSONDecodeError
 
-from runtoolsio.runcore import paths
-from runtoolsio.runcore.client import StopResult
-from runtoolsio.runcore.criteria import EntityRunCriteria
-from runtoolsio.runcore.job import JobInstanceManager
-from runtoolsio.runcore.run import util
-from runtoolsio.runcore.util.socket import SocketServer
+from runtools.runcore import paths
+from runtools.runcore.client import StopResult
+from runtools.runcore.criteria import EntityRunCriteria
+from runtools.runcore.job import JobInstanceManager
+from runtools.runcore.run import util
+from runtools.runcore.util.socket import SocketServer
 
 log = logging.getLogger(__name__)
 

@@ -7,8 +7,8 @@ from threading import Thread
 import pytest
 from time import sleep
 
-from runtoolsio.runjob.execution import ExecutionResult, ExecutionException
-from runtoolsio.runjob.process import ProcessExecution
+from runtools.runjob.execution import ExecutionResult, ExecutionException
+from runtools.runjob.process import ProcessExecution
 
 
 def test_exec():

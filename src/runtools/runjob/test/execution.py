@@ -10,9 +10,9 @@ import logging
 from threading import Event
 from typing import Type
 
-from runtoolsio.runcore.common import InvalidStateError
-from runtoolsio.runcore.util.observer import CallableNotification
-from runtoolsio.runjob.execution import OutputExecution, ExecutionResult
+from runtools.runcore.common import InvalidStateError
+from runtools.runcore.util.observer import CallableNotification
+from runtools.runjob.execution import OutputExecution, ExecutionResult
 
 log = logging.getLogger(__name__)
 

@@ -2,10 +2,10 @@ import re
 from threading import Timer
 from typing import Sequence
 
-from runtoolsio.runcore import util
-from runtoolsio.runcore.job import JobRun, InstanceTransitionObserver, JobInstance, \
+from runtools.runcore import util
+from runtools.runcore.job import JobRun, InstanceTransitionObserver, JobInstance, \
     InstanceOutputObserver
-from runtoolsio.runcore.run import RunState, PhaseRun, PhaseMetadata, InstanceMetadata
+from runtools.runcore.run import RunState, PhaseRun, PhaseMetadata, InstanceMetadata
 
 
 def exec_time_exceeded(job_instance: JobInstance, warning_name: str, time: float):

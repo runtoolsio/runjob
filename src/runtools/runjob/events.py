@@ -11,10 +11,10 @@ import abc
 import json
 import logging
 
-from runtoolsio.runcore import util, paths
-from runtoolsio.runcore.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver
-from runtoolsio.runcore.run import PhaseMetadata, InstanceMetadata
-from runtoolsio.runcore.util.socket import SocketClient, PayloadTooLarge
+from runtools.runcore import util, paths
+from runtools.runcore.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver
+from runtools.runcore.run import PhaseMetadata, InstanceMetadata
+from runtools.runcore.util.socket import SocketClient, PayloadTooLarge
 
 TRANSITION_LISTENER_FILE_EXTENSION = '.tlistener'
 OUTPUT_LISTENER_FILE_EXTENSION = '.olistener'

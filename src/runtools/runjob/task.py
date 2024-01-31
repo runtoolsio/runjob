@@ -1,7 +1,7 @@
 from enum import Enum
 
-from runtoolsio.runcore import util
-from runtoolsio.runcore.util import convert_if_number
+from runtools.runcore import util
+from runtools.runcore.util import convert_if_number
 
 
 class Fields(Enum):
