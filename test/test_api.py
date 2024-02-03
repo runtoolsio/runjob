@@ -1,6 +1,6 @@
 import pytest
 
-from runtools.runcore import client
+import runtools.runcore
 from runtools.runcore.client import APIClient, APIErrorType, ErrorCode, ApprovalResult, StopResult
 from runtools.runcore.criteria import parse_criteria
 from runtools.runcore.run import RunState, PhaseNames, TerminationStatus
@@ -35,13 +35,13 @@ def test_error_not_found():
 
 
 def test_instances_api():
-    multi_resp = client.get_active_runs()
+    multi_resp = runtools.runcore.get_active_runs()
     instances = {inst.job_id: inst for inst in multi_resp.responses}
     assert instances['j1'].run.lifecycle.run_state == RunState.EXECUTING
     assert instances['j2'].run.lifecycle.run_state == RunState.PENDING
 
-    multi_resp_j1 = client.get_active_runs(parse_criteria('j1'))
-    multi_resp_j2 = client.get_active_runs(parse_criteria('j2'))
+    multi_resp_j1 = runtools.runcore.get_active_runs(parse_criteria('j1'))
+    multi_resp_j2 = runtools.runcore.get_active_runs(parse_criteria('j2'))
     assert multi_resp_j1.responses[0].job_id == 'j1'
     assert multi_resp_j2.responses[0].job_id == 'j2'
 
@@ -49,7 +49,7 @@ def test_instances_api():
 
 
 def test_approve_pending_instance(job_instances):
-    instances, errors = client.approve_pending_instances(PhaseNames.APPROVAL)
+    instances, errors = runtools.runcore.approve_pending_instances(PhaseNames.APPROVAL)
 
     assert not errors
     assert instances[0].instance_metadata.entity_id == 'j1'
@@ -62,7 +62,7 @@ def test_approve_pending_instance(job_instances):
 
 
 def test_stop(job_instances):
-    instances, errors = client.stop_instances(parse_criteria('j1'))
+    instances, errors = runtools.runcore.stop_instances(parse_criteria('j1'))
     assert not errors
     assert len(instances) == 1
     assert instances[0].instance_metadata.entity_id == 'j1'
@@ -77,7 +77,7 @@ def test_tail(job_instances):
     j1, j2 = job_instances
     j1.output.add('EXEC', 'Meditate, do not delay, lest you later regret it.', False)
 
-    instances, errors = client.fetch_output()
+    instances, errors = runtools.runcore.fetch_output()
     assert not errors
 
     assert instances[0].instance_metadata.entity_id == 'j1'

@@ -12,6 +12,7 @@ import logging
 from abc import ABC, abstractmethod
 from json import JSONDecodeError
 
+import runtools.runcore
 from runtools.runcore import paths
 from runtools.runcore.client import StopResult
 from runtools.runcore.criteria import EntityRunCriteria
@@ -105,7 +106,7 @@ class OutputResource(APIResource):
         return '/instances/output'
 
     def handle(self, job_instance, req_body):
-        return {"output": job_instance.fetch_output()}  # TODO Limit length
+        return {"output": runtools.runcore.fetch_output()}  # TODO Limit length
 
 
 class SignalProceedResource(APIResource):
@@ -117,7 +118,7 @@ class SignalProceedResource(APIResource):
     def handle(self, job_instance, req_body):
         waiter = job_instance.queue_waiter
         if waiter:
-            executed = waiter.signal_dispatch()
+            executed = runtools.runcore.signal_dispatch()
         else:
             executed = False
 

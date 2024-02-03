@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from threading import Condition, Event, Lock
 
-from tarotools import taro
-
+import runtools.runcore
 from runtools.runcore.criteria import InstanceMetadataCriterion, TerminationCriterion, EntityRunCriteria
 from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
 from runtools.runcore.listening import InstanceTransitionReceiver
@@ -69,7 +68,7 @@ class NoOverlapPhase(Phase):
 
     def run(self, run_ctx):
         # TODO Phase params criteria
-        runs, _ = taro.client.get_active_runs()
+        runs, _ = runtools.runcore.get_active_runs()
         if any(r for r in runs if self._in_no_overlap_phase(r)):
             return TerminateRun(TerminationStatus.INVALID_OVERLAP)
 
@@ -115,7 +114,7 @@ class DependencyPhase(Phase):
         return self._parameters
 
     def run(self, run_ctx):
-        instances, _ = taro.client.get_active_runs()
+        instances, _ = runtools.runcore.get_active_runs()
         if not any(i for i in instances if self._dependency_match.matches(i)):
             raise TerminateRun(TerminationStatus.UNSATISFIED)
 
@@ -398,7 +397,7 @@ class ExecutionQueue(Queue, InstanceTransitionObserver):
             state_criteria=TerminationCriterion(phases={Phase.QUEUED, Phase.EXECUTING}),
             param_sets=set(self._parameters)
         )
-        jobs, _ = taro.client.get_active_runs(criteria)
+        jobs, _ = runtools.runcore.get_active_runs(criteria)
 
         group_jobs_sorted = JobRuns(sorted(jobs, key=RunState.CREATED))
         next_count = self._max_executions - len(group_jobs_sorted.executing)
@@ -407,7 +406,7 @@ class ExecutionQueue(Queue, InstanceTransitionObserver):
 
         for next_proceed in group_jobs_sorted.queued:
             # TODO Use identity ID
-            signal_resp = taro.client.signal_dispatch(EntityRunCriteria(InstanceMetadataCriterion.for_run(next_proceed)))
+            signal_resp = runtools.runcore.signal_dispatch(EntityRunCriteria(InstanceMetadataCriterion.for_run(next_proceed)))
             for r in signal_resp.responses:
                 if r.executed:
                     next_count -= 1
