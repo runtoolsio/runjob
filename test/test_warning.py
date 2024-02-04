@@ -3,9 +3,9 @@ from threading import Thread
 import pytest
 import time
 
-import runtools.runjob
-from runtools.runjob import warning
-from runtools.runjob.test.execution import TestExecution
+import runtools.runner
+from runtools.runner import warning
+from runtools.runner.test.execution import TestExecution
 
 
 @pytest.fixture

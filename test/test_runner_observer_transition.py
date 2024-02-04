@@ -5,13 +5,13 @@ Tests that :mod:`runner` sends correct notification to state observers.
 
 import pytest
 
-import runtools.runjob
+import runtools.runner
 from runtools.runcore.job import JobRun, InstanceTransitionObserver
 from runtools.runcore.run import TerminationStatus, RunState, PhaseNames
 from runtools.runcore.test.observer import TestTransitionObserver
-from runtools.runjob import runner
-from runtools.runjob.execution import ExecutionException
-from runtools.runjob.test.execution import TestExecution
+from runtools.runner import runner
+from runtools.runner.execution import ExecutionException
+from runtools.runner.test.execution import TestExecution
 
 
 @pytest.fixture

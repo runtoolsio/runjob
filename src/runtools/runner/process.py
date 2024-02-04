@@ -15,7 +15,7 @@ from typing import Union, Tuple
 import sys
 
 from runtools.runcore.util.observer import CallableNotification
-from runtools.runjob.execution import OutputExecution, ExecutionResult, ExecutionException
+from runtools.runner.execution import OutputExecution, ExecutionResult, ExecutionException
 
 log = logging.getLogger(__name__)
 

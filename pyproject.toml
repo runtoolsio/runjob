@@ -3,7 +3,7 @@ requires = ["flit_core >=3.2,<4"]
 build-backend = "flit_core.buildapi"
 
 [project]
-name = "runtoolsio-runjob"
+name = "runtools-runner"
 authors = [{name = "Stan Svec", email = "dev@stansvec.com"}]
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -21,7 +21,7 @@ dependencies = [
 test = ["pytest"]
 
 [tool.flit.module]
-name = "runtoolsio.runjob"
+name = "runtools.runner"
 
 [tool.pytest.ini_options]
 addopts = [
@@ -30,4 +30,4 @@ addopts = [
 pythonpath = "src"
 
 [project.urls]
-Home = "https://github.com/runtoolsio/runjob"
+Home = "https://github.com/runtoolsio/runner"

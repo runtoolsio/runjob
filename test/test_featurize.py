@@ -4,7 +4,7 @@ from runtools.runcore.job import JobInstanceManager
 from runtools.runcore.run import RunState
 from runtools.runcore.test.job import FakeJobInstanceBuilder, FakeJobInstance
 from runtools.runcore.test.observer import TestTransitionObserver, TestOutputObserver
-from runtools.runjob import FeaturedContextBuilder
+from runtools.runner import FeaturedContextBuilder
 
 
 @dataclass

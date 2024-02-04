@@ -5,7 +5,7 @@ from runtools.runcore.client import APIClient, APIErrorType, ErrorCode, Approval
 from runtools.runcore.criteria import parse_criteria
 from runtools.runcore.run import RunState, PhaseNames, TerminationStatus
 from runtools.runcore.test.job import FakeJobInstanceBuilder, FakePhase
-from runtools.runjob.api import APIServer
+from runtools.runner.api import APIServer
 
 
 @pytest.fixture(autouse=True)
