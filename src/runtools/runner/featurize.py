@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Optional, Tuple, Callable, TypeVar, Generic, Dict
 
-from runtools.runcore import persistence as persistence_mod
+from runtools.runcore import db
 from runtools.runcore import plugins as plugins_mod
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver, JobInstanceManager, \
@@ -132,7 +132,8 @@ class FeaturedContextBuilder:
         self._instance_managers.append((factory, open_hook, close_hook, unregister_after_termination))
         return self
 
-    def add_transition_observer(self, factory, open_hook=None, close_hook=None, priority=100) -> 'FeaturedContextBuilder':
+    def add_transition_observer(self, factory, open_hook=None, close_hook=None,
+                                priority=100) -> 'FeaturedContextBuilder':
         self._state_observers.append((factory, open_hook, close_hook, priority))
         return self
 
@@ -141,7 +142,8 @@ class FeaturedContextBuilder:
         return self
 
     def standard_features(
-            self, api_server=True, transition_dispatcher=True, output_dispatcher=True, persistence=True, plugins=()):
+            self, api_server=True, transition_dispatcher=True, output_dispatcher=True, persistence=('sqlite', None),
+            plugins=()):
         if api_server:
             self.api_server()
         if transition_dispatcher:
@@ -149,7 +151,7 @@ class FeaturedContextBuilder:
         if output_dispatcher:
             self.output_dispatcher()
         if persistence:
-            self.persistence()
+            self.persistence(*persistence)
         if plugins:
             self.plugins(plugins)
 
@@ -167,10 +169,10 @@ class FeaturedContextBuilder:
         self.add_output_observer(OutputDispatcher, close_hook=lambda dispatcher: dispatcher.close())
         return self
 
-    def persistence(self):
+    def persistence(self, db_type, db_config=None):
         # Lower default priority so other listeners can see the instance already persisted
-        self.add_transition_observer(
-            persistence_mod.load_configured_persistence, close_hook=lambda db: db.close(), priority=50)
+        self.add_transition_observer(lambda: db.load_database_module(db_type).create_database(db_config),
+                                     close_hook=lambda persistence: persistence.close(), priority=50)
         return self
 
     def plugins(self, names):

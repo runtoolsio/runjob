@@ -23,7 +23,7 @@ def observer():
 
 
 def test_passed_args(observer: TestTransitionObserver):
-    runtools.runjob.run_uncoordinated('j1', TestExecution())
+    runtools.runner.run_uncoordinated('j1', TestExecution())
 
     assert observer.job_runs[0].metadata.entity_id == 'j1'
     assert observer.phases == [(PhaseNames.INIT, PhaseNames.EXEC), (PhaseNames.EXEC, PhaseNames.TERMINAL)]
@@ -32,14 +32,14 @@ def test_passed_args(observer: TestTransitionObserver):
 
 def test_raise_exc(observer: TestTransitionObserver):
     with pytest.raises(Exception):
-        runtools.runjob.run_uncoordinated('j1', TestExecution(raise_exc=Exception))
+        runtools.runner.run_uncoordinated('j1', TestExecution(raise_exc=Exception))
 
     assert observer.run_states == [RunState.EXECUTING, RunState.ENDED]
     assert observer.job_runs[-1].run.termination.error.category == 'Exception'
 
 
 def test_raise_exec_exc(observer: TestTransitionObserver):
-    runtools.runjob.run_uncoordinated('j1', TestExecution(raise_exc=ExecutionException))
+    runtools.runner.run_uncoordinated('j1', TestExecution(raise_exc=ExecutionException))
 
     assert observer.run_states == [RunState.EXECUTING, RunState.ENDED]
     assert observer.job_runs[-1].run.termination.failure.category == 'ExecutionException'
@@ -51,7 +51,7 @@ def test_observer_raises_exception():
     """
     observer = ExceptionRaisingObserver(Exception('Should be captured by runner'))
     execution = TestExecution()
-    job_instance = runtools.runjob.job_instance('j1', execution)
+    job_instance = runtools.runner.job_instance('j1', execution)
     job_instance.add_observer_transition(observer)
     job_instance.run()
     assert execution.executed_latch.is_set()

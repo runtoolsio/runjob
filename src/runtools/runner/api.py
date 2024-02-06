@@ -106,7 +106,7 @@ class OutputResource(APIResource):
         return '/instances/output'
 
     def handle(self, job_instance, req_body):
-        return {"output": runtools.runcore.fetch_output()}  # TODO Limit length
+        return {"output": job_instance.fetch_output()}  # TODO Limit length
 
 
 class SignalProceedResource(APIResource):

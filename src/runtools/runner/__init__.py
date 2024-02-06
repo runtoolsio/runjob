@@ -8,7 +8,7 @@ IMPLEMENTATION NOTE:
 """
 from threading import Thread
 
-from runtools.runcore import persistence, util
+from runtools.runcore import persistence, util, InvalidConfiguration
 from runtools.runcore.job import JobInstance
 from runtools.runcore.run import Phaser, PhaseNames
 from runtools.runcore.util import lock
@@ -18,19 +18,36 @@ from runtools.runner.runner import RunnerJobInstance
 
 __version__ = "0.11.0"
 
-plugins = ()
+_plugins = ()
+_persistence = ()
 
 
 def configure(**kwargs):
-    plugins_obj = kwargs.get('plugins', {"enabled": False, "load": ()})
+    # TODO:
+    # max age and max records
+    # lock_timeout_sec = 10
+    # lock_max_check_time_sec = 0.05
+
+    plugins_obj = kwargs.get("plugins", {"enabled": False, "load": ()})
     if plugins_obj.get("enabled", True):
-        global plugins
-        plugins = tuple(plugins_obj.get("load", ()))
+        global _plugins
+        _plugins = tuple(plugins_obj.get("load", ()))
+
+    persistence_array = kwargs.get("persistence", ())
+    dbs = []  # TODO max age and max records
+    for p in persistence_array:
+        if "type" not in p:
+            raise InvalidConfiguration("Field `type` is mandatory in `persistence` configuration object")
+        if not p.get("enabled", True):
+            continue
+        dbs.append(p)
+    global _persistence
+    _persistence = tuple(dbs)
 
 
 def run_job(job_id, phases, output=None, task_tracker=None, *, run_id=None, instance_id=None, **user_params):
     instance_id = instance_id or util.unique_timestamp_hex()
-    with FeaturedContextBuilder().standard_features(plugins=plugins).build() as ctx:
+    with FeaturedContextBuilder().standard_features(plugins=_plugins).build() as ctx:
         phaser = Phaser(phases)
         instance = RunnerJobInstance(job_id, instance_id, phaser, output, task_tracker, run_id=run_id, **user_params)
         instance = ctx.add(instance)
@@ -39,7 +56,7 @@ def run_job(job_id, phases, output=None, task_tracker=None, *, run_id=None, inst
 
 
 def execute(job_id, job_execution, coordinations=None, *, instance_id=None):
-    with FeaturedContextBuilder().standard_features(plugins=plugins).build_as_run() as ctx:
+    with FeaturedContextBuilder().standard_features(plugins=_plugins).build_as_run() as ctx:
         instance = ctx.add(job_instance(
             job_id,
             job_execution,

@@ -15,7 +15,7 @@ def execution():
 
 @pytest.fixture
 def job(execution):
-    return runtools.runjob.job_instance('j1', execution)
+    return runtools.runner.job_instance('j1', execution)
 
 
 def test_exec_time_warning(execution, job):
