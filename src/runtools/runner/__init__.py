@@ -8,7 +8,7 @@ IMPLEMENTATION NOTE:
 """
 from threading import Thread
 
-from runtools.runcore import persistence, util, InvalidConfiguration
+from runtools.runcore import util, InvalidConfiguration
 from runtools.runcore.job import JobInstance
 from runtools.runcore.run import Phaser, PhaseNames
 from runtools.runcore.util import lock
@@ -68,10 +68,6 @@ def execute(job_id, job_execution, coordinations=None, *, instance_id=None):
 
 def execute_in_new_thread(job_id, job_execution, no_overlap=False, depends_on=None, pending_group=None):
     Thread(target=execute, args=(job_id, job_execution, no_overlap, depends_on, pending_group)).start()
-
-
-def close():
-    persistence.close()
 
 
 def job_instance(job_id, exec_, *, instance_id=None, **user_params) -> RunnerJobInstance:
