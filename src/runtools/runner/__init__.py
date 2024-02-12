@@ -45,14 +45,16 @@ def configure(**kwargs):
     _persistence = tuple(dbs)
 
 
-def run_job(job_id, phases, output=None, task_tracker=None, *, run_id=None, instance_id=None, **user_params):
+def job_instance(job_id, phases, output=None, task_tracker=None, *, run_id=None, instance_id=None, **user_params):
     instance_id = instance_id or util.unique_timestamp_hex()
     with FeaturedContextBuilder().standard_features(plugins=_plugins).build() as ctx:
         phaser = Phaser(phases)
         instance = RunnerJobInstance(job_id, instance_id, phaser, output, task_tracker, run_id=run_id, **user_params)
-        instance = ctx.add(instance)
-        instance.run()
-        return job_instance
+        return ctx.add(instance)
+
+
+def run_job(job_id, phases, output=None, task_tracker=None, *, run_id=None, instance_id=None, **user_params):
+    job_instance(job_id, phases, output, task_tracker, run_id=run_id, instance_id=instance_id, **user_params).run()
 
 
 def execute(job_id, job_execution, coordinations=None, *, instance_id=None):
@@ -68,11 +70,6 @@ def execute(job_id, job_execution, coordinations=None, *, instance_id=None):
 
 def execute_in_new_thread(job_id, job_execution, no_overlap=False, depends_on=None, pending_group=None):
     Thread(target=execute, args=(job_id, job_execution, no_overlap, depends_on, pending_group)).start()
-
-
-def job_instance(job_id, exec_, *, instance_id=None, **user_params) -> RunnerJobInstance:
-    return RunnerJobInstance(job_id, instance_id, Phaser([ExecutingPhase(PhaseNames.EXEC, exec_)]), run_id=instance_id,
-                             user_params=user_params)
 
 
 def run(job_id, execution, sync_=None, state_locker=lock.default_queue_locker(), *, instance_id=None,
