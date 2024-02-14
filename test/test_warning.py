@@ -4,7 +4,7 @@ import pytest
 import time
 
 import runtools.runner
-from runtools.runner import warning
+from runtools.runner import warning, ExecutingPhase
 from runtools.runner.test.execution import TestExecution
 
 
@@ -15,7 +15,7 @@ def execution():
 
 @pytest.fixture
 def job(execution):
-    return runtools.runner.job_instance('j1', execution)
+    return runtools.runner.job_instance('j1', [ExecutingPhase('', execution)])
 
 
 def test_exec_time_warning(execution, job):

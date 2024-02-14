@@ -7,11 +7,13 @@ IMPLEMENTATION NOTE:
     additional packages.
 """
 from threading import Thread
+from typing import List
 
 from runtools.runcore import util, InvalidConfiguration
 from runtools.runcore.job import JobInstance
 from runtools.runcore.run import Phaser, PhaseNames
 from runtools.runcore.util import lock
+from runtools.runcore.util.socket import SocketClient
 from runtools.runner.execution import ExecutingPhase
 from runtools.runner.featurize import FeaturedContextBuilder
 from runtools.runner.runner import RunnerJobInstance
@@ -90,3 +92,20 @@ def run_uncoordinated(job_id, exec_, *, instance_id=None, **user_params) -> JobI
                                           user_params=user_params)
     instance.run()
     return instance
+
+
+def clean_stale_sockets(file_extension) -> List[str]:
+    cleaned = []
+
+    c = SocketClient(file_extension, True)
+    try:
+        ping_result = c.ping()
+    finally:
+        c.close()
+
+    for stale_socket in ping_result.stale_sockets:
+        stale_socket.unlink(missing_ok=True)
+        cleaned.append(stale_socket.name)
+
+    return cleaned
+

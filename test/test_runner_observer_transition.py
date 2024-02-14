@@ -9,7 +9,7 @@ import runtools.runner
 from runtools.runcore.job import JobRun, InstanceTransitionObserver
 from runtools.runcore.run import TerminationStatus, RunState, PhaseNames
 from runtools.runcore.test.observer import TestTransitionObserver
-from runtools.runner import runner
+from runtools.runner import runner, ExecutingPhase
 from runtools.runner.execution import ExecutionException
 from runtools.runner.test.execution import TestExecution
 
@@ -51,7 +51,7 @@ def test_observer_raises_exception():
     """
     observer = ExceptionRaisingObserver(Exception('Should be captured by runner'))
     execution = TestExecution()
-    job_instance = runtools.runner.job_instance('j1', execution)
+    job_instance = runtools.runner.job_instance('j1', [ExecutingPhase('', execution)])
     job_instance.add_observer_transition(observer)
     job_instance.run()
     assert execution.executed_latch.is_set()
