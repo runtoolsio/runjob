@@ -57,7 +57,7 @@ class TransitionDispatcher(EventDispatcher, InstanceTransitionObserver):
 
     def __init__(self):
         super(TransitionDispatcher, self).__init__(
-            SocketClient(paths.socket_files(TRANSITION_LISTENER_FILE_EXTENSION), bidirectional=False))
+            SocketClient(paths.socket_files_provider(TRANSITION_LISTENER_FILE_EXTENSION), bidirectional=False))
 
     def new_instance_phase(self, job_run: JobRun, previous_phase, new_phase, ordinal):
         event = {
@@ -77,7 +77,7 @@ class OutputDispatcher(EventDispatcher, InstanceOutputObserver):
 
     def __init__(self):
         super(OutputDispatcher, self).__init__(
-            SocketClient(paths.socket_files(OUTPUT_LISTENER_FILE_EXTENSION), bidirectional=False))
+            SocketClient(paths.socket_files_provider(OUTPUT_LISTENER_FILE_EXTENSION), bidirectional=False))
 
     def new_instance_output(self, instance_meta: InstanceMetadata, phase: PhaseMetadata, output, is_error):
         event = {
