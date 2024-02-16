@@ -4,6 +4,7 @@ import pytest
 import time
 
 import runtools.runner
+from runtools.runcore.track import TaskTrackerMem
 from runtools.runner import warning, ExecutingPhase
 from runtools.runner.test.execution import TestExecution
 
@@ -15,7 +16,7 @@ def execution():
 
 @pytest.fixture
 def job(execution):
-    return runtools.runner.job_instance('j1', [ExecutingPhase('', execution)])
+    return runtools.runner.job_instance('j1', [ExecutingPhase('', execution)], task_tracker=TaskTrackerMem())
 
 
 def test_exec_time_warning(execution, job):

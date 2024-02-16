@@ -49,7 +49,6 @@ from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserve
                                   InstanceOutputObserver)
 from runtools.runcore.output import InMemoryOutput, Mode
 from runtools.runcore.run import PhaseRun, Outcome, RunState, P, PhaseMetadata, JobInstanceMetadata
-from runtools.runcore.track import TaskTrackerMem
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
 log = logging.getLogger(__name__)
@@ -73,7 +72,7 @@ class RunnerJobInstance(JobInstance):
         self._metadata = JobInstanceMetadata(job_id, run_id or instance_id, instance_id, parameters, user_params)
         self._phaser = phaser
         self._output = output or InMemoryOutput()
-        self._task_tracker = task_tracker or TaskTrackerMem()
+        self._task_tracker = task_tracker
         self._transition_notification = ObservableNotification[InstanceTransitionObserver](
             error_hook=log_observer_error)
         self._output_notification = ObservableNotification[InstanceOutputObserver](error_hook=log_observer_error)
@@ -107,7 +106,8 @@ class RunnerJobInstance(JobInstance):
         return self._phaser.get_typed_phase(phase_type, phase_name)
 
     def job_run_info(self) -> JobRun:
-        return JobRun(self.metadata, self._phaser.run_info(), self._task_tracker.tracked_task)
+        tracked_task = self._task_tracker.tracked_task if self.task_tracker else None
+        return JobRun(self.metadata, self._phaser.run_info(), tracked_task)
 
     def fetch_output(self, mode=Mode.HEAD, *, lines=0):
         return self._output.fetch(mode, lines=lines)

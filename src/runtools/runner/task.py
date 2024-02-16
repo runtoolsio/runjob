@@ -34,11 +34,11 @@ def field_conversion(parsed):
     return {key: value for key, value in converted.items() if value is not None}
 
 
-class TaskOutputToTracker:
+class OutputToTask:
 
     def __init__(self, task_tracker, parsers, conversion=field_conversion):
         self.tracker = task_tracker
-        self.parsers = parsers
+        self.parsers = list(parsers)
         self.conversion = conversion
 
     def __call__(self, output, is_error=False):

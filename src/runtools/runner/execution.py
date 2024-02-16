@@ -92,9 +92,13 @@ class OutputExecution(Execution):
 
 class ExecutingPhase(Phase):
 
-    def __init__(self, phase_name, execution):
+    def __init__(self, phase_name, execution, *, output_handlers=()):
         super().__init__(phase_name, RunState.EXECUTING)
         self._execution = execution
+        if isinstance(output_handlers, (tuple, list)):
+            self._output_handlers = (output_handlers,)
+        else:
+            self._output_handlers = tuple(output_handlers)
 
     @property
     def execution(self):
@@ -107,6 +111,8 @@ class ExecutingPhase(Phase):
     def run(self, run_ctx: RunContext):
         if hasattr(self._execution, 'add_callback_output'):
             self._execution.add_callback_output(run_ctx.new_output)
+            for output_handler in self._output_handlers:
+                self._execution.add_callback_output(output_handler)
 
         try:
             exec_res = self._execution.execute()
@@ -114,6 +120,8 @@ class ExecutingPhase(Phase):
             raise FailedRun('ExecutionException', str(e))
         finally:
             if hasattr(self._execution, 'remove_callback_output'):
+                for output_handler in reversed(self._output_handlers):
+                    self._execution.add_callback_output(output_handler)
                 self._execution.remove_callback_output(run_ctx.new_output)
 
         match exec_res:
