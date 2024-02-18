@@ -95,10 +95,7 @@ class ExecutingPhase(Phase):
     def __init__(self, phase_name, execution, *, output_handlers=()):
         super().__init__(phase_name, RunState.EXECUTING)
         self._execution = execution
-        if isinstance(output_handlers, (tuple, list)):
-            self._output_handlers = (output_handlers,)
-        else:
-            self._output_handlers = tuple(output_handlers)
+        self._output_handlers = tuple(output_handlers)
 
     @property
     def execution(self):
