@@ -24,6 +24,7 @@ def field_conversion(parsed):
         Fields.EVENT: parsed.get(Fields.EVENT.value),
         Fields.TASK: parsed.get(Fields.TASK.value),
         Fields.TIMESTAMP: util.parse_datetime(parsed.get(Fields.TIMESTAMP.value)),
+        Fields.OPERATION: parsed.get(Fields.OPERATION.value),
         Fields.COMPLETED: convert_if_number(parsed.get(Fields.COMPLETED.value)),
         Fields.INCREMENT: convert_if_number(parsed.get(Fields.INCREMENT.value)),
         Fields.TOTAL: convert_if_number(parsed.get(Fields.TOTAL.value)),
