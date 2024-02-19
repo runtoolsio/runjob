@@ -19,7 +19,7 @@ def output_matches(job_instance: JobInstance, warning_name: str, regex: str):
 def register(job_instance: JobInstance, *, warn_times: Sequence[str] = (), warn_outputs: Sequence[str] = ()):
     for warn_time in warn_times:
         time = util.parse_duration_to_sec(warn_time)
-        exec_time_exceeded(job_instance, f"exec_time>{time}s", time)
+        exec_time_exceeded(job_instance, f"run_time>{time}s", time)
 
     for warn_output in warn_outputs:
         output_matches(job_instance, f"output=~{warn_output}", warn_output)
@@ -27,9 +27,9 @@ def register(job_instance: JobInstance, *, warn_times: Sequence[str] = (), warn_
 
 class _ExecTimeWarning(InstanceTransitionObserver):
 
-    def __init__(self, job_instance, name, time: float):
+    def __init__(self, job_instance, text, time: float):
         self.job_instance = job_instance
-        self.name = name
+        self.text = text
         self.time = time
         self.timer = None
 
@@ -44,11 +44,11 @@ class _ExecTimeWarning(InstanceTransitionObserver):
 
     def _check(self):
         if self.job_instance.job_run_info().run.lifecycle.run_state != RunState.ENDED:
-            self.job_instance.task_tracker.warning(f"Slow execution - exceeded {self.time} seconds")
+            self.job_instance.task_tracker.warning(self.text)
 
     def __repr__(self):
         return "{}({!r}, {!r}, {!r})".format(
-            self.__class__.__name__, self.job_instance, self.name, self.time)
+            self.__class__.__name__, self.job_instance, self.text, self.time)
 
 
 class _OutputMatchesWarning(InstanceOutputObserver):
