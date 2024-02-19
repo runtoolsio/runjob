@@ -55,7 +55,7 @@ log = logging.getLogger(__name__)
 
 
 def log_observer_error(observer, args, exc):
-    log.error("event=[observer_error] observer=[%s], args=[%s] error=[%s]", observer, args, exc)
+    log.error("event=[observer_error] observer=[%s], args=[%s] error=[%s]", observer, args, exc, exc_info=True)
 
 
 _transition_observer = ObservableNotification[InstanceTransitionObserver](error_hook=log_observer_error)
