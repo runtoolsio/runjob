@@ -53,12 +53,12 @@ class _ExecTimeWarning(InstanceTransitionObserver):
 
 class _OutputMatchesWarning(InstanceOutputObserver):
 
-    def __init__(self, job_instance, w_id, regex):
+    def __init__(self, job_instance, text, regex):
         self.job_instance = job_instance
-        self.id = w_id
+        self.text = text
         self.regex = re.compile(regex)
 
     def new_instance_output(self, instance_meta: InstanceMetadata, phase: PhaseMetadata, output: str, is_err: bool):
         m = self.regex.search(output)
         if m:
-            self.job_instance.task_tracker.warning(output)
+            self.job_instance.task_tracker.warning(self.text)
