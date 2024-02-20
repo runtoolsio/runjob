@@ -47,7 +47,8 @@ def configure(**kwargs):
     _persistence = tuple(dbs)
 
 
-def job_instance(job_id, phases, output=None, task_tracker=None, *, run_id=None, instance_id=None, **user_params):
+def job_instance(job_id, phases, output=None, task_tracker=None, *, run_id=None, instance_id=None, **user_params)\
+        -> RunnerJobInstance:
     instance_id = instance_id or util.unique_timestamp_hex()
     with FeaturedContextBuilder().standard_features(plugins=_plugins).build() as ctx:
         phaser = Phaser(phases)
