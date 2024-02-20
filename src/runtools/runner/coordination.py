@@ -24,25 +24,30 @@ class ApprovalPhase(Phase):
         super().__init__(phase_name, RunState.PENDING)
         self._timeout = timeout
         self._event = Event()
+        self._stopped = False
 
     def run(self, run_ctx):
         approval_task = run_ctx.task_tracker.subtask('Approval')
-        approval_task.event('waiting for approval')
+        approval_task.event('waiting')
 
         approved = self._event.wait(self._timeout or None)
+        if self._stopped:
+            approval_task.finished('cancelled')
+            return
         if not approved:
-            approval_task.result('not approved')
+            approval_task.finished('not approved')
             raise TerminateRun(TerminationStatus.TIMEOUT)
 
-        approval_task.result('approved')
+        approval_task.finished('approved')
 
     def approve(self):
         self._event.set()
 
     def is_approved(self):
-        self._event.is_set()
+        self._event.is_set() and not self._stopped
 
     def stop(self):
+        self._stopped = True
         self._event.set()
 
     @property
