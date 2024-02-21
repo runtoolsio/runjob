@@ -18,10 +18,10 @@ def test_parse_event():
     assert tracker.tracked_task.current_event is None
 
     parser.new_output('event=[eventim_apollo] we have first event here')
-    assert tracker.tracked_task.current_event[0] == 'eventim_apollo'
+    assert tracker.tracked_task.current_event.text == 'eventim_apollo'
 
     parser.new_output('second follows: event=[event_horizon]')
-    assert tracker.tracked_task.current_event[0] == 'event_horizon'
+    assert tracker.tracked_task.current_event.text == 'event_horizon'
 
 
 def test_operation_without_name():
@@ -38,10 +38,10 @@ def test_parse_timestamps():
     sut = OutputToTask(tracker, [KVParser(post_parsers=[(iso_date_time_parser(Fields.TIMESTAMP.value))])])
 
     sut.new_output('2020-10-01 10:30:30 event=[e1]')
-    assert tracker.tracked_task.current_event[1] == datetime.strptime('2020-10-01 10:30:30', "%Y-%m-%d %H:%M:%S")
+    assert tracker.tracked_task.current_event.timestamp == datetime.strptime('2020-10-01 10:30:30', "%Y-%m-%d %H:%M:%S")
 
     sut.new_output('2020-10-01T10:30:30.543 event=[e1]')
-    assert tracker.tracked_task.current_event[1] == datetime.strptime('2020-10-01 10:30:30.543', "%Y-%m-%d %H:%M:%S.%f")
+    assert tracker.tracked_task.current_event.timestamp == datetime.strptime('2020-10-01 10:30:30.543', "%Y-%m-%d %H:%M:%S.%f")
 
 
 def test_parse_progress():
@@ -69,8 +69,8 @@ def test_multiple_parsers_and_tasks():
     task = tracker.tracked_task
     assert task.subtasks[0].name == 'task1'
     assert task.subtasks[1].name == 'task2'
-    assert task.subtasks[1].current_event[0] == 'e1'
-    assert str(task.subtasks[1].current_event[1]) == '2020-10-01 10:30:30'
+    assert task.subtasks[1].current_event.text == 'e1'
+    assert str(task.subtasks[1].current_event.timestamp) == '2020-10-01 10:30:30'
     assert not task.current_event
 
 
@@ -102,10 +102,10 @@ def test_subtask_event():
 
     sut.new_output("event=[event_in_main_task]")
     sut.new_output("event=[event_in_subtask] task=[subtask1]")
-    assert tracker.tracked_task.subtasks[0].current_event[0] == 'event_in_subtask'
+    assert tracker.tracked_task.subtasks[0].current_event.text == 'event_in_subtask'
 
     sut.new_output("event=[another_event_in_main_task]")
-    assert tracker.tracked_task.current_event[0] == 'another_event_in_main_task'
+    assert tracker.tracked_task.current_event.text == 'another_event_in_main_task'
 
 
 def test_task_started_and_update_on_event():
