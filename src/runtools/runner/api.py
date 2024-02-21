@@ -46,12 +46,15 @@ class APIResource(ABC):
     def path(self):
         """Path of the resource including leading '/' character"""
 
-    def validate(self, req_body):
-        """Raise :class:`__ServerError if request body is invalid"""
-
     @abstractmethod
     def handle(self, job_instance, req_body):
         """Handle request and optionally return response or raise :class:`__ServerError"""
+
+    def requires_run_match(self) -> bool:
+        return False
+
+    def validate(self, req_body):
+        """Raise :class:`__ServerError if request body is invalid"""
 
 
 class InstancesResource(APIResource):
@@ -70,22 +73,24 @@ class ApproveResource(APIResource):
     def path(self):
         return '/instances/approve'
 
-    def validate(self, req_body):
-        if 'phase' not in req_body:
-            raise _missing_field_error('phase')
-
     def handle(self, job_instance, req_body):
-        phase_name = req_body['phase']
-        phase = job_instance.phases.get(phase_name)
-        if not phase:
-            return {"approval_result": 'NOT_APPLICABLE'}
+        phase_name = req_body.get('phase')
+        if phase_name:
+            phase = job_instance.phases.get(phase_name)
+            if not phase:
+                return {"approval_result": 'NOT_APPLICABLE'}
+        else:
+            phase = job_instance.current_phase
 
         try:
             phase.approve()
         except AttributeError:
-            return {"approval_result": 'NOT_APPLICABLE'}  # Or an error?
+            return {"approval_result": 'NOT_APPLICABLE'}
 
         return {"approval_result": 'APPROVED'}
+
+    def requires_run_match(self) -> bool:
+        return True
 
 
 class StopResource(APIResource):
@@ -159,7 +164,7 @@ class APIServer(SocketServer, JobInstanceManager):
         try:
             resource = self._resolve_resource(req_body)
             resource.validate(req_body)
-            job_instances = self._matching_instances(req_body)
+            job_instances = self._matching_instances(req_body, resource.requires_run_match())
         except _ApiError as e:
             return e.create_response()
 
@@ -189,9 +194,11 @@ class APIServer(SocketServer, JobInstanceManager):
 
         return resource
 
-    def _matching_instances(self, req_body):
+    def _matching_instances(self, req_body, match_required):
         run_match = req_body.get('request_metadata', {}).get('run_match', None)
         if not run_match:
+            if match_required:
+                raise _missing_field_error('request_metadata.run_match')
             return self._job_instances
 
         try:

@@ -2,7 +2,7 @@ import pytest
 
 import runtools.runcore
 from runtools.runcore.client import APIClient, APIErrorType, ErrorCode, ApprovalResult, StopResult
-from runtools.runcore.criteria import parse_criteria
+from runtools.runcore.criteria import parse_criteria, EntityRunCriteria
 from runtools.runcore.run import RunState, PhaseNames, TerminationStatus
 from runtools.runcore.test.job import FakeJobInstanceBuilder, FakePhase
 from runtools.runner.api import APIServer
@@ -49,7 +49,7 @@ def test_instances_api():
 
 
 def test_approve_pending_instance(job_instances):
-    instances, errors = runtools.runcore.approve_pending_instances(PhaseNames.APPROVAL)
+    instances, errors = runtools.runcore.approve_pending_instances(EntityRunCriteria.all(), PhaseNames.APPROVAL)
 
     assert not errors
     assert instances[0].instance_metadata.entity_id == 'j1'
