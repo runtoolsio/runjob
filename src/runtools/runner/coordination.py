@@ -2,14 +2,18 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
+from logging import DEBUG
 from threading import Condition, Event, Lock
 
 import runtools.runcore
+from runtools.runcore import paths
 from runtools.runcore.criteria import InstanceMetadataCriterion, TerminationCriterion, EntityRunCriteria
 from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
 from runtools.runcore.listening import InstanceTransitionReceiver
-from runtools.runcore.run import RunState, Phase, TerminationStatus, PhaseRun, TerminateRun
-from runtools.runcore.util import lock
+from runtools.runcore.run import RunState, Phase, TerminationStatus, PhaseRun, TerminateRun, RunContext
+from runtools.runcore.util import lock, KVParser
+from runtools.runcore.util.log import ForwardLogs
+from runtools.runner.task import OutputToTask
 
 log = logging.getLogger(__name__)
 
@@ -22,23 +26,26 @@ class ApprovalPhase(Phase):
 
     def __init__(self, phase_name, timeout=0):
         super().__init__(phase_name, RunState.PENDING)
+        self._log = logging.getLogger(self.__class__.__name__)
+        self._log.setLevel(DEBUG)
         self._timeout = timeout
         self._event = Event()
         self._stopped = False
 
-    def run(self, run_ctx):
-        approval_task = run_ctx.task_tracker.subtask('Approval')
-        approval_task.event('waiting')
+    def run(self, run_ctx: RunContext):
+        output_to_task = OutputToTask(run_ctx.task_tracker, parsers=[KVParser()])
+        with ForwardLogs(self._log, [run_ctx.create_logging_handler(), output_to_task.create_logging_handler()]):
+            self._log.debug("task=[Approval] operation=[Waiting]")
 
-        approved = self._event.wait(self._timeout or None)
-        if self._stopped:
-            approval_task.finished('cancelled')
-            return
-        if not approved:
-            approval_task.finished('not approved')
-            raise TerminateRun(TerminationStatus.TIMEOUT)
+            approved = self._event.wait(self._timeout or None)
+            if self._stopped:
+                self._log.debug("task=[Approval] result=[Cancelled]")
+                return
+            if not approved:
+                self._log.debug("task=[Approval] result=[Not Approved]")
+                raise TerminateRun(TerminationStatus.TIMEOUT)
 
-        approval_task.finished('approved')
+            self._log.debug("task=[Approval] result=[Approved]")
 
     def approve(self):
         self._event.set()
@@ -57,9 +64,9 @@ class ApprovalPhase(Phase):
 
 class NoOverlapPhase(Phase):
     """
-    TODO Global lock
+    TODO Docs
     """
-    def __init__(self, phase_name, no_overlap_id, until_phase=None):
+    def __init__(self, phase_name, no_overlap_id, until_phase=None, *, locker_factory=lock.default_locker_factory()):
         if not no_overlap_id:
             raise ValueError("no_overlap_id cannot be empty")
 
@@ -70,6 +77,7 @@ class NoOverlapPhase(Phase):
         }
         super().__init__(phase_name, RunState.EVALUATING, params)
         self._no_overlap_id = no_overlap_id
+        self._locker = locker_factory(paths.lock_path(f"noo-{no_overlap_id}.lock", True))
 
     def run(self, run_ctx):
         # TODO Phase params criteria
@@ -83,11 +91,10 @@ class NoOverlapPhase(Phase):
 
         for idx, phase_meta in enumerate(job_run.phases):
             if phase_meta.parameters.get('no_overlap_id') == self._no_overlap_id:
-                if (idx + 1) >= len(job_run.phases):
-                    continue  # No next phase - shouldn't happen but check anyway
-
-                no_overlap_phase = phase_meta.phase.name
-                until_phase = phase_meta.parameters.get('until_phase') or job_run.phases[idx + 1].phase.name
+                if (idx + 1) < len(job_run.phases):
+                    no_overlap_phase = phase_meta.phase.name
+                    until_phase = phase_meta.parameters.get('until_phase') or job_run.phases[idx + 1].phase.name
+                break
 
         if not no_overlap_phase:
             return False

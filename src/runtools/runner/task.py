@@ -1,3 +1,4 @@
+import logging
 from enum import Enum
 
 from runtools.runcore import util
@@ -37,13 +38,30 @@ def field_conversion(parsed):
 
 class OutputToTask:
 
-    def __init__(self, task_tracker, parsers, conversion=field_conversion):
+    def __init__(self, task_tracker, *, parsers, conversion=field_conversion):
         self.tracker = task_tracker
         self.parsers = list(parsers)
         self.conversion = conversion
 
     def __call__(self, output, is_error=False):
         self.new_output(output, is_error)
+
+    def create_logging_handler(self):
+        """
+        Creates and returns a logging.Handler instance that forwards log records
+        to this OutputToTask instance.
+        """
+        class InternalHandler(logging.Handler):
+            def __init__(self, outer_instance):
+                super().__init__()
+                self.outer_instance = outer_instance
+
+            def emit(self, record):
+                output = self.format(record)  # Convert log record to a string
+                is_error = record.levelno >= logging.ERROR
+                self.outer_instance(output, is_error)
+
+        return InternalHandler(self)
 
     def new_output(self, output, is_error=False):
         parsed = {}
