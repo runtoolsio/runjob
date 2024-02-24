@@ -18,6 +18,14 @@ from runtools.runner.task import OutputToTask
 log = logging.getLogger(__name__)
 
 
+def output_to_task_handler(run_ctx):
+    return OutputToTask(run_ctx.task_tracker, parsers=[KVParser()]).create_logging_handler()
+
+
+def forward_logs(logger, run_ctx):
+    return ForwardLogs(logger, [run_ctx.create_logging_handler(), output_to_task_handler(run_ctx)])
+
+
 class ApprovalPhase(Phase):
     """
     Approval parameters (incl. timeout) + approval eval as separate objects
@@ -33,8 +41,7 @@ class ApprovalPhase(Phase):
         self._stopped = False
 
     def run(self, run_ctx: RunContext):
-        output_to_task = OutputToTask(run_ctx.task_tracker, parsers=[KVParser()])
-        with ForwardLogs(self._log, [run_ctx.create_logging_handler(), output_to_task.create_logging_handler()]):
+        with forward_logs(self._log, run_ctx):
             self._log.debug("task=[Approval] operation=[Waiting]")
 
             approved = self._event.wait(self._timeout or None)
@@ -66,6 +73,7 @@ class NoOverlapPhase(Phase):
     """
     TODO Docs
     """
+
     def __init__(self, phase_name, no_overlap_id, until_phase=None, *, locker_factory=lock.default_locker_factory()):
         if not no_overlap_id:
             raise ValueError("no_overlap_id cannot be empty")
@@ -76,31 +84,39 @@ class NoOverlapPhase(Phase):
             'until_phase': until_phase
         }
         super().__init__(phase_name, RunState.EVALUATING, params)
+        self._log = logging.getLogger(self.__class__.__name__)
+        self._log.setLevel(DEBUG)
         self._no_overlap_id = no_overlap_id
         self._locker = locker_factory(paths.lock_path(f"noo-{no_overlap_id}.lock", True))
 
     def run(self, run_ctx):
-        # TODO Phase params criteria
-        runs, _ = runtools.runcore.get_active_runs()
-        if any(r for r in runs if self._in_no_overlap_phase(r)):
-            return TerminateRun(TerminationStatus.INVALID_OVERLAP)
+        with forward_logs(self._log, run_ctx):
+            self._log.debug("task=[No Overlap Check]")
+            with self._locker():
+                runs, _ = runtools.runcore.get_active_runs()
+                if any(r for r in runs if self._in_no_overlap_phase(r)):
+                    self._log.debug("task=[No Overlap Check] result=[Overlap found]")
+                    raise TerminateRun(TerminationStatus.OVERLAP)
+
+        self._log.debug("task=[No Overlap Check] result=[No overlap found]")
 
     def _in_no_overlap_phase(self, job_run):
         no_overlap_phase = None
         until_phase = None
 
-        for idx, phase_meta in enumerate(job_run.phases):
+        for idx, phase_meta in enumerate(job_run.run.phases):
             if phase_meta.parameters.get('no_overlap_id') == self._no_overlap_id:
-                if (idx + 1) < len(job_run.phases):
-                    no_overlap_phase = phase_meta.phase.name
-                    until_phase = phase_meta.parameters.get('until_phase') or job_run.phases[idx + 1].phase.name
+                if (idx + 1) < len(job_run.run.phases):
+                    no_overlap_phase = phase_meta.phase_name
+                    until_phase = phase_meta.parameters.get('until_phase') or job_run.run.phases[idx + 1].phase_name
                 break
 
         if not no_overlap_phase:
             return False
 
-        protected_phases = job_run.lifecycle.phases_between(no_overlap_phase, until_phase)
-        return job_run.lifecycle.phase in protected_phases
+        self._log.debug(f"event=[no_overlap_instance_found] instance=[{job_run.metadata}]")
+        protected_phases = job_run.run.lifecycle.phases_between(no_overlap_phase, until_phase)
+        return job_run.run.lifecycle.current_phase_name in protected_phases
 
     def stop(self):
         pass
@@ -418,7 +434,8 @@ class ExecutionQueue(Queue, InstanceTransitionObserver):
 
         for next_proceed in group_jobs_sorted.queued:
             # TODO Use identity ID
-            signal_resp = runtools.runcore.signal_dispatch(EntityRunCriteria(InstanceMetadataCriterion.for_run(next_proceed)))
+            signal_resp = runtools.runcore.signal_dispatch(
+                EntityRunCriteria(InstanceMetadataCriterion.for_run(next_proceed)))
             for r in signal_resp.responses:
                 if r.executed:
                     next_count -= 1

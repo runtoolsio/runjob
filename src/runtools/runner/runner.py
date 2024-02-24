@@ -172,7 +172,7 @@ class RunnerJobInstance(JobInstance):
 
         if termination:
             if termination.status.is_outcome(Outcome.NON_SUCCESS):
-                log.warning(self._log('run_incomplete'))
+                log.warning(self._log('run_incomplete', "termination_status=[{}]", termination.status.name))
 
             if termination.error:
                 log.error(self._log('unexpected_error', "error_type=[{}] reason=[{}]",
