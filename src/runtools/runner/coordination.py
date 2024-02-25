@@ -72,6 +72,7 @@ class ApprovalPhase(Phase):
 class NoOverlapPhase(Phase):
     """
     TODO Docs
+    1. Set continue flag to be checked
     """
 
     def __init__(self, phase_name, no_overlap_id, until_phase=None, *, locker_factory=lock.default_locker_factory()):
@@ -129,8 +130,10 @@ class NoOverlapPhase(Phase):
 class DependencyPhase(Phase):
 
     def __init__(self, phase_name, dependency_match):
-        self._parameters = {'phase': 'dependency', 'dependency': str(dependency_match.serialize(False))}
+        self._parameters = {'phase': 'dependency', 'dependency': str(dependency_match.serialize())}
         super().__init__(phase_name, RunState.EVALUATING, self._parameters)
+        self._log = logging.getLogger(self.__class__.__name__)
+        self._log.setLevel(DEBUG)
         self._dependency_match = dependency_match
 
     @property
@@ -142,9 +145,14 @@ class DependencyPhase(Phase):
         return self._parameters
 
     def run(self, run_ctx):
-        instances, _ = runtools.runcore.get_active_runs()
-        if not any(i for i in instances if self._dependency_match.matches(i)):
-            raise TerminateRun(TerminationStatus.UNSATISFIED)
+        with forward_logs(self._log, run_ctx):
+            self._log.debug("task=[Dependency pre-check] dependency=[%s]", self._dependency_match)
+            runs, _ = runtools.runcore.get_active_runs()
+            matches = [r.metadata for r in runs if self._dependency_match(r.metadata)]
+            if not matches:
+                self._log.debug("result=[No active dependency found] dependency=[%s]]", self._dependency_match)
+                raise TerminateRun(TerminationStatus.UNSATISFIED)
+            self._log.debug("result=[Active dependency found] matches=%s", matches)
 
     def stop(self):
         pass
