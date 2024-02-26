@@ -81,8 +81,9 @@ class NoOverlapPhase(Phase):
 
         params = {
             'phase': 'no_overlap',
-            'no_overlap_id': no_overlap_id,
-            'until_phase': until_phase
+            'protection_phase': 'no_overlap',
+            'protection_id': no_overlap_id,
+            'protect_until': until_phase
         }
         super().__init__(phase_name, RunState.EVALUATING, params)
         self._log = logging.getLogger(self.__class__.__name__)
@@ -95,29 +96,11 @@ class NoOverlapPhase(Phase):
             self._log.debug("task=[No Overlap Check]")
             with self._locker():
                 runs, _ = runtools.runcore.get_active_runs()
-                if any(r for r in runs if self._in_no_overlap_phase(r)):
+                if any(r for r in runs if r.run.in_protected_phase('no_overlap', self._no_overlap_id)):
                     self._log.debug("task=[No Overlap Check] result=[Overlap found]")
                     raise TerminateRun(TerminationStatus.OVERLAP)
 
         self._log.debug("task=[No Overlap Check] result=[No overlap found]")
-
-    def _in_no_overlap_phase(self, job_run):
-        no_overlap_phase = None
-        until_phase = None
-
-        for idx, phase_meta in enumerate(job_run.run.phases):
-            if phase_meta.parameters.get('no_overlap_id') == self._no_overlap_id:
-                if (idx + 1) < len(job_run.run.phases):
-                    no_overlap_phase = phase_meta.phase_name
-                    until_phase = phase_meta.parameters.get('until_phase') or job_run.run.phases[idx + 1].phase_name
-                break
-
-        if not no_overlap_phase:
-            return False
-
-        self._log.debug(f"event=[no_overlap_instance_found] instance=[{job_run.metadata}]")
-        protected_phases = job_run.run.lifecycle.phases_between(no_overlap_phase, until_phase)
-        return job_run.run.lifecycle.current_phase_name in protected_phases
 
     def stop(self):
         pass
@@ -401,8 +384,6 @@ class ExecutionQueue(Queue, InstanceTransitionObserver):
 
                 with self.queue._locker():
                     self.queue._dispatch_next()
-
-                continue
 
         def cancel(self):
             with self.queue._wait_guard:
