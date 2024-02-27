@@ -7,7 +7,7 @@ from threading import Condition, Event, Lock
 
 import runtools.runcore
 from runtools.runcore import paths
-from runtools.runcore.criteria import InstanceMetadataCriterion, TerminationCriterion, EntityRunCriteria, PhaseCriterion
+from runtools.runcore.criteria import InstanceMetadataCriterion, EntityRunCriteria, PhaseCriterion
 from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
 from runtools.runcore.listening import InstanceTransitionReceiver
 from runtools.runcore.run import RunState, Phase, TerminationStatus, PhaseRun, TerminateRun, RunContext
@@ -325,15 +325,21 @@ class ExecutionGroupLimit:
     max_executions: int
 
 
-class ExecutionQueue(Queue, InstanceTransitionObserver):
+class ExecutionQueue(Phase, InstanceTransitionObserver):
 
-    def __init__(self, queue_id, max_executions, queue_locker=lock.default_queue_locker(),
+    def __init__(self, phase_name, queue_id, max_executions, queue_locker=lock.default_queue_locker(),
                  state_receiver_factory=InstanceTransitionReceiver):
-        super().__init__("QUEUE", f"{queue_id}<={max_executions}")
+        parameters = {
+            'coord': 'execution_queue',
+            'queue_id': 'queue_id',
+            'max_executions': 'max_executions'
+        }
+        super().__init__(phase_name, RunState.IN_QUEUE, parameters)
         if not queue_id:
             raise ValueError('Queue ID must be specified')
         if max_executions < 1:
             raise ValueError('Max executions must be greater than zero')
+        self._state = QueuedState.NONE
         self._queue_id = queue_id
         self._max_executions = max_executions
         self._locker = queue_locker
@@ -344,60 +350,49 @@ class ExecutionQueue(Queue, InstanceTransitionObserver):
         self._current_wait = False
         self._state_receiver = None
 
-        self._parameters = (
-            ('coord', 'execution_queue'),
-            ('execution_group', queue_id),
-            ('max_executions', max_executions)
-        )
+    @property
+    def stop_status(self):
+        return TerminationStatus.CANCELLED
 
-    def create_waiter(self, instance):
-        return self._Waiter(self)
+    @property
+    def state(self):
+        return self._state
 
-    class _Waiter(QueueWaiter):
+    def run(self, run_ctx):
+        while True:
+            with self._wait_guard:
+                if self._state == QueuedState.NONE:
+                    # Should new waiter run scheduler?
+                    self._state = QueuedState.IN_QUEUE
 
-        def __init__(self, queue: "ExecutionQueue"):
-            self.queue = queue
-            self._state = QueuedState.NONE
-
-        @property
-        def state(self):
-            return self._state
-
-        def wait(self):
-            while True:
-                with self.queue._wait_guard:
-                    if self._state == QueuedState.NONE:
-                        # Should new waiter run scheduler?
-                        self._state = QueuedState.IN_QUEUE
-
-                    if self._state.dequeued:
-                        return
-
-                    if self.queue._current_wait:
-                        self.queue._wait_guard.wait()
-                        continue
-
-                    self.queue._current_wait = True
-                    self.queue._start_listening()
-
-                with self.queue._locker():
-                    self.queue._dispatch_next()
-
-        def cancel(self):
-            with self.queue._wait_guard:
                 if self._state.dequeued:
                     return
 
-                self._state = QueuedState.CANCELLED
-                self.queue._wait_guard.notify_all()
+                if self._current_wait:
+                    self._wait_guard.wait()
+                    continue
 
-        def signal_dispatch(self):
-            with self.queue._wait_guard:
-                if self._state.dequeued:
-                    return False  # Cancelled
+                self._current_wait = True
+                self._start_listening()
 
-                self._state = QueuedState.DISPATCHED
-                self.queue._wait_guard.notify_all()
+            with self._locker():
+                self._dispatch_next()
+
+    def stop(self):
+        with self._wait_guard:
+            if self._state.dequeued:
+                return
+
+            self._state = QueuedState.CANCELLED
+            self._wait_guard.notify_all()
+
+    def signal_dispatch(self):
+        with self._wait_guard:
+            if self._state.dequeued:
+                return False  # Cancelled
+
+            self._state = QueuedState.DISPATCHED
+            self._wait_guard.notify_all()
 
     def _start_listening(self):
         self._state_receiver = self._state_receiver_factory()
@@ -405,21 +400,17 @@ class ExecutionQueue(Queue, InstanceTransitionObserver):
         self._state_receiver.start()
 
     def _dispatch_next(self):
-        criteria = EntityRunCriteria(
-            state_criteria=TerminationCriterion(phases={Phase.QUEUED, Phase.EXECUTING}),
-            param_sets=set(self._parameters)
-        )
+        criteria = EntityRunCriteria(phase_criteria=PhaseCriterion(parameters=self.metadata.parameters))
         jobs, _ = runtools.runcore.get_active_runs(criteria)
 
-        group_jobs_sorted = JobRuns(sorted(jobs, key=RunState.CREATED))
+        group_jobs_sorted = JobRuns(sorted(jobs, key=lambda job_run: job_run.run.lifecycle.created_at))
         next_count = self._max_executions - len(group_jobs_sorted.executing)
         if next_count <= 0:
             return False
 
         for next_proceed in group_jobs_sorted.queued:
-            # TODO Use identity ID
-            signal_resp = runtools.runcore.signal_dispatch(
-                EntityRunCriteria(InstanceMetadataCriterion.for_run(next_proceed)))
+            c = EntityRunCriteria(metadata_criteria=InstanceMetadataCriterion.for_run(next_proceed))
+            signal_resp = runtools.runcore.signal_dispatch(c)
             for r in signal_resp.responses:
                 if r.executed:
                     next_count -= 1
