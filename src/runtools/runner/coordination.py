@@ -7,7 +7,7 @@ from threading import Condition, Event, Lock
 
 import runtools.runcore
 from runtools.runcore import paths
-from runtools.runcore.criteria import InstanceMetadataCriterion, TerminationCriterion, EntityRunCriteria
+from runtools.runcore.criteria import InstanceMetadataCriterion, TerminationCriterion, EntityRunCriteria, PhaseCriterion
 from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
 from runtools.runcore.listening import InstanceTransitionReceiver
 from runtools.runcore.run import RunState, Phase, TerminationStatus, PhaseRun, TerminateRun, RunContext
@@ -95,7 +95,8 @@ class NoOverlapPhase(Phase):
         with forward_logs(self._log, run_ctx):
             self._log.debug("task=[No Overlap Check]")
             with self._locker():
-                runs, _ = runtools.runcore.get_active_runs()
+                c = EntityRunCriteria(phase_criteria=PhaseCriterion(parameters=self.metadata.parameters))
+                runs, _ = runtools.runcore.get_active_runs(c)
                 if any(r for r in runs if r.run.in_protected_phase('no_overlap', self._no_overlap_id)):
                     self._log.debug("task=[No Overlap Check] result=[Overlap found]")
                     raise TerminateRun(TerminationStatus.OVERLAP)
@@ -269,7 +270,7 @@ class ObservableCondition(ABC):
 class Queue:
 
     @abstractmethod
-    def create_waiter(self, job_instance, state_on_dequeue):
+    def create_waiter(self, job_instance):
         pass
 
 
@@ -340,7 +341,6 @@ class ExecutionQueue(Queue, InstanceTransitionObserver):
 
         self._wait_guard = Condition()
         # vv Guarding these fields vv
-        self._wait_counter = 0
         self._current_wait = False
         self._state_receiver = None
 
@@ -350,15 +350,13 @@ class ExecutionQueue(Queue, InstanceTransitionObserver):
             ('max_executions', max_executions)
         )
 
-    def create_waiter(self, instance, dequeue_state_resolver):
-        return self._Waiter(self, dequeue_state_resolver)
+    def create_waiter(self, instance):
+        return self._Waiter(self)
 
     class _Waiter(QueueWaiter):
 
-        def __init__(self, queue: "ExecutionQueue", dispatch_status_resolver):
+        def __init__(self, queue: "ExecutionQueue"):
             self.queue = queue
-            self.dispatch_status_resolver = dispatch_status_resolver
-            self.term_status = None
             self._state = QueuedState.NONE
 
         @property
@@ -373,7 +371,7 @@ class ExecutionQueue(Queue, InstanceTransitionObserver):
                         self._state = QueuedState.IN_QUEUE
 
                     if self._state.dequeued:
-                        return self.term_status
+                        return
 
                     if self.queue._current_wait:
                         self.queue._wait_guard.wait()
@@ -399,14 +397,11 @@ class ExecutionQueue(Queue, InstanceTransitionObserver):
                     return False  # Cancelled
 
                 self._state = QueuedState.DISPATCHED
-                self.term_status = self.dispatch_status_resolver()
                 self.queue._wait_guard.notify_all()
-
-            return not bool(self.term_status)
 
     def _start_listening(self):
         self._state_receiver = self._state_receiver_factory()
-        self._state_receiver.listeners.append(self)
+        self._state_receiver.add_observer_transition(self)
         self._state_receiver.start()
 
     def _dispatch_next(self):
