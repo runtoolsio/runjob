@@ -328,7 +328,7 @@ class ExecutionGroupLimit:
 class ExecutionQueue(Phase, InstanceTransitionObserver):
 
     def __init__(self, phase_name, queue_id, max_executions, until_phase=None, *,
-                 queue_locker=lock.default_queue_locker(), state_receiver_factory=InstanceTransitionReceiver):
+                 locker_factory=lock.default_locker_factory(), state_receiver_factory=InstanceTransitionReceiver):
         parameters = {
             'phase': 'execution_queue',
             'protection_phase': 'execution_queue',
@@ -345,7 +345,7 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         self._state = QueuedState.NONE
         self._queue_id = queue_id
         self._max_executions = max_executions
-        self._locker = queue_locker
+        self._locker = locker_factory(paths.lock_path(f"eq-{queue_id}.lock", True))
         self._state_receiver_factory = state_receiver_factory
         self._wait_guard = Condition()
         # vv Guarding these fields vv
@@ -405,20 +405,22 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
 
     def _dispatch_next(self):
         criteria = EntityRunCriteria(phase_criteria=PhaseCriterion(parameters=self.metadata.parameters))
-        jobs, _ = runtools.runcore.get_active_runs(criteria)
+        runs, _ = runtools.runcore.get_active_runs(criteria)
 
-        group_jobs_sorted = JobRuns(sorted(jobs, key=lambda job_run: job_run.run.lifecycle.created_at))
-        next_count = self._max_executions - len(group_jobs_sorted.executing)
-        if next_count <= 0:
+        # TODO Sort by phase start
+        sorted_group_runs = JobRuns(sorted(runs, key=lambda job_run: job_run.run.lifecycle.created_at))
+        occupied = len([r for r in sorted_group_runs if r.in_protected_phase('execution_queue', self._queue_id)])  # TODO dequeued
+        free_slots = self._max_executions - occupied
+        if free_slots <= 0:
             return False
 
-        for next_proceed in group_jobs_sorted.queued:
+        for next_proceed in sorted_group_runs.queued:
             c = EntityRunCriteria(metadata_criteria=InstanceMetadataCriterion.for_run(next_proceed))
             signal_resp = runtools.runcore.signal_dispatch(c)
             for r in signal_resp.responses:
-                if r.executed:
-                    next_count -= 1
-                    if next_count <= 0:
+                if r.dispatched:
+                    free_slots -= 1
+                    if free_slots <= 0:
                         return
 
     def new_instance_phase(self, job_run: JobRun, previous_phase: PhaseRun, new_phase: PhaseRun, ordinal: int):
