@@ -12,7 +12,6 @@ import logging
 from abc import ABC, abstractmethod
 from json import JSONDecodeError
 
-import runtools.runcore
 from runtools.runcore import paths
 from runtools.runcore.client import StopResult
 from runtools.runcore.criteria import EntityRunCriteria
@@ -114,20 +113,28 @@ class OutputResource(APIResource):
         return {"output": job_instance.fetch_output()}  # TODO Limit length
 
 
-class SignalProceedResource(APIResource):
+class SignalDispatchResource(APIResource):
 
     @property
     def path(self):
         return '/instances/_signal/dispatch'
 
     def handle(self, job_instance, req_body):
-        waiter = job_instance.queue_waiter
-        if waiter:
-            executed = runtools.runcore.signal_dispatch()
-        else:
-            executed = False
+        dispatched = False
+        for phase in job_instance.phases.values():
+            phase_params = phase.metadata.parameters
+            if phase_params.get('phase') == 'execution_queue' and req_body["queue_id"] == phase_params.get('queue_id'):
+                dispatched = phase.signal_dispatch()
+                break
 
-        return {"waiter_found": waiter is not None, "executed": executed}
+        return {"dispatched": dispatched}
+
+    def validate(self, req_body):
+        if "queue_id" not in req_body:
+            raise _missing_field_error("queue_id")
+
+    def requires_run_match(self) -> bool:
+        return True
 
 
 DEFAULT_RESOURCES = (
@@ -135,7 +142,7 @@ DEFAULT_RESOURCES = (
     ApproveResource(),
     StopResource(),
     OutputResource(),
-    SignalProceedResource())
+    SignalDispatchResource())
 
 
 class APIServer(SocketServer, JobInstanceManager):

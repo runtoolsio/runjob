@@ -83,7 +83,7 @@ class NoOverlapPhase(Phase):
             'phase': 'no_overlap',
             'protection_phase': 'no_overlap',
             'protection_id': no_overlap_id,
-            'protect_until': until_phase
+            'protected_until': until_phase
         }
         super().__init__(phase_name, RunState.EVALUATING, params)
         self._log = logging.getLogger(self.__class__.__name__)
@@ -327,12 +327,15 @@ class ExecutionGroupLimit:
 
 class ExecutionQueue(Phase, InstanceTransitionObserver):
 
-    def __init__(self, phase_name, queue_id, max_executions, queue_locker=lock.default_queue_locker(),
-                 state_receiver_factory=InstanceTransitionReceiver):
+    def __init__(self, phase_name, queue_id, max_executions, until_phase=None, *,
+                 queue_locker=lock.default_queue_locker(), state_receiver_factory=InstanceTransitionReceiver):
         parameters = {
-            'coord': 'execution_queue',
-            'queue_id': 'queue_id',
-            'max_executions': 'max_executions'
+            'phase': 'execution_queue',
+            'protection_phase': 'execution_queue',
+            'queue_id': queue_id,
+            'protection_id': queue_id,
+            'protected_until': until_phase,
+            'max_executions': max_executions,
         }
         super().__init__(phase_name, RunState.IN_QUEUE, parameters)
         if not queue_id:
@@ -344,7 +347,6 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         self._max_executions = max_executions
         self._locker = queue_locker
         self._state_receiver_factory = state_receiver_factory
-
         self._wait_guard = Condition()
         # vv Guarding these fields vv
         self._current_wait = False
@@ -393,9 +395,11 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
 
             self._state = QueuedState.DISPATCHED
             self._wait_guard.notify_all()
+            return True
 
     def _start_listening(self):
-        self._state_receiver = self._state_receiver_factory()
+        listen_criteria = EntityRunCriteria(phase_criteria=PhaseCriterion(parameters=self.metadata.parameters))
+        self._state_receiver = self._state_receiver_factory(listen_criteria)
         self._state_receiver.add_observer_transition(self)
         self._state_receiver.start()
 
@@ -421,7 +425,7 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         with self._wait_guard:
             if not self._current_wait:
                 return
-            if new_phase.run_state == RunState.ENDED and job_run.metadata.contains_system_parameters(self._parameters):
+            if previous_phase.phase_name in job_run.run.protected_phases('execution_queue', self._queue_id):
                 self._current_wait = False
                 self._stop_listening()
                 self._wait_guard.notify()
