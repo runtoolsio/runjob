@@ -18,6 +18,7 @@ from runtools.runcore.criteria import EntityRunCriteria
 from runtools.runcore.job import JobInstanceManager
 from runtools.runcore.run import util
 from runtools.runcore.util.socket import SocketServer
+from runtools.runner.coordination import CoordsTypes
 
 log = logging.getLogger(__name__)
 
@@ -73,17 +74,20 @@ class ApproveResource(APIResource):
         return '/instances/approve'
 
     def handle(self, job_instance, req_body):
-        phase_name = req_body.get('phase')
-        if phase_name:
-            phase = job_instance.phases.get(phase_name)
+        phase_id = req_body.get('phase_id')
+        if phase_id:
+            phase = job_instance.get_phase(CoordsTypes.APPROVAL, phase_id)
             if not phase:
                 return {"approval_result": 'NOT_APPLICABLE'}
         else:
             phase = job_instance.current_phase
+            if phase.type != CoordsTypes.APPROVAL.value:
+                return {"approval_result": 'NOT_APPLICABLE'}
 
         try:
             phase.approve()
         except AttributeError:
+            # TODO Return error instead
             return {"approval_result": 'NOT_APPLICABLE'}
 
         return {"approval_result": 'APPROVED'}

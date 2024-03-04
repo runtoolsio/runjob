@@ -11,7 +11,7 @@ from typing import List
 
 from runtools.runcore import util, InvalidConfiguration
 from runtools.runcore.job import JobInstance
-from runtools.runcore.run import Phaser, PhaseNames
+from runtools.runcore.run import Phaser
 from runtools.runcore.util import lock
 from runtools.runcore.util.socket import SocketClient
 from runtools.runner.execution import ExecutingPhase
@@ -84,13 +84,12 @@ def run(job_id, execution, sync_=None, state_locker=lock.default_queue_locker(),
 
 def job_instance_uncoordinated(job_id, exec_, *, instance_id=None, **user_params) \
         -> JobInstance:
-    return RunnerJobInstance(job_id, instance_id, Phaser([ExecutingPhase(PhaseNames.EXEC, exec_)]), run_id=instance_id,
+    return RunnerJobInstance(job_id, instance_id, Phaser([ExecutingPhase(job_id, exec_)]), run_id=instance_id,
                              user_params=user_params)
 
 
 def run_uncoordinated(job_id, exec_, *, instance_id=None, **user_params) -> JobInstance:
-    instance = job_instance_uncoordinated(job_id, exec_, instance_id=instance_id,
-                                          user_params=user_params)
+    instance = job_instance_uncoordinated(job_id, exec_, instance_id=instance_id, user_params=user_params)
     instance.run()
     return instance
 

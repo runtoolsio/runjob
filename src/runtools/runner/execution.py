@@ -92,8 +92,8 @@ class OutputExecution(Execution):
 
 class ExecutingPhase(Phase):
 
-    def __init__(self, phase_name, execution, *, output_handlers=()):
-        super().__init__(phase_name, RunState.EXECUTING)
+    def __init__(self, phase_id, execution, *, output_handlers=()):
+        super().__init__('EXEC', phase_id, RunState.EXECUTING)
         self._execution = execution
         self._output_handlers = tuple(output_handlers)
 

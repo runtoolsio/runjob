@@ -3,20 +3,24 @@ import pytest
 import runtools.runcore
 from runtools.runcore.client import APIClient, APIErrorType, ErrorCode, ApprovalResult, StopResult
 from runtools.runcore.criteria import parse_criteria, EntityRunCriteria
-from runtools.runcore.run import RunState, PhaseNames, TerminationStatus
-from runtools.runcore.test.job import FakeJobInstanceBuilder, FakePhase
+from runtools.runcore.run import RunState, TerminationStatus, PhaseKey
+from runtools.runcore.test.job import FakeJobInstanceBuilder
 from runtools.runner.api import APIServer
+from runtools.runner.coordination import CoordsTypes
+
+EXEC = PhaseKey('EXEC', 'id')
+APPROVAL = PhaseKey(CoordsTypes.APPROVAL.value, 'id')
 
 
 @pytest.fixture(autouse=True)
 def job_instances():
     server = APIServer()
 
-    j1 = FakeJobInstanceBuilder('j1', 'i1').add_phase('EXEC', RunState.EXECUTING).build()
+    j1 = FakeJobInstanceBuilder('j1', 'i1').add_phase(EXEC, RunState.EXECUTING).build()
     server.register_instance(j1)
     j1.phaser.next_phase()
 
-    j2 = FakeJobInstanceBuilder('j2', 'i2').add_phase(PhaseNames.APPROVAL, RunState.PENDING).build()
+    j2 = FakeJobInstanceBuilder('j2', 'i2').add_phase(APPROVAL, RunState.PENDING).build()
     server.register_instance(j2)
     j2.phaser.next_phase()
 
@@ -49,7 +53,7 @@ def test_instances_api():
 
 
 def test_approve_pending_instance(job_instances):
-    instances, errors = runtools.runcore.approve_pending_instances(EntityRunCriteria.all(), PhaseNames.APPROVAL)
+    instances, errors = runtools.runcore.approve_pending_instances(EntityRunCriteria.all(), APPROVAL.id)
 
     assert not errors
     assert instances[0].instance_metadata.entity_id == 'j1'
@@ -58,7 +62,7 @@ def test_approve_pending_instance(job_instances):
     assert instances[1].release_result == ApprovalResult.APPROVED
 
     _, j2 = job_instances
-    assert j2.get_typed_phase(FakePhase, PhaseNames.APPROVAL).approved
+    assert j2.get_phase(*APPROVAL).approved
 
 
 def test_stop(job_instances):

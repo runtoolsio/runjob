@@ -26,14 +26,18 @@ def forward_logs(logger, run_ctx):
     return ForwardLogs(logger, [run_ctx.create_logging_handler(), output_to_task_handler(run_ctx)])
 
 
+class CoordsTypes(Enum):
+    APPROVAL = 'APPROVAL'
+
+
 class ApprovalPhase(Phase):
     """
     Approval parameters (incl. timeout) + approval eval as separate objects
     TODO: parameters
     """
 
-    def __init__(self, phase_name, timeout=0):
-        super().__init__(phase_name, RunState.PENDING)
+    def __init__(self, phase_id, timeout=0):
+        super().__init__(CoordsTypes.APPROVAL, phase_id, RunState.PENDING)
         self._log = logging.getLogger(self.__class__.__name__)
         self._log.setLevel(DEBUG)
         self._timeout = timeout
@@ -75,7 +79,7 @@ class NoOverlapPhase(Phase):
     1. Set continue flag to be checked
     """
 
-    def __init__(self, phase_name, no_overlap_id, until_phase=None, *, locker_factory=lock.default_locker_factory()):
+    def __init__(self, phase_id, no_overlap_id, until_phase=None, *, locker_factory=lock.default_locker_factory()):
         if not no_overlap_id:
             raise ValueError("no_overlap_id cannot be empty")
 
@@ -85,7 +89,7 @@ class NoOverlapPhase(Phase):
             'protection_id': no_overlap_id,
             'protected_until': until_phase
         }
-        super().__init__(phase_name, RunState.EVALUATING, params)
+        super().__init__(phase_id, RunState.EVALUATING, params)
         self._log = logging.getLogger(self.__class__.__name__)
         self._log.setLevel(DEBUG)
         self._no_overlap_id = no_overlap_id
@@ -113,9 +117,9 @@ class NoOverlapPhase(Phase):
 
 class DependencyPhase(Phase):
 
-    def __init__(self, phase_name, dependency_match):
+    def __init__(self, phase_id, dependency_match):
         self._parameters = {'phase': 'dependency', 'dependency': str(dependency_match.serialize())}
-        super().__init__(phase_name, RunState.EVALUATING, self._parameters)
+        super().__init__(phase_id, RunState.EVALUATING, self._parameters)
         self._log = logging.getLogger(self.__class__.__name__)
         self._log.setLevel(DEBUG)
         self._dependency_match = dependency_match
@@ -150,8 +154,8 @@ class WaitingPhase(Phase):
     """
     """
 
-    def __init__(self, phase_name, observable_conditions, timeout=0):
-        super().__init__(phase_name, RunState.WAITING)
+    def __init__(self, phase_id, observable_conditions, timeout=0):
+        super().__init__(phase_id, RunState.WAITING)
         self._observable_conditions = observable_conditions
         self._timeout = timeout
         self._conditions_lock = Lock()
@@ -327,7 +331,7 @@ class ExecutionGroupLimit:
 
 class ExecutionQueue(Phase, InstanceTransitionObserver):
 
-    def __init__(self, phase_name, queue_id, max_executions, until_phase=None, *,
+    def __init__(self, phase_id, queue_id, max_executions, until_phase=None, *,
                  locker_factory=lock.default_locker_factory(), state_receiver_factory=InstanceTransitionReceiver):
         parameters = {
             'phase': 'execution_queue',
@@ -337,7 +341,7 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
             'protected_until': until_phase,
             'max_executions': max_executions,
         }
-        super().__init__(phase_name, RunState.IN_QUEUE, parameters)
+        super().__init__(phase_id, RunState.IN_QUEUE, parameters)
         if not queue_id:
             raise ValueError('Queue ID must be specified')
         if max_executions < 1:
@@ -409,7 +413,8 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
 
         # TODO Sort by phase start
         sorted_group_runs = JobRuns(sorted(runs, key=lambda job_run: job_run.run.lifecycle.created_at))
-        occupied = len([r for r in sorted_group_runs if r.in_protected_phase('execution_queue', self._queue_id)])  # TODO dequeued
+        occupied = len(
+            [r for r in sorted_group_runs if r.in_protected_phase('execution_queue', self._queue_id)])  # TODO dequeued
         free_slots = self._max_executions - occupied
         if free_slots <= 0:
             return False
@@ -427,7 +432,7 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         with self._wait_guard:
             if not self._current_wait:
                 return
-            if previous_phase.phase_name in job_run.run.protected_phases('execution_queue', self._queue_id):
+            if previous_phase.phase_key in job_run.run.protected_phases('execution_queue', self._queue_id):
                 self._current_wait = False
                 self._stop_listening()
                 self._wait_guard.notify()

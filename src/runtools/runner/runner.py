@@ -43,12 +43,12 @@ State lock
 
 """
 import logging
-from typing import Type, Optional
+from enum import Enum
 
 from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserver,
                                   InstanceOutputObserver)
 from runtools.runcore.output import InMemoryOutput, Mode
-from runtools.runcore.run import PhaseRun, Outcome, RunState, P, PhaseMetadata, JobInstanceMetadata
+from runtools.runcore.run import PhaseRun, Outcome, RunState, PhaseInfo, JobInstanceMetadata
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
 log = logging.getLogger(__name__)
@@ -106,8 +106,8 @@ class RunnerJobInstance(JobInstance):
     def phases(self):
         return self._phaser.phases
 
-    def get_typed_phase(self, phase_type: Type[P], phase_name: str) -> Optional[P]:
-        return self._phaser.get_typed_phase(phase_type, phase_name)
+    def get_phase(self, phase_type: str | Enum, phase_name: str):
+        return self._phaser.get_phase(phase_type, phase_name)
 
     def job_run_info(self) -> JobRun:
         tracked_task = self._task_tracker.tracked_task if self.task_tracker else None
@@ -116,8 +116,8 @@ class RunnerJobInstance(JobInstance):
     def fetch_output(self, mode=Mode.HEAD, *, lines=0):
         return self._output.fetch(mode, lines=lines)
 
-    def _process_output(self, phase_meta: PhaseMetadata, output: str, is_error: bool):
-        self._output.add(phase_meta.phase_name, output, is_error)
+    def _process_output(self, phase_meta: PhaseInfo, output: str, is_error: bool):
+        self._output.add(phase_meta.phase_id, output, is_error)
         self._output_notification.observer_proxy.new_instance_output(self.metadata, phase_meta, output, is_error)
 
     def run(self):
@@ -168,7 +168,7 @@ class RunnerJobInstance(JobInstance):
         termination = snapshot.run.termination
 
         log.info(self._log('new_phase', "prev_phase=[{}] new_phase=[{}] run_state=[{}]",
-                           old_phase.phase_name, new_phase.phase_name, new_phase.run_state.name))
+                           old_phase.phase_key, new_phase.phase_key, new_phase.run_state.name))
 
         if termination:
             if termination.status.is_outcome(Outcome.NON_SUCCESS):

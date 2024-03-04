@@ -1,5 +1,5 @@
 from runtools.runcore.listening import InstanceTransitionReceiver, InstanceOutputReceiver
-from runtools.runcore.run import PhaseRun, RunState, PhaseMetadata, JobInstanceMetadata
+from runtools.runcore.run import PhaseRun, RunState, PhaseInfo, JobInstanceMetadata
 from runtools.runcore.test.job import ended_run
 from runtools.runcore.test.observer import GenericObserver
 from runtools.runcore.util import utc_now
@@ -37,7 +37,7 @@ def test_output_dispatching():
     receiver.add_observer_output(observer)
     receiver.start()
     instance_meta = JobInstanceMetadata('j1', 'r1', 'i1', {}, {})
-    phase = PhaseMetadata("Bar in Pai", RunState.EXECUTING, {})
+    phase = PhaseInfo("Bar in Pai", RunState.EXECUTING, {})
     try:
         dispatcher.new_instance_output(instance_meta, phase, "Happy Mushrooms", True)
     finally:
