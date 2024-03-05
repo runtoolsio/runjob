@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from runtools.runcore.job import JobInstanceManager
-from runtools.runcore.run import RunState
+from runtools.runcore.run import RunState, PhaseKey
 from runtools.runcore.test.job import FakeJobInstanceBuilder, FakeJobInstance
 from runtools.runcore.test.observer import TestTransitionObserver, TestOutputObserver
 from runtools.runner import FeaturedContextBuilder
@@ -82,6 +82,9 @@ class TestEnv:
         return bool(self.ctx.get_instance(job_instance.instance_id)) and job_instance in self.ctx.instances
 
 
+EXEC = PhaseKey('EXEC', 'id')
+
+
 def test_instance_management():
     env = TestEnv()
 
@@ -90,7 +93,7 @@ def test_instance_management():
         assert env.opened()
         assert not env.closed()
 
-        inst = FakeJobInstanceBuilder().add_phase('EXEC', RunState.EXECUTING).build()
+        inst = FakeJobInstanceBuilder().add_phase(EXEC, RunState.EXECUTING).build()
         inst.phaser.next_phase()
         env.ctx.add(inst)
         assert env.instance_registered(inst)
@@ -111,7 +114,7 @@ def test_removed_when_terminated_before_closed():
     env = TestEnv()
 
     with env.ctx:
-        inst = FakeJobInstanceBuilder().add_phase('EXEC', RunState.EXECUTING).build()
+        inst = FakeJobInstanceBuilder().add_phase(EXEC, RunState.EXECUTING).build()
         env.ctx.add(inst)
         inst.phaser.next_phase()
         assert env.instance_registered(inst)
@@ -125,7 +128,7 @@ def test_removed_when_terminated_before_closed():
 def test_keep_removed():
     env = TestEnv(transient=False)
     with env.ctx:
-        inst = FakeJobInstanceBuilder().add_phase('EXEC', RunState.EXECUTING).build()
+        inst = FakeJobInstanceBuilder().add_phase(EXEC, RunState.EXECUTING).build()
         inst.phaser.next_phase()
         env.ctx.add(inst)
         assert env.instance_registered(inst)

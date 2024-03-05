@@ -7,7 +7,7 @@ import pytest
 
 import runtools.runner
 from runtools.runcore.job import JobRun, InstanceTransitionObserver
-from runtools.runcore.run import TerminationStatus, RunState, PhaseKeys
+from runtools.runcore.run import TerminationStatus, RunState, PhaseKeys, PhaseKey
 from runtools.runcore.test.observer import TestTransitionObserver
 from runtools.runner import runner, ExecutingPhase
 from runtools.runner.execution import ExecutionException
@@ -22,11 +22,14 @@ def observer():
     runner.deregister_transition_observer(observer)
 
 
+EXEC = PhaseKey('EXEC', 'j1')
+
+
 def test_passed_args(observer: TestTransitionObserver):
     runtools.runner.run_uncoordinated('j1', TestExecution())
 
     assert observer.job_runs[0].metadata.entity_id == 'j1'
-    assert observer.phases == [(PhaseKeys.INIT, PhaseNames.EXEC), (PhaseNames.EXEC, PhaseKeys.TERMINAL)]
+    assert observer.phases == [(PhaseKeys.INIT, EXEC), (EXEC, PhaseKeys.TERMINAL)]
     assert observer.run_states == [RunState.EXECUTING, RunState.ENDED]
 
 

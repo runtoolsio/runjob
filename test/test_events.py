@@ -1,5 +1,5 @@
 from runtools.runcore.listening import InstanceTransitionReceiver, InstanceOutputReceiver
-from runtools.runcore.run import PhaseRun, RunState, PhaseInfo, JobInstanceMetadata
+from runtools.runcore.run import PhaseRun, RunState, PhaseInfo, JobInstanceMetadata, PhaseKey
 from runtools.runcore.test.job import ended_run
 from runtools.runcore.test.observer import GenericObserver
 from runtools.runcore.util import utc_now
@@ -15,8 +15,8 @@ def test_state_dispatching():
     receiver.start()
 
     test_run = ended_run('j1')
-    prev = PhaseRun('prev', RunState.PENDING, utc_now(), utc_now())
-    new = PhaseRun('next', RunState.EXECUTING, utc_now(), None)
+    prev = PhaseRun(PhaseKey('approval', 'id'), RunState.PENDING, utc_now(), utc_now())
+    new = PhaseRun(PhaseKey('exec', 'id'), RunState.EXECUTING, utc_now(), None)
     try:
         dispatcher.new_instance_phase(test_run, prev, new, 2)
     finally:
@@ -37,7 +37,7 @@ def test_output_dispatching():
     receiver.add_observer_output(observer)
     receiver.start()
     instance_meta = JobInstanceMetadata('j1', 'r1', 'i1', {}, {})
-    phase = PhaseInfo("Bar in Pai", RunState.EXECUTING, {})
+    phase = PhaseInfo("Magic", "Bar in Pai", RunState.EXECUTING)
     try:
         dispatcher.new_instance_output(instance_meta, phase, "Happy Mushrooms", True)
     finally:
