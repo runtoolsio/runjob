@@ -6,10 +6,10 @@ from runtools.runcore.criteria import parse_criteria, EntityRunCriteria
 from runtools.runcore.run import RunState, TerminationStatus, PhaseKey
 from runtools.runcore.test.job import FakeJobInstanceBuilder
 from runtools.runner.api import APIServer
-from runtools.runner.coordination import CoordsTypes
+from runtools.runner.coordination import CoordTypes
 
 EXEC = PhaseKey('EXEC', 'id')
-APPROVAL = PhaseKey(CoordsTypes.APPROVAL.value, 'id')
+APPROVAL = PhaseKey(CoordTypes.APPROVAL.value, 'id')
 
 
 @pytest.fixture(autouse=True)

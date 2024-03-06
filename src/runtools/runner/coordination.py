@@ -26,8 +26,9 @@ def forward_logs(logger, run_ctx):
     return ForwardLogs(logger, [run_ctx.create_logging_handler(), output_to_task_handler(run_ctx)])
 
 
-class CoordsTypes(Enum):
+class CoordTypes(Enum):
     APPROVAL = 'APPROVAL'
+    NO_OVERLAP = 'NO_OVERLAP'
 
 
 class ApprovalPhase(Phase):
@@ -37,7 +38,7 @@ class ApprovalPhase(Phase):
     """
 
     def __init__(self, phase_id, timeout=0):
-        super().__init__(CoordsTypes.APPROVAL, phase_id, RunState.PENDING)
+        super().__init__(CoordTypes.APPROVAL, phase_id, RunState.PENDING)
         self._log = logging.getLogger(self.__class__.__name__)
         self._log.setLevel(DEBUG)
         self._timeout = timeout
@@ -83,25 +84,20 @@ class NoOverlapPhase(Phase):
         if not no_overlap_id:
             raise ValueError("no_overlap_id cannot be empty")
 
-        params = {
-            'phase': 'no_overlap',
-            'protection_phase': 'no_overlap',
-            'protection_id': no_overlap_id,
-            'protected_until': until_phase
-        }
-        super().__init__(phase_id, RunState.EVALUATING, params)
+        super().__init__(CoordTypes.NO_OVERLAP, phase_id, RunState.EVALUATING,
+                         protection_id=no_overlap_id, last_protected_phase=until_phase)
         self._log = logging.getLogger(self.__class__.__name__)
         self._log.setLevel(DEBUG)
-        self._no_overlap_id = no_overlap_id
         self._locker = locker_factory(paths.lock_path(f"noo-{no_overlap_id}.lock", True))
 
     def run(self, run_ctx):
         with forward_logs(self._log, run_ctx):
             self._log.debug("task=[No Overlap Check]")
             with self._locker():
-                c = EntityRunCriteria(phase_criteria=PhaseCriterion(parameters=self.metadata.parameters))
+                no_overlap_filter = PhaseCriterion(phase_type=CoordTypes.NO_OVERLAP, protection_id=self._protection_id)
+                c = EntityRunCriteria(phase_criteria=no_overlap_filter)
                 runs, _ = runtools.runcore.get_active_runs(c)
-                if any(r for r in runs if r.run.in_protected_phase('no_overlap', self._no_overlap_id)):
+                if any(r for r in runs if r.run.in_protected_phase(CoordTypes.NO_OVERLAP, self._protection_id)):
                     self._log.debug("task=[No Overlap Check] result=[Overlap found]")
                     raise TerminateRun(TerminationStatus.OVERLAP)
 
@@ -402,13 +398,13 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
             return True
 
     def _start_listening(self):
-        listen_criteria = EntityRunCriteria(phase_criteria=PhaseCriterion(parameters=self.metadata.parameters))
+        listen_criteria = EntityRunCriteria(phase_criteria=PhaseCriterion(parameters=self.metadata.properties))
         self._state_receiver = self._state_receiver_factory(listen_criteria)
         self._state_receiver.add_observer_transition(self)
         self._state_receiver.start()
 
     def _dispatch_next(self):
-        criteria = EntityRunCriteria(phase_criteria=PhaseCriterion(parameters=self.metadata.parameters))
+        criteria = EntityRunCriteria(phase_criteria=PhaseCriterion(parameters=self.metadata.properties))
         runs, _ = runtools.runcore.get_active_runs(criteria)
 
         # TODO Sort by phase start

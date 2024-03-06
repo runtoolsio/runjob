@@ -18,7 +18,7 @@ from runtools.runcore.criteria import EntityRunCriteria
 from runtools.runcore.job import JobInstanceManager
 from runtools.runcore.run import util
 from runtools.runcore.util.socket import SocketServer
-from runtools.runner.coordination import CoordsTypes
+from runtools.runner.coordination import CoordTypes
 
 log = logging.getLogger(__name__)
 
@@ -76,12 +76,12 @@ class ApproveResource(APIResource):
     def handle(self, job_instance, req_body):
         phase_id = req_body.get('phase_id')
         if phase_id:
-            phase = job_instance.get_phase(CoordsTypes.APPROVAL, phase_id)
+            phase = job_instance.get_phase(CoordTypes.APPROVAL, phase_id)
             if not phase:
                 return {"approval_result": 'NOT_APPLICABLE'}
         else:
             phase = job_instance.current_phase
-            if phase.type != CoordsTypes.APPROVAL.value:
+            if phase.type != CoordTypes.APPROVAL.value:
                 return {"approval_result": 'NOT_APPLICABLE'}
 
         try:
@@ -127,7 +127,7 @@ class SignalDispatchResource(APIResource):
         dispatched = False
         # TODO Must check the current phase is the queue
         for phase in job_instance.phases.values():
-            phase_params = phase.metadata.parameters
+            phase_params = phase.metadata.properties
             if phase_params.get('phase') == 'execution_queue' and req_body["queue_id"] == phase_params.get('queue_id'):
                 dispatched = phase.signal_dispatch()
                 break
