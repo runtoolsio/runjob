@@ -10,7 +10,8 @@ from runtools.runcore import paths
 from runtools.runcore.criteria import InstanceMetadataCriterion, EntityRunCriteria, PhaseCriterion
 from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
 from runtools.runcore.listening import InstanceTransitionReceiver
-from runtools.runcore.run import RunState, Phase, TerminationStatus, PhaseRun, TerminateRun, RunContext
+from runtools.runcore.run import RunState, Phase, TerminationStatus, PhaseRun, TerminateRun, RunContext, PhaseInfo, \
+    register_phase_info
 from runtools.runcore.util import lock, KVParser
 from runtools.runcore.util.log import ForwardLogs
 from runtools.runner.task import OutputToTask
@@ -30,6 +31,8 @@ class CoordTypes(Enum):
     APPROVAL = 'APPROVAL'
     NO_OVERLAP = 'NO_OVERLAP'
     DEPENDENCY = 'DEPENDENCY'
+    WAITING = 'WAITING'
+    QUEUE = 'QUEUE'
 
 
 class ApprovalPhase(Phase):
@@ -149,7 +152,7 @@ class WaitingPhase(Phase):
     """
 
     def __init__(self, phase_id, observable_conditions, timeout=0):
-        super().__init__(phase_id, RunState.WAITING)
+        super().__init__(CoordTypes.WAITING, phase_id, RunState.WAITING)
         self._observable_conditions = observable_conditions
         self._timeout = timeout
         self._conditions_lock = Lock()
@@ -323,23 +326,25 @@ class ExecutionGroupLimit:
     max_executions: int
 
 
+@register_phase_info(CoordTypes.QUEUE)
+@dataclass(frozen=True)
+class ExecutionQueueInfo(PhaseInfo):
+    queued_state: QueuedState
+
+
 class ExecutionQueue(Phase, InstanceTransitionObserver):
 
-    def __init__(self, phase_id, queue_id, max_executions, until_phase=None, *,
-                 locker_factory=lock.default_locker_factory(), state_receiver_factory=InstanceTransitionReceiver):
-        parameters = {
-            'phase': 'execution_queue',
-            'protection_phase': 'execution_queue',
-            'queue_id': queue_id,
-            'protection_id': queue_id,
-            'protected_until': until_phase,
-            'max_executions': max_executions,
-        }
-        super().__init__(phase_id, RunState.IN_QUEUE, parameters)
+    def __init__(self, queue_id, max_executions, phase_id=None, phase_name=None, *,
+                 until_phase=None,
+                 locker_factory=lock.default_locker_factory(),
+                 state_receiver_factory=InstanceTransitionReceiver):
         if not queue_id:
             raise ValueError('Queue ID must be specified')
         if max_executions < 1:
             raise ValueError('Max executions must be greater than zero')
+
+        super().__init__(CoordTypes.QUEUE, phase_id or queue_id, RunState.IN_QUEUE, phase_name,
+                         protection_id=queue_id, last_protected_phase=until_phase)
         self._state = QueuedState.NONE
         self._queue_id = queue_id
         self._max_executions = max_executions
@@ -396,19 +401,23 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
             return True
 
     def _start_listening(self):
-        listen_criteria = EntityRunCriteria(phase_criteria=PhaseCriterion(parameters=self.metadata.properties))
+        phase_filter = PhaseCriterion(phase_type=CoordTypes.QUEUE, protection_id=self._queue_id)
+        listen_criteria = EntityRunCriteria(phase_criteria=phase_filter)
         self._state_receiver = self._state_receiver_factory(listen_criteria)
         self._state_receiver.add_observer_transition(self)
         self._state_receiver.start()
 
     def _dispatch_next(self):
-        criteria = EntityRunCriteria(phase_criteria=PhaseCriterion(parameters=self.metadata.properties))
+        phase_filter = PhaseCriterion(phase_type=CoordTypes.QUEUE, protection_id=self._queue_id)
+        criteria = EntityRunCriteria(phase_criteria=phase_filter)
         runs, _ = runtools.runcore.get_active_runs(criteria)
 
         # TODO Sort by phase start
         sorted_group_runs = JobRuns(sorted(runs, key=lambda job_run: job_run.run.lifecycle.created_at))
         occupied = len(
-            [r for r in sorted_group_runs if r.in_protected_phase('execution_queue', self._queue_id)])  # TODO dequeued
+            [r for r in sorted_group_runs
+             if r.in_protected_phase(CoordTypes.QUEUE, self._queue_id)
+             or (r.current_phase().type == CoordTypes.QUEUE and not r.current_phase().queued_state.dequeued)])
         free_slots = self._max_executions - occupied
         if free_slots <= 0:
             return False
@@ -426,7 +435,10 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         with self._wait_guard:
             if not self._current_wait:
                 return
-            if previous_phase.phase_key in job_run.run.protected_phases('execution_queue', self._queue_id):
+            if (protected_phases := job_run.run.protected_phases(CoordTypes.QUEUE, self._queue_id)) \
+                    and previous_phase.phase_key in protected_phases \
+                    and new_phase not in protected_phases:
+                # Run slot freed
                 self._current_wait = False
                 self._stop_listening()
                 self._wait_guard.notify()
