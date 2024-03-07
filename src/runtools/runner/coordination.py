@@ -116,7 +116,7 @@ class NoOverlapPhase(Phase):
 class DependencyPhase(Phase):
 
     def __init__(self, dependency_match, phase_id=None, phase_name='Active dependency check'):
-        phase_id = phase_id or dependency_match.serialize()
+        phase_id = phase_id or str(dependency_match)
         super().__init__(CoordTypes.DEPENDENCY, phase_id, RunState.EVALUATING, phase_name)
         self._log = logging.getLogger(self.__class__.__name__)
         self._log.setLevel(DEBUG)
