@@ -417,7 +417,7 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         occupied = len(
             [r for r in sorted_group_runs
              if r.in_protected_phase(CoordTypes.QUEUE, self._queue_id)
-             or (r.current_phase().type == CoordTypes.QUEUE and not r.current_phase().queued_state.dequeued)])
+             or (r.current_phase().type == CoordTypes.QUEUE and r.current_phase().queued_state.dequeued)])
         free_slots = self._max_executions - occupied
         if free_slots <= 0:
             return False
