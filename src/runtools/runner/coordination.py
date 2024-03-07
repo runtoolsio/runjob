@@ -29,6 +29,7 @@ def forward_logs(logger, run_ctx):
 class CoordTypes(Enum):
     APPROVAL = 'APPROVAL'
     NO_OVERLAP = 'NO_OVERLAP'
+    DEPENDENCY = 'DEPENDENCY'
 
 
 class ApprovalPhase(Phase):
@@ -37,8 +38,8 @@ class ApprovalPhase(Phase):
     TODO: parameters
     """
 
-    def __init__(self, phase_id, timeout=0):
-        super().__init__(CoordTypes.APPROVAL, phase_id, RunState.PENDING)
+    def __init__(self, phase_id='approval', phase_name='Approval', *, timeout=0):
+        super().__init__(CoordTypes.APPROVAL, phase_id, RunState.PENDING, phase_name)
         self._log = logging.getLogger(self.__class__.__name__)
         self._log.setLevel(DEBUG)
         self._timeout = timeout
@@ -80,11 +81,12 @@ class NoOverlapPhase(Phase):
     1. Set continue flag to be checked
     """
 
-    def __init__(self, phase_id, no_overlap_id, until_phase=None, *, locker_factory=lock.default_locker_factory()):
+    def __init__(self, no_overlap_id, phase_id=None, phase_name='No Overlap Check',
+                 *, until_phase=None, locker_factory=lock.default_locker_factory()):
         if not no_overlap_id:
             raise ValueError("no_overlap_id cannot be empty")
 
-        super().__init__(CoordTypes.NO_OVERLAP, phase_id, RunState.EVALUATING,
+        super().__init__(CoordTypes.NO_OVERLAP, phase_id or no_overlap_id, RunState.EVALUATING, phase_name,
                          protection_id=no_overlap_id, last_protected_phase=until_phase)
         self._log = logging.getLogger(self.__class__.__name__)
         self._log.setLevel(DEBUG)
@@ -113,9 +115,9 @@ class NoOverlapPhase(Phase):
 
 class DependencyPhase(Phase):
 
-    def __init__(self, phase_id, dependency_match):
-        self._parameters = {'phase': 'dependency', 'dependency': str(dependency_match.serialize())}
-        super().__init__(phase_id, RunState.EVALUATING, self._parameters)
+    def __init__(self, dependency_match, phase_id=None, phase_name='Active dependency check'):
+        phase_id = phase_id or dependency_match.serialize()
+        super().__init__(CoordTypes.DEPENDENCY, phase_id, RunState.EVALUATING, phase_name)
         self._log = logging.getLogger(self.__class__.__name__)
         self._log.setLevel(DEBUG)
         self._dependency_match = dependency_match
@@ -123,10 +125,6 @@ class DependencyPhase(Phase):
     @property
     def dependency_match(self):
         return self._dependency_match
-
-    @property
-    def parameters(self):
-        return self._parameters
 
     def run(self, run_ctx):
         with forward_logs(self._log, run_ctx):
