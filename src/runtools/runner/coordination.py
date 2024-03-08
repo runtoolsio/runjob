@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from logging import DEBUG
 from threading import Condition, Event, Lock
+from typing import Dict
+
+import sys
 
 import runtools.runcore
 from runtools.runcore import paths
@@ -296,30 +299,6 @@ class QueuedState(Enum):
             return cls.UNKNOWN
 
 
-class QueueWaiter:
-
-    @property
-    @abstractmethod
-    def state(self):
-        """
-        Returns:
-            QueuedState: The current state of the waiter.
-        """
-        pass
-
-    @abstractmethod
-    def wait(self):
-        pass
-
-    @abstractmethod
-    def cancel(self):
-        pass
-
-    @abstractmethod
-    def signal_dispatch(self):
-        pass
-
-
 @dataclass
 class ExecutionGroupLimit:
     group: str
@@ -330,6 +309,11 @@ class ExecutionGroupLimit:
 @dataclass(frozen=True)
 class ExecutionQueueInfo(PhaseInfo):
     queued_state: QueuedState
+
+    def serialize(self) -> Dict:
+        d = super().serialize()
+        d["queued_state"] = self.queued_state.name
+        return d
 
 
 class ExecutionQueue(Phase, InstanceTransitionObserver):
@@ -345,6 +329,8 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
 
         super().__init__(CoordTypes.QUEUE, phase_id or queue_id, RunState.IN_QUEUE, phase_name,
                          protection_id=queue_id, last_protected_phase=until_phase)
+        self._log = logging.getLogger(self.__class__.__name__)
+        self._log.setLevel(DEBUG)
         self._state = QueuedState.NONE
         self._queue_id = queue_id
         self._max_executions = max_executions
@@ -355,6 +341,27 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         self._current_wait = False
         self._state_receiver = None
 
+        stdout_handler = logging.StreamHandler(sys.stdout)
+        stdout_handler.setLevel(logging.DEBUG)  # Set the minimum logging level for this handler
+
+        # Optionally, set a formatter for the handler
+        formatter = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
+        stdout_handler.setFormatter(formatter)
+
+        # Add the handler to the logger
+        self._log.addHandler(stdout_handler)
+
+    def info(self) -> ExecutionQueueInfo:
+        return ExecutionQueueInfo(
+            self._phase_type,
+            self._phase_id,
+            self._run_state,
+            self._phase_name,
+            self._protection_id,
+            self._last_protected_phase,
+            self._state
+        )
+
     @property
     def stop_status(self):
         return TerminationStatus.CANCELLED
@@ -364,24 +371,26 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         return self._state
 
     def run(self, run_ctx):
-        while True:
-            with self._wait_guard:
-                if self._state == QueuedState.NONE:
-                    # Should new waiter run scheduler?
-                    self._state = QueuedState.IN_QUEUE
+        with forward_logs(self._log, run_ctx):
+            while True:
+                with self._wait_guard:
+                    if self._state == QueuedState.NONE:
+                        self._state = QueuedState.IN_QUEUE
+                        with self._locker():
+                            self._dispatch_next()
 
-                if self._state.dequeued:
-                    return
+                    if self._state.dequeued:
+                        return
 
-                if self._current_wait:
-                    self._wait_guard.wait()
-                    continue
+                    if self._current_wait:
+                        self._wait_guard.wait()
+                        continue
 
-                self._current_wait = True
-                self._start_listening()
+                    self._current_wait = True
+                    self._start_listening()
 
-            with self._locker():
-                self._dispatch_next()
+                with self._locker():
+                    self._dispatch_next()
 
     def stop(self):
         with self._wait_guard:
@@ -392,6 +401,7 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
             self._wait_guard.notify_all()
 
     def signal_dispatch(self):
+        self._log.debug("event[dispatch_signalled]")
         with self._wait_guard:
             if self._state.dequeued:
                 return False  # Cancelled
@@ -401,9 +411,7 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
             return True
 
     def _start_listening(self):
-        phase_filter = PhaseCriterion(phase_type=CoordTypes.QUEUE, protection_id=self._queue_id)
-        listen_criteria = EntityRunCriteria(phase_criteria=phase_filter)
-        self._state_receiver = self._state_receiver_factory(listen_criteria)
+        self._state_receiver = self._state_receiver_factory()
         self._state_receiver.add_observer_transition(self)
         self._state_receiver.start()
 
@@ -416,12 +424,14 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         sorted_group_runs = JobRuns(sorted(runs, key=lambda job_run: job_run.run.lifecycle.created_at))
         occupied = len(
             [r for r in sorted_group_runs
-             if r.in_protected_phase(CoordTypes.QUEUE, self._queue_id)
-             or (r.current_phase().type == CoordTypes.QUEUE and r.current_phase().queued_state.dequeued)])
+             if r.run.in_protected_phase(CoordTypes.QUEUE, self._queue_id)
+             or (r.run.current_phase().phase_type == CoordTypes.QUEUE and r.run.current_phase().queued_state.dequeued)])
         free_slots = self._max_executions - occupied
         if free_slots <= 0:
+            self._log.debug("event[no_dispatch] slots=[%d] occupied=[%d]", self._max_executions, occupied)
             return False
 
+        self._log.debug("event[dispatch] free_slots=[%d]", free_slots)
         for next_proceed in sorted_group_runs.queued:
             c = EntityRunCriteria(metadata_criteria=InstanceMetadataCriterion.for_run(next_proceed))
             signal_resp = runtools.runcore.signal_dispatch(c)
