@@ -370,6 +370,10 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
     def state(self):
         return self._state
 
+    @property
+    def queue_id(self):
+        return self._queue_id
+
     def run(self, run_ctx):
         with forward_logs(self._log, run_ctx):
             while True:
@@ -398,6 +402,7 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
                 return
 
             self._state = QueuedState.CANCELLED
+            self._stop_listening()
             self._wait_guard.notify_all()
 
     def signal_dispatch(self):
@@ -434,7 +439,7 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         self._log.debug("event[dispatch] free_slots=[%d]", free_slots)
         for next_proceed in sorted_group_runs.queued:
             c = EntityRunCriteria(metadata_criteria=InstanceMetadataCriterion.for_run(next_proceed))
-            signal_resp = runtools.runcore.signal_dispatch(c)
+            signal_resp = runtools.runcore.signal_dispatch(c, self._queue_id)
             for r in signal_resp.responses:
                 if r.dispatched:
                     free_slots -= 1
@@ -455,5 +460,5 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
 
     def _stop_listening(self):
         self._state_receiver.close()
-        self._state_receiver.listeners.remove(self)
+        self._state_receiver.remove_observer_transition(self)
         self._state_receiver = None

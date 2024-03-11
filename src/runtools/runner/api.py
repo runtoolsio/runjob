@@ -125,10 +125,8 @@ class SignalDispatchResource(APIResource):
 
     def handle(self, job_instance, req_body):
         dispatched = False
-        # TODO Must check the current phase is the queue
         for phase in job_instance.phases.values():
-            phase_params = phase.metadata.properties
-            if phase_params.get('phase') == 'execution_queue' and req_body["queue_id"] == phase_params.get('queue_id'):
+            if phase.type == CoordTypes.QUEUE and phase.queue_id == req_body['queue_id']:
                 dispatched = phase.signal_dispatch()
                 break
 
