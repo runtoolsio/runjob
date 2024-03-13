@@ -344,13 +344,6 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         stdout_handler = logging.StreamHandler(sys.stdout)
         stdout_handler.setLevel(logging.DEBUG)  # Set the minimum logging level for this handler
 
-        # Optionally, set a formatter for the handler
-        formatter = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
-        stdout_handler.setFormatter(formatter)
-
-        # Add the handler to the logger
-        self._log.addHandler(stdout_handler)
-
     def info(self) -> ExecutionQueueInfo:
         return ExecutionQueueInfo(
             self._phase_type,
