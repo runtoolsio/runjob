@@ -376,22 +376,20 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
 
     def run(self, run_ctx):
         with forward_logs(self._log, run_ctx):
+            with self._wait_guard:
+                if self._state == QueuedState.NONE:
+                    self._state = QueuedState.IN_QUEUE
+
             while True:
-                with self._wait_guard:
-                    if self._state == QueuedState.NONE:
-                        self._state = QueuedState.IN_QUEUE
-                        with self._locker():
-                            self._dispatch_next()
+                if self._state.dequeued:
+                    return
 
-                    if self._state.dequeued:
-                        return
+                if self._current_wait:
+                    self._wait_guard.wait()
+                    continue
 
-                    if self._current_wait:
-                        self._wait_guard.wait()
-                        continue
-
-                    self._current_wait = True
-                    self._start_listening()
+                self._current_wait = True
+                self._start_listening()
 
                 with self._locker():
                     self._dispatch_next()

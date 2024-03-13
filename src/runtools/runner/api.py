@@ -126,7 +126,7 @@ class SignalDispatchResource(APIResource):
     def handle(self, job_instance, req_body):
         dispatched = False
         for phase in job_instance.phases.values():
-            if phase.type == CoordTypes.QUEUE and phase.queue_id == req_body['queue_id']:
+            if phase.type == CoordTypes.QUEUE.value and phase.queue_id == req_body['queue_id']:
                 dispatched = phase.signal_dispatch()
                 break
 
