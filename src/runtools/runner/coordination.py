@@ -374,15 +374,16 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
                     self._state = QueuedState.IN_QUEUE
 
             while True:
-                if self._state.dequeued:
-                    return
+                with self._wait_guard:
+                    if self._state.dequeued:
+                        return
 
-                if self._current_wait:
-                    self._wait_guard.wait()
-                    continue
+                    if self._current_wait:
+                        self._wait_guard.wait()
+                        continue
 
-                self._current_wait = True
-                self._start_listening()
+                    self._current_wait = True
+                    self._start_listening()
 
                 with self._locker():
                     self._dispatch_next()
