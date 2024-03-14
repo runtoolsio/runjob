@@ -167,8 +167,8 @@ class RunnerJobInstance(JobInstance):
         snapshot = self.job_run_info()
         termination = snapshot.run.termination
 
-        log.info(self._log('new_phase', "prev_phase=[{}] new_phase=[{}] run_state=[{}]",
-                           old_phase.phase_key, new_phase.phase_key, new_phase.run_state.name))
+        log.info(self._log('new_phase', "new_phase=[{}] prev_phase=[{}] run_state=[{}]",
+                           new_phase.phase_key, old_phase.phase_key, new_phase.phase_key, new_phase.run_state.name))
 
         if termination:
             if termination.status.is_outcome(Outcome.NON_SUCCESS):

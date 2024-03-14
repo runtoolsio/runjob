@@ -6,8 +6,6 @@ from logging import DEBUG
 from threading import Condition, Event, Lock
 from typing import Dict
 
-import sys
-
 import runtools.runcore
 from runtools.runcore import paths
 from runtools.runcore.criteria import InstanceMetadataCriterion, EntityRunCriteria, PhaseCriterion
@@ -329,7 +327,7 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
 
         super().__init__(CoordTypes.QUEUE, phase_id or queue_id, RunState.IN_QUEUE, phase_name,
                          protection_id=queue_id, last_protected_phase=until_phase)
-        self._log = logging.getLogger(self.__class__.__name__)
+        self._log = logging.getLogger(f'{__name__}.{self.__class__.__name__}')
         self._log.setLevel(DEBUG)
         self._state = QueuedState.NONE
         self._queue_id = queue_id
@@ -340,9 +338,6 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         # vv Guarding these fields vv
         self._current_wait = False
         self._state_receiver = None
-
-        stdout_handler = logging.StreamHandler(sys.stdout)
-        stdout_handler.setLevel(logging.DEBUG)  # Set the minimum logging level for this handler
 
     def info(self) -> ExecutionQueueInfo:
         return ExecutionQueueInfo(
@@ -400,8 +395,11 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
     def signal_dispatch(self):
         self._log.debug("event[dispatch_signalled]")
         with self._wait_guard:
+            if self._state == QueuedState.CANCELLED:
+                return False
+
             if self._state.dequeued:
-                return False  # Cancelled
+                return True  # TODO Safe to keep?
 
             self._state = QueuedState.DISPATCHED
             self._wait_guard.notify_all()
@@ -428,12 +426,13 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
             self._log.debug("event[no_dispatch] slots=[%d] occupied=[%d]", self._max_executions, occupied)
             return False
 
-        self._log.debug("event[dispatch] free_slots=[%d]", free_slots)
+        self._log.debug("event[dispatching] free_slots=[%d]", free_slots)
         for next_proceed in sorted_group_runs.queued:
             c = EntityRunCriteria(metadata_criteria=InstanceMetadataCriterion.for_run(next_proceed))
             signal_resp = runtools.runcore.signal_dispatch(c, self._queue_id)
             for r in signal_resp.responses:
                 if r.dispatched:
+                    self._log.debug("event[dispatched] run=[%s]", next_proceed.metadata)
                     free_slots -= 1
                     if free_slots <= 0:
                         return
