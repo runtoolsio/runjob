@@ -28,7 +28,7 @@ EXEC = PhaseKey('EXEC', 'j1')
 def test_passed_args(observer: TestTransitionObserver):
     runtools.runner.run_uncoordinated('j1', TestExecution())
 
-    assert observer.job_runs[0].metadata.entity_id == 'j1'
+    assert observer.job_runs[0].metadata.job_id == 'j1'
     assert observer.phases == [(PhaseKeys.INIT, EXEC), (EXEC, PhaseKeys.TERMINAL)]
     assert observer.run_states == [RunState.EXECUTING, RunState.ENDED]
 

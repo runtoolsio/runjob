@@ -84,7 +84,7 @@ class RunnerJobInstance(JobInstance):
 
     def _log(self, event: str, msg: str = '', *params):
         return ("event=[{}] job_run=[{}@{}] " + msg).format(
-            event, self._metadata.entity_id, self._metadata.run_id, *params)
+            event, self._metadata.job_id, self._metadata.run_id, *params)
 
     @property
     def instance_id(self):

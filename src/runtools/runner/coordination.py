@@ -8,7 +8,7 @@ from typing import Dict
 
 import runtools.runcore
 from runtools.runcore import paths
-from runtools.runcore.criteria import InstanceMetadataCriterion, EntityRunCriteria, PhaseCriterion
+from runtools.runcore.criteria import InstanceMetadataCriterion, JobRunCriteria, PhaseCriterion
 from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
 from runtools.runcore.listening import InstanceTransitionReceiver
 from runtools.runcore.run import RunState, Phase, TerminationStatus, PhaseRun, TerminateRun, RunContext, PhaseInfo, \
@@ -101,7 +101,7 @@ class NoOverlapPhase(Phase):
             self._log.debug("task=[No Overlap Check]")
             with self._locker():
                 no_overlap_filter = PhaseCriterion(phase_type=CoordTypes.NO_OVERLAP, protection_id=self._protection_id)
-                c = EntityRunCriteria(phase_criteria=no_overlap_filter)
+                c = JobRunCriteria(phase_criteria=no_overlap_filter)
                 runs, _ = runtools.runcore.get_active_runs(c)
                 if any(r for r in runs if r.in_protected_phase(CoordTypes.NO_OVERLAP, self._protection_id)):
                     self._log.debug("task=[No Overlap Check] result=[Overlap found]")
@@ -412,7 +412,7 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
 
     def _dispatch_next(self):
         phase_filter = PhaseCriterion(phase_type=CoordTypes.QUEUE, protection_id=self._queue_id)
-        criteria = EntityRunCriteria(phase_criteria=phase_filter)
+        criteria = JobRunCriteria(phase_criteria=phase_filter)
         runs, _ = runtools.runcore.get_active_runs(criteria)
 
         # TODO Sort by phase start
@@ -428,7 +428,7 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
 
         self._log.debug("event[dispatching] free_slots=[%d]", free_slots)
         for next_proceed in sorted_group_runs.queued:
-            c = EntityRunCriteria(metadata_criteria=InstanceMetadataCriterion.for_run(next_proceed))
+            c = JobRunCriteria(metadata_criteria=InstanceMetadataCriterion.for_run(next_proceed))
             signal_resp = runtools.runcore.signal_dispatch(c, self._queue_id)
             for r in signal_resp.responses:
                 if r.dispatched:

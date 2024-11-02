@@ -2,7 +2,7 @@ import pytest
 
 import runtools.runcore
 from runtools.runcore.client import APIClient, APIErrorType, ErrorCode, ApprovalResult, StopResult
-from runtools.runcore.criteria import parse_criteria, EntityRunCriteria
+from runtools.runcore.criteria import parse_criteria, JobRunCriteria
 from runtools.runcore.run import RunState, TerminationStatus, PhaseKey
 from runtools.runcore.test.job import FakeJobInstanceBuilder
 from runtools.runner.api import APIServer
@@ -53,12 +53,12 @@ def test_instances_api():
 
 
 def test_approve_pending_instance(job_instances):
-    instances, errors = runtools.runcore.approve_pending_instances(EntityRunCriteria.all(), APPROVAL.id)
+    instances, errors = runtools.runcore.approve_pending_instances(JobRunCriteria.all(), APPROVAL.id)
 
     assert not errors
-    assert instances[0].instance_metadata.entity_id == 'j1'
+    assert instances[0].instance_metadata.job_id == 'j1'
     assert instances[0].release_result == ApprovalResult.NOT_APPLICABLE
-    assert instances[1].instance_metadata.entity_id == 'j2'
+    assert instances[1].instance_metadata.job_id == 'j2'
     assert instances[1].release_result == ApprovalResult.APPROVED
 
     _, j2 = job_instances
@@ -69,7 +69,7 @@ def test_stop(job_instances):
     instances, errors = runtools.runcore.stop_instances(parse_criteria('j1'))
     assert not errors
     assert len(instances) == 1
-    assert instances[0].instance_metadata.entity_id == 'j1'
+    assert instances[0].instance_metadata.job_id == 'j1'
     assert instances[0].stop_result == StopResult.STOP_INITIATED
 
     j1, j2 = job_instances
@@ -84,8 +84,8 @@ def test_tail(job_instances):
     instances, errors = runtools.runcore.fetch_output()
     assert not errors
 
-    assert instances[0].instance_metadata.entity_id == 'j1'
+    assert instances[0].instance_metadata.job_id == 'j1'
     assert instances[0].output == [['Meditate, do not delay, lest you later regret it.', False]]
 
-    assert instances[1].instance_metadata.entity_id == 'j2'
+    assert instances[1].instance_metadata.job_id == 'j2'
     assert not instances[1].output

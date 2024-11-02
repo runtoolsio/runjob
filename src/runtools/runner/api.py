@@ -14,7 +14,7 @@ from json import JSONDecodeError
 
 from runtools.runcore import paths
 from runtools.runcore.client import StopResult
-from runtools.runcore.criteria import EntityRunCriteria
+from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.job import JobInstanceManager
 from runtools.runcore.run import util
 from runtools.runcore.util.socket import SocketServer
@@ -212,7 +212,7 @@ class APIServer(SocketServer, JobInstanceManager):
             return self._job_instances
 
         try:
-            matching_criteria = EntityRunCriteria.deserialize(run_match)
+            matching_criteria = JobRunCriteria.deserialize(run_match)
         except ValueError:
             raise _ApiError(422, f"Invalid run match: {run_match}")
         return [job_instance for job_instance in self._job_instances if matching_criteria.matches(job_instance)]

@@ -24,6 +24,6 @@ class TestJobInstanceBuilder(AbstractBuilder):
     def build(self) -> RunnerJobInstance:
         lifecycle = Lifecycle()
         phaser = Phaser(self.phases, lifecycle)
-        return RunnerJobInstance(self.metadata.entity_id, self.metadata.instance_id, phaser, lifecycle,
+        return RunnerJobInstance(self.metadata.job_id, self.metadata.instance_id, phaser, lifecycle,
                                  run_id=self.metadata.run_id,
                                  **self.metadata.user_params)
