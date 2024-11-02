@@ -43,7 +43,7 @@ class _ExecTimeWarning(InstanceTransitionObserver):
             self.timer.start()
 
     def _check(self):
-        if self.job_instance.job_run_info().run.lifecycle.run_state != RunState.ENDED:
+        if self.job_instance.job_run().lifecycle.run_state != RunState.ENDED:
             self.job_instance.task_tracker.warning(self.text)
 
     def __repr__(self):

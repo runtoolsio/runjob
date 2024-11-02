@@ -38,14 +38,14 @@ def test_raise_exc(observer: TestTransitionObserver):
         runtools.runner.run_uncoordinated('j1', TestExecution(raise_exc=Exception))
 
     assert observer.run_states == [RunState.EXECUTING, RunState.ENDED]
-    assert observer.job_runs[-1].run.termination.error.category == 'Exception'
+    assert observer.job_runs[-1].termination.error.category == 'Exception'
 
 
 def test_raise_exec_exc(observer: TestTransitionObserver):
     runtools.runner.run_uncoordinated('j1', TestExecution(raise_exc=ExecutionException))
 
     assert observer.run_states == [RunState.EXECUTING, RunState.ENDED]
-    assert observer.job_runs[-1].run.termination.failure.category == 'ExecutionException'
+    assert observer.job_runs[-1].termination.failure.category == 'ExecutionException'
 
 
 def test_observer_raises_exception():
@@ -58,7 +58,7 @@ def test_observer_raises_exception():
     job_instance.add_observer_transition(observer)
     job_instance.run()
     assert execution.executed_latch.is_set()
-    assert job_instance.job_run_info().run.termination.status == TerminationStatus.COMPLETED
+    assert job_instance.job_run().termination.status == TerminationStatus.COMPLETED
 
 
 class ExceptionRaisingObserver(InstanceTransitionObserver):

@@ -109,7 +109,7 @@ class RunnerJobInstance(JobInstance):
     def get_phase(self, phase_type: str | Enum, phase_name: str):
         return self._phaser.get_phase(phase_type, phase_name)
 
-    def job_run_info(self) -> JobRun:
+    def job_run(self) -> JobRun:
         tracked_task = self._task_tracker.tracked_task if self.task_tracker else None
         return JobRun(self.metadata, self._phaser.run_info(), tracked_task)
 
@@ -164,8 +164,8 @@ class RunnerJobInstance(JobInstance):
 
     def _transition_hook(self, old_phase: PhaseRun, new_phase: PhaseRun, ordinal):
         """Executed under phaser transition lock"""
-        snapshot = self.job_run_info()
-        termination = snapshot.run.termination
+        snapshot = self.job_run()
+        termination = snapshot.termination
 
         log.info(self._log('new_phase', "new_phase=[{}] prev_phase=[{}] run_state=[{}]",
                            new_phase.phase_key, old_phase.phase_key, new_phase.phase_key, new_phase.run_state.name))

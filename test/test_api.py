@@ -41,8 +41,8 @@ def test_error_not_found():
 def test_instances_api():
     multi_resp = runtools.runcore.get_active_runs()
     instances = {inst.job_id: inst for inst in multi_resp.responses}
-    assert instances['j1'].run.lifecycle.run_state == RunState.EXECUTING
-    assert instances['j2'].run.lifecycle.run_state == RunState.PENDING
+    assert instances['j1'].lifecycle.run_state == RunState.EXECUTING
+    assert instances['j2'].lifecycle.run_state == RunState.PENDING
 
     multi_resp_j1 = runtools.runcore.get_active_runs(parse_criteria('j1'))
     multi_resp_j2 = runtools.runcore.get_active_runs(parse_criteria('j2'))
@@ -73,8 +73,8 @@ def test_stop(job_instances):
     assert instances[0].stop_result == StopResult.STOP_INITIATED
 
     j1, j2 = job_instances
-    assert j1.job_run_info().run.termination.status == TerminationStatus.STOPPED
-    assert not j2.job_run_info().run.termination
+    assert j1.job_run().termination.status == TerminationStatus.STOPPED
+    assert not j2.job_run().termination
 
 
 def test_tail(job_instances):

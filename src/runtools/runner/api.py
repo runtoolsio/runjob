@@ -64,7 +64,7 @@ class InstancesResource(APIResource):
         return '/instances'
 
     def handle(self, job_instance, req_body):
-        return {"job_run": job_instance.job_run_info().serialize()}
+        return {"job_run": job_instance.job_run().serialize()}
 
 
 class ApproveResource(APIResource):

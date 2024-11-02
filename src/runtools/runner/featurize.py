@@ -342,7 +342,7 @@ class FeaturedContext(InstanceTransitionObserver):
         #      will work regardless of the priority as the removal of the observers doesn't affect
         #      iteration/notification (`Notification` class)
         job_instance.add_observer_transition(self, ctx_observer_priority + 1)
-        if job_instance.job_run_info().run.lifecycle.is_ended:
+        if job_instance.job_run().lifecycle.is_ended:
             self._release_instance(job_instance.metadata.instance_id, not self._keep_removed)
 
         return job_instance

@@ -103,7 +103,7 @@ class NoOverlapPhase(Phase):
                 no_overlap_filter = PhaseCriterion(phase_type=CoordTypes.NO_OVERLAP, protection_id=self._protection_id)
                 c = EntityRunCriteria(phase_criteria=no_overlap_filter)
                 runs, _ = runtools.runcore.get_active_runs(c)
-                if any(r for r in runs if r.run.in_protected_phase(CoordTypes.NO_OVERLAP, self._protection_id)):
+                if any(r for r in runs if r.in_protected_phase(CoordTypes.NO_OVERLAP, self._protection_id)):
                     self._log.debug("task=[No Overlap Check] result=[Overlap found]")
                     raise TerminateRun(TerminationStatus.OVERLAP)
 
@@ -416,11 +416,11 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         runs, _ = runtools.runcore.get_active_runs(criteria)
 
         # TODO Sort by phase start
-        sorted_group_runs = JobRuns(sorted(runs, key=lambda job_run: job_run.run.lifecycle.created_at))
+        sorted_group_runs = JobRuns(sorted(runs, key=lambda job_run: job_run.lifecycle.created_at))
         occupied = len(
             [r for r in sorted_group_runs
-             if r.run.in_protected_phase(CoordTypes.QUEUE, self._queue_id)
-             or (r.run.current_phase().phase_type == CoordTypes.QUEUE and r.run.current_phase().queued_state.dequeued)])
+             if r.in_protected_phase(CoordTypes.QUEUE, self._queue_id)
+             or (r.current_phase.phase_type == CoordTypes.QUEUE and r.current_phase.queued_state.dequeued)])
         free_slots = self._max_executions - occupied
         if free_slots <= 0:
             self._log.debug("event[no_dispatch] slots=[%d] occupied=[%d]", self._max_executions, occupied)
@@ -441,7 +441,7 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         with self._wait_guard:
             if not self._current_wait:
                 return
-            if (protected_phases := job_run.run.protected_phases(CoordTypes.QUEUE, self._queue_id)) \
+            if (protected_phases := job_run.protected_phases(CoordTypes.QUEUE, self._queue_id)) \
                     and previous_phase.phase_key in protected_phases \
                     and new_phase not in protected_phases:
                 # Run slot freed
