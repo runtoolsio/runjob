@@ -1,5 +1,6 @@
 from runtools.runcore.listening import InstanceTransitionReceiver, InstanceOutputReceiver
-from runtools.runcore.run import PhaseRun, RunState, PhaseInfo, JobInstanceMetadata, PhaseKey
+from runtools.runcore.run import PhaseRun, RunState, PhaseInfo, PhaseKey
+from runtools.runcore.job import JobInstanceMetadata
 from runtools.runcore.test.job import ended_run
 from runtools.runcore.test.observer import GenericObserver
 from runtools.runcore.util import utc_now

@@ -46,9 +46,9 @@ import logging
 from enum import Enum
 
 from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserver,
-                                  InstanceOutputObserver)
+                                  InstanceOutputObserver, JobInstanceMetadata)
 from runtools.runcore.output import InMemoryOutput, Mode
-from runtools.runcore.run import PhaseRun, Outcome, RunState, PhaseInfo, JobInstanceMetadata
+from runtools.runcore.run import PhaseRun, Outcome, RunState, PhaseInfo
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
 log = logging.getLogger(__name__)
