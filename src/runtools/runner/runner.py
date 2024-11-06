@@ -100,14 +100,14 @@ class RunnerJobInstance(JobInstance):
 
     @property
     def current_phase(self):
-        return self._phaser.current_phase
+        return self._phaser.current_phase_id
 
     @property
     def phases(self):
         return self._phaser.phases
 
     def get_phase(self, phase_type: str | Enum, phase_name: str):
-        return self._phaser.get_phase(phase_type, phase_name)
+        return self._phaser.get_phase(phase_name, phase_type)
 
     def job_run(self) -> JobRun:
         tracked_task = self._task_tracker.tracked_task if self.task_tracker else None

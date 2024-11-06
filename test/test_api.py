@@ -62,7 +62,7 @@ def test_approve_pending_instance(job_instances):
     assert instances[1].release_result == ApprovalResult.APPROVED
 
     _, j2 = job_instances
-    assert j2.get_phase(*APPROVAL).approved
+    assert j2.get_phase(,.approved
 
 
 def test_stop(job_instances):

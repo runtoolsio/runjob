@@ -43,7 +43,7 @@ class ApprovalPhase(Phase):
     """
 
     def __init__(self, phase_id='approval', phase_name='Approval', *, timeout=0):
-        super().__init__(CoordTypes.APPROVAL, phase_id, RunState.PENDING, phase_name)
+        super().__init__(phase_id, CoordTypes.APPROVAL, RunState.PENDING, phase_name)
         self._log = logging.getLogger(self.__class__.__name__)
         self._log.setLevel(DEBUG)
         self._timeout = timeout
@@ -90,7 +90,7 @@ class NoOverlapPhase(Phase):
         if not no_overlap_id:
             raise ValueError("no_overlap_id cannot be empty")
 
-        super().__init__(CoordTypes.NO_OVERLAP, phase_id or no_overlap_id, RunState.EVALUATING, phase_name,
+        super().__init__(phase_id or no_overlap_id, CoordTypes.NO_OVERLAP, RunState.EVALUATING, phase_name,
                          protection_id=no_overlap_id, last_protected_phase=until_phase)
         self._log = logging.getLogger(self.__class__.__name__)
         self._log.setLevel(DEBUG)
@@ -121,7 +121,7 @@ class DependencyPhase(Phase):
 
     def __init__(self, dependency_match, phase_id=None, phase_name='Active dependency check'):
         phase_id = phase_id or str(dependency_match)
-        super().__init__(CoordTypes.DEPENDENCY, phase_id, RunState.EVALUATING, phase_name)
+        super().__init__(phase_id, CoordTypes.DEPENDENCY, RunState.EVALUATING, phase_name)
         self._log = logging.getLogger(self.__class__.__name__)
         self._log.setLevel(DEBUG)
         self._dependency_match = dependency_match
@@ -153,7 +153,7 @@ class WaitingPhase(Phase):
     """
 
     def __init__(self, phase_id, observable_conditions, timeout=0):
-        super().__init__(CoordTypes.WAITING, phase_id, RunState.WAITING)
+        super().__init__(phase_id, CoordTypes.WAITING, RunState.WAITING)
         self._observable_conditions = observable_conditions
         self._timeout = timeout
         self._conditions_lock = Lock()
@@ -325,8 +325,8 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         if max_executions < 1:
             raise ValueError('Max executions must be greater than zero')
 
-        super().__init__(CoordTypes.QUEUE, phase_id or queue_id, RunState.IN_QUEUE, phase_name,
-                         protection_id=queue_id, last_protected_phase=until_phase)
+        super().__init__(phase_id or queue_id, CoordTypes.QUEUE, RunState.IN_QUEUE, phase_name, protection_id=queue_id,
+                         last_protected_phase=until_phase)
         self._log = logging.getLogger(f'{__name__}.{self.__class__.__name__}')
         self._log.setLevel(DEBUG)
         self._state = QueuedState.NONE
@@ -420,7 +420,7 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         occupied = len(
             [r for r in sorted_group_runs
              if r.in_protected_phase(CoordTypes.QUEUE, self._queue_id)
-             or (r.current_phase.phase_type == CoordTypes.QUEUE and r.current_phase.queued_state.dequeued)])
+             or (r.current_phase_id.phase_type == CoordTypes.QUEUE and r.current_phase_id.queued_state.dequeued)])
         free_slots = self._max_executions - occupied
         if free_slots <= 0:
             self._log.debug("event[no_dispatch] slots=[%d] occupied=[%d]", self._max_executions, occupied)
