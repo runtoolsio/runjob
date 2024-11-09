@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from runtools.runcore.job import JobInstanceManager
-from runtools.runcore.run import RunState, PhaseKey
+from runtools.runcore.run import RunState
 from runtools.runcore.test.job import FakeJobInstanceBuilder, FakeJobInstance
 from runtools.runcore.test.observer import TestTransitionObserver, TestOutputObserver
 from runtools.runner import FeaturedContextBuilder
@@ -82,7 +82,7 @@ class TestEnv:
         return bool(self.ctx.get_instance(job_instance.instance_id)) and job_instance in self.ctx.instances
 
 
-EXEC = PhaseKey('EXEC', 'id')
+EXEC = 'EXEC'
 
 
 def test_instance_management():
