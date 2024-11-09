@@ -43,12 +43,20 @@ class ApprovalPhase(Phase):
     """
 
     def __init__(self, phase_id='approval', phase_name='Approval', *, timeout=0):
-        super().__init__(phase_id, CoordTypes.APPROVAL, RunState.PENDING, phase_name)
+        super().__init__(phase_id, phase_name)
         self._log = logging.getLogger(self.__class__.__name__)
         self._log.setLevel(DEBUG)
         self._timeout = timeout
         self._event = Event()
         self._stopped = False
+
+    @property
+    def type(self) -> str:
+        return CoordTypes.APPROVAL.value
+
+    @property
+    def run_state(self) -> RunState:
+        return RunState.PENDING
 
     def run(self, run_ctx: RunContext):
         with forward_logs(self._log, run_ctx):
@@ -90,11 +98,19 @@ class NoOverlapPhase(Phase):
         if not no_overlap_id:
             raise ValueError("no_overlap_id cannot be empty")
 
-        super().__init__(phase_id or no_overlap_id, CoordTypes.NO_OVERLAP, RunState.EVALUATING, phase_name,
+        super().__init__(phase_id or no_overlap_id, phase_name,
                          protection_id=no_overlap_id, last_protected_phase=until_phase)
         self._log = logging.getLogger(self.__class__.__name__)
         self._log.setLevel(DEBUG)
         self._locker = locker_factory(paths.lock_path(f"noo-{no_overlap_id}.lock", True))
+
+    @property
+    def type(self) -> str:
+        return CoordTypes.NO_OVERLAP.value
+
+    @property
+    def run_state(self) -> RunState:
+        return RunState.EVALUATING
 
     def run(self, run_ctx):
         with forward_logs(self._log, run_ctx):
@@ -121,10 +137,18 @@ class DependencyPhase(Phase):
 
     def __init__(self, dependency_match, phase_id=None, phase_name='Active dependency check'):
         phase_id = phase_id or str(dependency_match)
-        super().__init__(phase_id, CoordTypes.DEPENDENCY, RunState.EVALUATING, phase_name)
+        super().__init__(phase_id, phase_name)
         self._log = logging.getLogger(self.__class__.__name__)
         self._log.setLevel(DEBUG)
         self._dependency_match = dependency_match
+
+    @property
+    def type(self) -> str:
+        return CoordTypes.DEPENDENCY.value
+
+    @property
+    def run_state(self) -> RunState:
+        return RunState.EVALUATING
 
     @property
     def dependency_match(self):
@@ -153,12 +177,20 @@ class WaitingPhase(Phase):
     """
 
     def __init__(self, phase_id, observable_conditions, timeout=0):
-        super().__init__(phase_id, CoordTypes.WAITING, RunState.WAITING)
+        super().__init__(phase_id)
         self._observable_conditions = observable_conditions
         self._timeout = timeout
         self._conditions_lock = Lock()
         self._event = Event()
         self._term_status = TerminationStatus.NONE
+
+    @property
+    def type(self) -> str:
+        return CoordTypes.WAITING.value
+
+    @property
+    def run_state(self) -> RunState:
+        return RunState.WAITING
 
     def run(self, run_ctx):
         for condition in self._observable_conditions:
@@ -325,8 +357,7 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         if max_executions < 1:
             raise ValueError('Max executions must be greater than zero')
 
-        super().__init__(phase_id or queue_id, CoordTypes.QUEUE, RunState.IN_QUEUE, phase_name, protection_id=queue_id,
-                         last_protected_phase=until_phase)
+        super().__init__(phase_id or queue_id, phase_name, protection_id=queue_id, last_protected_phase=until_phase)
         self._log = logging.getLogger(f'{__name__}.{self.__class__.__name__}')
         self._log.setLevel(DEBUG)
         self._state = QueuedState.NONE
@@ -339,11 +370,19 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         self._current_wait = False
         self._state_receiver = None
 
+    @property
+    def type(self) -> str:
+        return CoordTypes.QUEUE.value
+
+    @property
+    def run_state(self) -> RunState:
+        return RunState.IN_QUEUE
+
     def info(self) -> ExecutionQueueInfo:
         return ExecutionQueueInfo(
-            self._phase_type,
             self._phase_id,
-            self._run_state,
+            self.type,
+            self.run_state,
             self._phase_name,
             self._protection_id,
             self._last_protected_phase,
@@ -430,7 +469,7 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
         for next_proceed in sorted_group_runs.queued:
             c = JobRunCriteria(metadata_criteria=InstanceMetadataCriterion.for_run(next_proceed))
             signal_resp = runtools.runcore.signal_dispatch(c, self._queue_id)
-            for r in signal_resp.responses:
+            for r in signal_resp.successful:
                 if r.dispatched:
                     self._log.debug("event[dispatched] run=[%s]", next_proceed.metadata)
                     free_slots -= 1
@@ -442,7 +481,7 @@ class ExecutionQueue(Phase, InstanceTransitionObserver):
             if not self._current_wait:
                 return
             if (protected_phases := job_run.protected_phases(CoordTypes.QUEUE, self._queue_id)) \
-                    and previous_phase.phase_key in protected_phases \
+                    and previous_phase.phase_id in protected_phases \
                     and new_phase not in protected_phases:
                 # Run slot freed
                 self._current_wait = False
