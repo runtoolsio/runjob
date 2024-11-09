@@ -1,5 +1,5 @@
 from runtools.runcore.listening import InstanceTransitionReceiver, InstanceOutputReceiver
-from runtools.runcore.run import PhaseRun, RunState, PhaseInfo, PhaseKey
+from runtools.runcore.run import PhaseRun, RunState, PhaseInfo
 from runtools.runcore.job import JobInstanceMetadata
 from runtools.runcore.test.job import ended_run
 from runtools.runcore.test.observer import GenericObserver
@@ -16,8 +16,8 @@ def test_state_dispatching():
     receiver.start()
 
     test_run = ended_run('j1')
-    prev = PhaseRun(PhaseKey('approval', 'id'), RunState.PENDING, utc_now(), utc_now())
-    new = PhaseRun(PhaseKey('exec', 'id'), RunState.EXECUTING, utc_now(), None)
+    prev = PhaseRun('approval', RunState.PENDING, utc_now(), utc_now())
+    new = PhaseRun('exec', RunState.EXECUTING, utc_now(), None)
     try:
         dispatcher.new_instance_phase(test_run, prev, new, 2)
     finally:

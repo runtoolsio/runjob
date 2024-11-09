@@ -306,7 +306,7 @@ class ExecutionGroupLimit:
 @register_phase_info(CoordTypes.QUEUE)
 @dataclass(frozen=True)
 class ExecutionQueueInfo(PhaseInfo):
-    queued_state: QueuedState
+    queued_state: QueuedState = QueuedState.NONE  # TODO Make mandatory
 
     def serialize(self) -> Dict:
         d = super().serialize()

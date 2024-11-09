@@ -3,13 +3,12 @@ import pytest
 import runtools.runcore
 from runtools.runcore.client import APIClient, APIErrorType, ErrorCode, ApprovalResult, StopResult
 from runtools.runcore.criteria import parse_criteria, JobRunCriteria
-from runtools.runcore.run import RunState, TerminationStatus, PhaseKey
+from runtools.runcore.run import RunState, TerminationStatus
 from runtools.runcore.test.job import FakeJobInstanceBuilder
 from runtools.runner.api import APIServer
-from runtools.runner.coordination import CoordTypes
 
-EXEC = PhaseKey('EXEC', 'id')
-APPROVAL = PhaseKey(CoordTypes.APPROVAL.value, 'id')
+EXEC = 'EXEC'
+APPROVAL = 'APPROVAL'
 
 
 @pytest.fixture(autouse=True)
@@ -24,7 +23,7 @@ def job_instances():
     server.register_instance(j2)
     j2.phaser.next_phase()
 
-    assert server.start()
+    server.start()
     try:
         yield j1, j2
     finally:
@@ -39,17 +38,17 @@ def test_error_not_found():
 
 
 def test_instances_api():
-    multi_resp = runtools.runcore.get_active_runs()
-    instances = {inst.job_id: inst for inst in multi_resp.responses}
+    resp = runtools.runcore.get_active_runs()
+    instances = {inst.job_id: inst for inst in resp.successful}
     assert instances['j1'].lifecycle.run_state == RunState.EXECUTING
     assert instances['j2'].lifecycle.run_state == RunState.PENDING
 
-    multi_resp_j1 = runtools.runcore.get_active_runs(parse_criteria('j1'))
-    multi_resp_j2 = runtools.runcore.get_active_runs(parse_criteria('j2'))
-    assert multi_resp_j1.responses[0].job_id == 'j1'
-    assert multi_resp_j2.responses[0].job_id == 'j2'
+    resp_j1 = runtools.runcore.get_active_runs(parse_criteria('j1'))
+    resp_j2 = runtools.runcore.get_active_runs(parse_criteria('j2'))
+    assert resp_j1.successful[0].job_id == 'j1'
+    assert resp_j2.successful[0].job_id == 'j2'
 
-    assert not any([multi_resp.errors, multi_resp_j1.errors, multi_resp_j2.errors])
+    assert not any([resp.errors, resp_j1.errors, resp_j2.errors])
 
 
 def test_approve_pending_instance(job_instances):
@@ -62,7 +61,7 @@ def test_approve_pending_instance(job_instances):
     assert instances[1].release_result == ApprovalResult.APPROVED
 
     _, j2 = job_instances
-    assert j2.get_phase(,.approved
+    assert j2.get_phase(APPROVAL).approved
 
 
 def test_stop(job_instances):
