@@ -97,7 +97,7 @@ def run_uncoordinated(job_id, exec_, *, instance_id=None, **user_params) -> JobI
 def clean_stale_sockets(file_extension) -> List[str]:
     cleaned = []
 
-    c = SocketClient(file_extension, True)
+    c = SocketClient(file_extension)
     try:
         ping_result = c.ping()
     finally:

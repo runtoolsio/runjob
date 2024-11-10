@@ -52,7 +52,7 @@ def test_instances_api():
 
 
 def test_approve_pending_instance(job_instances):
-    instances, errors = runtools.runcore.approve_pending_instances(JobRunCriteria.all(), APPROVAL.id)
+    instances, errors = runtools.runcore.approve_pending_instances(JobRunCriteria.all(), APPROVAL)
 
     assert not errors
     assert instances[0].instance_metadata.job_id == 'j1'
