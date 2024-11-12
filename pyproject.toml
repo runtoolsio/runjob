@@ -24,10 +24,7 @@ test = ["pytest"]
 name = "runtools.runner"
 
 [tool.pytest.ini_options]
-addopts = [
-    "--import-mode=importlib",
-]
 pythonpath = "src"
 
 [project.urls]
-Home = "https://github.com/runtoolsio/runner"
+Home = "https://github.com/runtoolsio/runjob"
