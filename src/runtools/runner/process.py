@@ -9,7 +9,7 @@ import traceback
 from contextlib import contextmanager
 from multiprocessing import Queue
 from multiprocessing.context import Process
-from queue import Full
+from queue import Full, Empty
 from typing import Union, Tuple
 
 import sys
@@ -39,8 +39,9 @@ class ProcessExecution(OutputExecution):
 
             try:
                 self._process.start()
+                print("started")
                 self._read_output()
-                self._process.join()  # Just in case as it should be completed at this point
+                self._process.join(timeout=2)  # Just in case as it should be completed at this point
             finally:
                 self.output_queue.close()
 
@@ -116,12 +117,15 @@ class ProcessExecution(OutputExecution):
         self._output_notification.remove_observer(callback)
 
     def _read_output(self):
-        while True:
-            output_text, is_err = self.output_queue.get()
-            if isinstance(output_text, _QueueStop):
-                break
-            self._status = output_text
-            self._output_notification(output_text, is_err)
+        while self._process.is_alive():
+            try:
+                output_text, is_err = self.output_queue.get(timeout=2)
+                if isinstance(output_text, _QueueStop):
+                    break
+                self._status = output_text
+                self._output_notification(output_text, is_err)
+            except Empty:
+                pass
 
 
 class _CapturingWriter:
