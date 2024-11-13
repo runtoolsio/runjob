@@ -185,9 +185,9 @@ class APIServer(SocketServer, JobInstanceManager):
                 instance_response = resource.handle(job_instance, req_body)
             except _ApiError as e:
                 return e.create_response()
-            except Exception:
+            except Exception as e:
                 log.error("event=[api_handler_error]", exc_info=True)
-                return _resp_err(500, 'Unexpected API handler error')
+                return _resp_err(500, f"Unexpected API handler error: {e}")
             instance_response['instance_metadata'] = job_instance.metadata.serialize()
             instance_responses.append(instance_response)
 
