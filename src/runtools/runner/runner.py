@@ -43,7 +43,6 @@ State lock
 
 """
 import logging
-from enum import Enum
 
 from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserver,
                                   InstanceOutputObserver, JobInstanceMetadata)
@@ -106,8 +105,8 @@ class RunnerJobInstance(JobInstance):
     def phases(self):
         return self._phaser.phases
 
-    def get_phase(self, phase_type: str | Enum, phase_name: str):
-        return self._phaser.get_phase(phase_name, phase_type)
+    def get_phase(self, phase_id: str, phase_type: str = None):
+        return self._phaser.get_phase(phase_id, phase_type)
 
     def job_run(self) -> JobRun:
         tracked_task = self._task_tracker.tracked_task if self.task_tracker else None

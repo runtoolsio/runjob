@@ -76,8 +76,9 @@ class ApproveResource(APIResource):
     def handle(self, job_instance, req_body):
         phase_id = req_body.get('phase_id')
         if phase_id:
-            phase = job_instance.get_phase(phase_id, CoordTypes.APPROVAL)
-            if not phase:
+            try:
+                phase = job_instance.get_phase(phase_id)
+            except KeyError:
                 return {"approval_result": 'NOT_APPLICABLE'}
         else:
             phase = job_instance.current_phase_id
