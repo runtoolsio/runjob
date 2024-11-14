@@ -3,7 +3,7 @@ requires = ["flit_core >=3.2,<4"]
 build-backend = "flit_core.buildapi"
 
 [project]
-name = "runtools-runner"
+name = "runtools-runjob"
 authors = [{name = "Stan Svec", email = "dev@stansvec.com"}]
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -21,7 +21,7 @@ dependencies = [
 test = ["pytest"]
 
 [tool.flit.module]
-name = "runtools.runner"
+name = "runtools.runjob"
 
 [tool.pytest.ini_options]
 pythonpath = "src"

@@ -2,9 +2,9 @@ from runtools.runcore import PhaseNames, ExecutingPhase, Phaser
 from runtools.runcore.run import Lifecycle
 from runtools.runcore.test.job import AbstractBuilder
 
-from runtools.runner.coordination import ApprovalPhase
-from runtools.runner.runner import RunnerJobInstance
-from runtools.runner.test.execution import TestExecution
+from runtools.runjob.coordination import ApprovalPhase
+from runtools.runjob.runner import RunnerJobInstance
+from runtools.runjob.test.execution import TestExecution
 
 
 class TestJobInstanceBuilder(AbstractBuilder):

@@ -3,10 +3,10 @@ from threading import Thread
 import pytest
 import time
 
-import runtools.runner
+import runtools.runjob
 from runtools.runcore.track import TaskTrackerMem
-from runtools.runner import warning, ExecutingPhase
-from runtools.runner.test.execution import TestExecution
+from runtools.runjob import warning, ExecutingPhase
+from runtools.runjob.test.execution import TestExecution
 
 
 @pytest.fixture
@@ -16,7 +16,7 @@ def execution():
 
 @pytest.fixture
 def job(execution):
-    return runtools.runner.job_instance('j1', [ExecutingPhase('', execution)], task_tracker=TaskTrackerMem())
+    return runtools.runjob.job_instance('j1', [ExecutingPhase('', execution)], task_tracker=TaskTrackerMem())
 
 
 def test_exec_time_warning(execution, job):

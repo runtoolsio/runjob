@@ -13,7 +13,7 @@ from typing import Union, Optional
 import sys
 
 from runtools.runcore.util.observer import CallableNotification
-from runtools.runner.execution import OutputExecution, \
+from runtools.runjob.execution import OutputExecution, \
     ExecutionException, ExecutionResult
 
 USE_SHELL = False  # For testing only

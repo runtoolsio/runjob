@@ -15,7 +15,7 @@ from runtools.runcore.run import RunState, Phase, TerminationStatus, PhaseRun, T
     register_phase_info
 from runtools.runcore.util import lock, KVParser
 from runtools.runcore.util.log import ForwardLogs
-from runtools.runner.task import OutputToTask
+from runtools.runjob.task import OutputToTask
 
 log = logging.getLogger(__name__)
 

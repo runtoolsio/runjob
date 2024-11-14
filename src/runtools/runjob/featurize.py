@@ -22,8 +22,8 @@ from runtools.runcore.job import JobRun, InstanceTransitionObserver, InstanceOut
     JobInstance
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import RunState
-from runtools.runner.api import APIServer
-from runtools.runner.events import TransitionDispatcher, OutputDispatcher
+from runtools.runjob.api import APIServer
+from runtools.runjob.events import TransitionDispatcher, OutputDispatcher
 
 log = logging.getLogger(__name__)
 

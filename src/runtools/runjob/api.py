@@ -18,7 +18,7 @@ from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.job import JobInstanceManager
 from runtools.runcore.run import util
 from runtools.runcore.util.socket import SocketServer
-from runtools.runner.coordination import CoordTypes
+from runtools.runjob.coordination import CoordTypes
 
 log = logging.getLogger(__name__)
 

@@ -5,7 +5,7 @@ from runtools.runcore.client import APIClient, APIErrorType, ErrorCode, Approval
 from runtools.runcore.criteria import parse_criteria, JobRunCriteria
 from runtools.runcore.run import RunState, TerminationStatus
 from runtools.runcore.test.job import FakeJobInstanceBuilder
-from runtools.runner.api import APIServer
+from runtools.runjob.api import APIServer
 
 EXEC = 'EXEC'
 APPROVAL = 'APPROVAL'

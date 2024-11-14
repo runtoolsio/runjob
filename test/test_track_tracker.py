@@ -4,7 +4,7 @@ import pytest
 
 from runtools.runcore.track import TaskTrackerMem
 from runtools.runcore.util import KVParser, iso_date_time_parser
-from runtools.runner.task import OutputToTask, Fields
+from runtools.runjob.task import OutputToTask, Fields
 
 
 def test_parse_event():

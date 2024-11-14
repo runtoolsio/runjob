@@ -14,9 +14,9 @@ from runtools.runcore.job import JobInstance
 from runtools.runcore.run import Phaser
 from runtools.runcore.util import lock
 from runtools.runcore.util.socket import SocketClient
-from runtools.runner.execution import ExecutingPhase
-from runtools.runner.featurize import FeaturedContextBuilder
-from runtools.runner.runner import RunnerJobInstance
+from runtools.runjob.execution import ExecutingPhase
+from runtools.runjob.featurize import FeaturedContextBuilder
+from runtools.runjob.runner import RunnerJobInstance
 
 __version__ = "0.11.0"
 

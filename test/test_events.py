@@ -5,7 +5,7 @@ from runtools.runcore.test.job import ended_run
 from runtools.runcore.test.observer import GenericObserver
 from runtools.runcore.util import utc_now
 
-from runtools.runner.events import TransitionDispatcher, OutputDispatcher
+from runtools.runjob.events import TransitionDispatcher, OutputDispatcher
 
 
 def test_state_dispatching():
