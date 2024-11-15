@@ -7,10 +7,11 @@ import pytest
 
 from runtools import runjob
 from runtools.runcore.job import JobRun, InstanceTransitionObserver
-from runtools.runcore.run import TerminationStatus, RunState, InitPhase, TerminalPhase
+from runtools.runcore.run import TerminationStatus, RunState
 from runtools.runcore.test.observer import TestTransitionObserver
 from runtools.runjob import runner, ExecutingPhase
 from runtools.runjob.execution import ExecutionException
+from runtools.runjob.phaser import InitPhase, TerminalPhase
 from runtools.runjob.test.execution import TestExecution
 
 

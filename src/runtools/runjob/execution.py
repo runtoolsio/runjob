@@ -12,7 +12,8 @@ import abc
 from enum import auto
 from typing import Tuple
 
-from runtools.runcore.run import TerminationStatus, Phase, RunState, TerminateRun, FailedRun, RunContext
+from runtools.runcore.run import TerminationStatus, Phase, RunState, TerminateRun, FailedRun
+from runtools.runjob.phaser import AbstractPhase, RunContext
 
 
 class ExecutionException(Exception):
@@ -90,7 +91,7 @@ class OutputExecution(Execution):
         """
 
 
-class ExecutingPhase(Phase):
+class ExecutingPhase(AbstractPhase):
 
     def __init__(self, phase_id, execution, *, output_handlers=()):
         super().__init__(phase_id)

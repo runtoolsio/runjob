@@ -11,10 +11,11 @@ from runtools.runcore import paths
 from runtools.runcore.criteria import InstanceMetadataCriterion, JobRunCriteria, PhaseCriterion
 from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
 from runtools.runcore.listening import InstanceTransitionReceiver
-from runtools.runcore.run import RunState, Phase, TerminationStatus, PhaseRun, TerminateRun, RunContext, PhaseInfo, \
+from runtools.runcore.run import RunState, Phase, TerminationStatus, PhaseRun, TerminateRun, PhaseInfo, \
     register_phase_info
 from runtools.runcore.util import lock, KVParser
 from runtools.runcore.util.log import ForwardLogs
+from runtools.runjob.phaser import RunContext, AbstractPhase
 from runtools.runjob.task import OutputToTask
 
 log = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ class CoordTypes(Enum):
     QUEUE = 'QUEUE'
 
 
-class ApprovalPhase(Phase):
+class ApprovalPhase(AbstractPhase):
     """
     Approval parameters (incl. timeout) + approval eval as separate objects
     TODO: parameters
@@ -87,7 +88,7 @@ class ApprovalPhase(Phase):
         return TerminationStatus.CANCELLED
 
 
-class NoOverlapPhase(Phase):
+class NoOverlapPhase(AbstractPhase):
     """
     TODO Docs
     1. Set continue flag to be checked
@@ -133,7 +134,7 @@ class NoOverlapPhase(Phase):
         return TerminationStatus.CANCELLED
 
 
-class DependencyPhase(Phase):
+class DependencyPhase(AbstractPhase):
 
     def __init__(self, dependency_match, phase_id=None, phase_name='Active dependency check'):
         phase_id = phase_id or str(dependency_match)
@@ -172,7 +173,7 @@ class DependencyPhase(Phase):
         return TerminationStatus.CANCELLED
 
 
-class WaitingPhase(Phase):
+class WaitingPhase(AbstractPhase):
     """
     """
 
@@ -346,7 +347,7 @@ class ExecutionQueueInfo(PhaseInfo):
         return d
 
 
-class ExecutionQueue(Phase, InstanceTransitionObserver):
+class ExecutionQueue(AbstractPhase, InstanceTransitionObserver):
 
     def __init__(self, queue_id, max_executions, phase_id=None, phase_name=None, *,
                  until_phase=None,

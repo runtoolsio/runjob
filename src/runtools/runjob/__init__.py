@@ -11,11 +11,11 @@ from typing import List
 
 from runtools.runcore import util, InvalidConfiguration
 from runtools.runcore.job import JobInstance
-from runtools.runcore.run import Phaser
 from runtools.runcore.util import lock
 from runtools.runcore.util.socket import SocketClient
 from runtools.runjob.execution import ExecutingPhase
 from runtools.runjob.featurize import FeaturedContextBuilder
+from runtools.runjob.phaser import Phaser
 from runtools.runjob.runner import RunnerJobInstance
 
 __version__ = "0.11.0"
