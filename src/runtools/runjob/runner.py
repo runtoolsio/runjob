@@ -112,7 +112,7 @@ class RunnerJobInstance(JobInstance):
         tracked_task = self._task_tracker.tracked_task if self.task_tracker else None
         return JobRun(self.metadata, self._phaser.run_info(), tracked_task)
 
-    def fetch_output(self, mode=Mode.HEAD, *, lines=0):
+    def get_output(self, mode=Mode.HEAD, *, lines=0):
         return self._output.fetch(mode, lines=lines)
 
     def _process_output(self, phase_meta: PhaseInfo, output: str, is_error: bool):
