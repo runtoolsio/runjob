@@ -1,16 +1,9 @@
-"""
-This module provides components to expose the API of `JobInstance` objects via a local domain socket.
-The main component is `APIServer`, which offers the addition or removal of `JobInstance`s using
-the `add_job_instance()` and `remove_job_instance()` methods.
-
-The domain socket with an `.api` file suffix for each server is located in the user's own subdirectory,
-which is in the `/tmp` directory by default.
-"""
-
 import json
 import logging
 from abc import ABC, abstractmethod
+from enum import IntEnum
 from json import JSONDecodeError
+from typing import Optional, Dict, Any, List
 
 from runtools.runcore import paths
 from runtools.runcore.client import StopResult
@@ -25,135 +18,176 @@ log = logging.getLogger(__name__)
 API_FILE_EXTENSION = '.api'
 
 
+class ErrorCode(IntEnum):
+    # Standard JSON-RPC 2.0 errors
+    PARSE_ERROR = -32700
+    INVALID_REQUEST = -32600
+    METHOD_NOT_FOUND = -32601
+    INVALID_PARAMS = -32602
+    INTERNAL_ERROR = -32603
+
+    # Custom error codes
+    INVALID_RUN_MATCH = -32000
+
+
 def _create_socket_name():
     return util.unique_timestamp_hex() + API_FILE_EXTENSION
 
 
-class _ApiError(Exception):
+class JsonRpcError(Exception):
 
-    def __init__(self, code, error):
+    def __init__(self, code: ErrorCode, message: str, data: Optional[Any] = None):
         self.code = code
-        self.error = error
-
-    def create_response(self):
-        return _resp_err(self.code, self.error)
+        self.message = message
+        self.data = data
 
 
-class APIResource(ABC):
+class JsonRpcMethod(ABC):
 
     @property
     @abstractmethod
-    def path(self):
-        """Path of the resource including leading '/' character"""
+    def method_name(self) -> str:
+        """JSON-RPC method name including namespace prefix"""
 
     @abstractmethod
-    def handle(self, job_instance, req_body):
-        """Handle request and optionally return response or raise :class:`__ServerError"""
+    def execute(self, job_instance, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute the method and return response or raise JsonRpcError"""
 
     def requires_run_match(self) -> bool:
         return False
 
-    def validate(self, req_body):
-        """Raise :class:`__ServerError if request body is invalid"""
+    def validate_params(self, params: Dict[str, Any]):
+        """Validate parameters, raise JsonRpcError if invalid"""
 
 
-class InstancesResource(APIResource):
+class InstancesGetMethod(JsonRpcMethod):
 
     @property
-    def path(self):
-        return '/instances'
+    def method_name(self):
+        return "instances.get"
 
-    def handle(self, job_instance, req_body):
+    def execute(self, job_instance, params):
         return {"job_run": job_instance.job_run().serialize()}
 
 
-class ApproveResource(APIResource):
+class InstancesApproveMethod(JsonRpcMethod):
 
     @property
-    def path(self):
-        return '/instances/approve'
+    def method_name(self):
+        return "instances.approve"
 
-    def handle(self, job_instance, req_body):
-        phase_id = req_body.get('phase_id')
-        if phase_id:
+    def execute(self, job_instance, params):
+        if phase_id := params.get('phase_id'):
             try:
                 phase = job_instance.get_phase(phase_id)
             except KeyError:
-                return {"approval_result": 'NOT_APPLICABLE'}
+                return {"approved": False, "reason": f"Phase `{phase_id}` to approve not found"}
         else:
-            phase = job_instance.current_phase_id
-            if phase.type != CoordTypes.APPROVAL.value:
-                return {"approval_result": 'NOT_APPLICABLE'}
+            phase = job_instance.current_phase
 
         try:
             phase.approve()
         except AttributeError:
-            # TODO Return error instead
-            return {"approval_result": 'NOT_APPLICABLE'}
+            return {"approved": False, "reason": f"Phase `{phase.id}` does not support approval"}
 
-        return {"approval_result": 'APPROVED'}
+        return {"approved": True}
 
     def requires_run_match(self) -> bool:
         return True
 
 
-class StopResource(APIResource):
+class InstancesStopMethod(JsonRpcMethod):
 
     @property
-    def path(self):
-        return '/instances/stop'
+    def method_name(self):
+        return "instances.stop"
 
-    def handle(self, job_instance, req_body):
+    def execute(self, job_instance, params):
         job_instance.stop()
         return {"stop_result": StopResult.STOP_INITIATED.name}
 
 
-class OutputResource(APIResource):
+class InstancesOutputMethod(JsonRpcMethod):
+    @property
+    def method_name(self):
+        return "instances.get_output"
+
+    def execute(self, job_instance, params):
+        return {"output": job_instance.get_output()}
+
+
+class InstancesDispatchMethod(JsonRpcMethod):
 
     @property
-    def path(self):
-        return '/instances/output'
+    def method_name(self):
+        return "instances.dispatch"
 
-    def handle(self, job_instance, req_body):
-        return {"output": job_instance.get_output()}  # TODO Limit length
+    def validate_params(self, params):
+        if "queue_id" not in params:
+            raise JsonRpcError(ErrorCode.INVALID_PARAMS, "Missing required parameter: queue_id")
 
-
-class SignalDispatchResource(APIResource):
-
-    @property
-    def path(self):
-        return '/instances/_signal/dispatch'
-
-    def handle(self, job_instance, req_body):
+    def execute(self, job_instance, params):
         dispatched = False
         for phase in job_instance.phases.values():
-            if phase.type == CoordTypes.QUEUE.value and phase.queue_id == req_body['queue_id']:
+            if phase.type == CoordTypes.QUEUE.value and phase.queue_id == params['queue_id']:
                 dispatched = phase.signal_dispatch()
                 break
 
-        return {"dispatched": dispatched}
+        if not dispatched:
+            return {"dispatched": False}
 
-    def validate(self, req_body):
-        if "queue_id" not in req_body:
-            raise _missing_field_error("queue_id")
+        return {"dispatched": True}
 
     def requires_run_match(self) -> bool:
         return True
 
 
-DEFAULT_RESOURCES = (
-    InstancesResource(),
-    ApproveResource(),
-    StopResource(),
-    OutputResource(),
-    SignalDispatchResource())
+DEFAULT_METHODS = (
+    InstancesGetMethod(),
+    InstancesApproveMethod(),
+    InstancesStopMethod(),
+    InstancesOutputMethod(),
+    InstancesDispatchMethod()
+)
+
+
+def _is_valid_request_id(request_id: Any) -> bool:
+    return request_id is None or isinstance(request_id, (str, int, float))
+
+def _is_valid_params(params: Any) -> bool:
+    return 'params' is None or isinstance(params, (dict, list))
+
+
+def _success_response(request_id: str, result: Any) -> str:
+    response = {
+        "jsonrpc": "2.0",
+        "result": result
+    }
+    if request_id:
+        response["id"] = request_id
+    return json.dumps(response)
+
+
+def _error_response(request_id: Any, code: ErrorCode, message: str, data: Any = None) -> str:
+    response = {
+        "jsonrpc": "2.0",
+        "error": {
+            "code": code,
+            "message": message
+        }
+    }
+    if data:
+        response["error"]["data"] = data
+    if request_id:
+        response["id"] = request_id
+    return json.dumps(response)
 
 
 class APIServer(SocketServer, JobInstanceManager):
 
-    def __init__(self, resources=DEFAULT_RESOURCES):
+    def __init__(self, methods=DEFAULT_METHODS):
         super().__init__(lambda: paths.socket_path(_create_socket_name(), create=True), allow_ping=True)
-        self._resources = {resource.path: resource for resource in resources}
+        self._methods = {method.method_name: method for method in methods}
         self._job_instances = []
 
     def register_instance(self, job_instance):
@@ -162,92 +196,56 @@ class APIServer(SocketServer, JobInstanceManager):
     def unregister_instance(self, job_instance):
         self._job_instances.remove(job_instance)
 
-    def handle(self, req):
+    def handle(self, req: str) -> str:
         try:
-            req_body = json.loads(req)
-        except JSONDecodeError as e:
-            log.warning(f"event=[invalid_json_request_body] length=[{e}]")
-            return _resp_err(400, "invalid_req_body")
+            req_data = json.loads(req)
+        except JSONDecodeError:
+            return _error_response(None, ErrorCode.PARSE_ERROR, "Invalid JSON")
 
-        if 'request_metadata' not in req_body:
-            return _resp_err(422, "missing_field:request_metadata")
+        # Validate JSON-RPC request
+        if not isinstance(req_data, dict) or req_data.get('jsonrpc') != '2.0' or 'method' not in req_data:
+            return _error_response(req_data.get('id'), ErrorCode.INVALID_REQUEST, "Invalid JSON-RPC 2.0 request")
+
+        request_id = req_data.get('id')
+        if not _is_valid_request_id(request_id):
+            return _error_response(req_data.get('id'), ErrorCode.INVALID_REQUEST, "Invalid request ID")
+
+        params = req_data.get('params', {})
+        if not _is_valid_params(params):
+            return _error_response(req_data.get('id'), ErrorCode.INVALID_REQUEST, "Invalid parameters")
+
+        method_name = req_data['method']
+        method = self._methods.get(method_name)
+        if not method:
+            return _error_response(request_id, ErrorCode.METHOD_NOT_FOUND, f"Method not found: {method_name}")
 
         try:
-            resource = self._resolve_resource(req_body)
-            resource.validate(req_body)
-            job_instances = self._matching_instances(req_body, resource.requires_run_match())
-        except _ApiError as e:
-            return e.create_response()
+            method.validate_params(params)
+            job_instances = self._matching_instances(params, method.requires_run_match())
+            result = []
+            for job_instance in job_instances:
+                exec_result = method.execute(job_instance, params)
+                exec_result['instance_metadata'] = job_instance.metadata.serialize()
+                result.append(exec_result)
 
-        instance_responses = []
-        for job_instance in job_instances:
-            # noinspection PyBroadException
-            try:
-                instance_response = resource.handle(job_instance, req_body)
-            except _ApiError as e:
-                return e.create_response()
-            except Exception as e:
-                log.error("event=[api_handler_error]", exc_info=True)
-                return _resp_err(500, f"Unexpected API handler error: {e}")
-            instance_response['instance_metadata'] = job_instance.metadata.serialize()
-            instance_responses.append(instance_response)
+            return _success_response(request_id, result)
 
-        return _resp_ok(instance_responses)
+        except JsonRpcError as e:
+            return _error_response(request_id, e.code, e.message, e.data)
+        except Exception as e:
+            log.error("event=[json_rpc_handler_error]", exc_info=True)
+            return _error_response(request_id, ErrorCode.INTERNAL_ERROR, f"Internal error: {str(e)}")
 
-    def _resolve_resource(self, req_body) -> APIResource:
-        if 'api' not in req_body['request_metadata']:
-            raise _missing_field_error('request_metadata.api')
-
-        api = req_body['request_metadata']['api']
-        resource = self._resources.get(api)
-        if not resource:
-            raise _ApiError(404, f"{api} API not found")
-
-        return resource
-
-    def _matching_instances(self, req_body, match_required):
-        run_match = req_body.get('request_metadata', {}).get('run_match', None)
+    def _matching_instances(self, params: Dict[str, Any], match_required: bool) -> List:
+        run_match = params.get('run_match')
         if not run_match:
             if match_required:
-                raise _missing_field_error('request_metadata.run_match')
+                raise JsonRpcError(ErrorCode.INVALID_PARAMS, "Missing required parameter: `run_match`")
             return self._job_instances
 
         try:
             matching_criteria = JobRunCriteria.deserialize(run_match)
-        except ValueError:
-            raise _ApiError(422, f"Invalid run match: {run_match}")
+        except ValueError as e:
+            raise JsonRpcError(ErrorCode.INVALID_RUN_MATCH, f"Invalid run match criteria: {e}")
+
         return [job_instance for job_instance in self._job_instances if matching_criteria.matches(job_instance)]
-
-
-def _missing_field_error(field) -> _ApiError:
-    return _ApiError(422, f"Missing field {field}")
-
-
-def _inst_metadata(job_instance):
-    return {
-        "job_id": job_instance.job_id,
-        "instance_id": job_instance.run_id
-    }
-
-
-def _resp_ok(instance_responses):
-    return _resp(200, instance_responses)
-
-
-def _resp(code: int, instance_responses):
-    resp = {
-        "response_metadata": {"code": code},
-        "instance_responses": instance_responses
-    }
-    return json.dumps(resp)
-
-
-def _resp_err(code: int, reason: str):
-    if 400 > code >= 600:
-        raise ValueError("Error code must be 4xx or 5xx")
-
-    err_resp = {
-        "response_metadata": {"code": code, "error": {"reason": reason}}
-    }
-
-    return json.dumps(err_resp)
