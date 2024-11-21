@@ -1,11 +1,11 @@
 import pytest
 
 import runtools.runcore
-from runtools.runcore.client import APIClient, APIErrorType, ErrorCode, ApprovalResult, StopResult
+from runtools.runcore.client import APIClient, ApprovalResult, StopResult
 from runtools.runcore.criteria import parse_criteria, JobRunCriteria
 from runtools.runcore.run import RunState, TerminationStatus
 from runtools.runcore.test.job import FakeJobInstanceBuilder
-from runtools.runjob.api import APIServer
+from runtools.runjob.api import APIServer, ErrorCode
 
 EXEC = 'EXEC'
 APPROVAL = 'APPROVAL'
@@ -33,8 +33,7 @@ def job_instances():
 def test_error_not_found():
     with APIClient() as c:
         _, errors = c.send_request('/no-such-api')
-    assert errors[0].error_type == APIErrorType.API_CLIENT
-    assert errors[0].response_error.code == ErrorCode.NOT_FOUND
+    assert errors[0].response_error.code == ErrorCode.METHOD_NOT_FOUND
 
 
 def test_instances_api():
