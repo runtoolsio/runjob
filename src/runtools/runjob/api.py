@@ -53,7 +53,7 @@ class JsonRpcMethod(ABC):
     def execute(self, job_instance, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute the method and return response or raise JsonRpcError"""
 
-    def requires_run_match(self) -> bool:
+    def requires_run_match_param(self) -> bool:
         return False
 
     def validate_params(self, params: Dict[str, Any]):
@@ -92,7 +92,7 @@ class InstancesApproveMethod(JsonRpcMethod):
 
         return {"approved": True}
 
-    def requires_run_match(self) -> bool:
+    def requires_run_match_param(self) -> bool:
         return True
 
 
@@ -138,7 +138,7 @@ class InstancesDispatchMethod(JsonRpcMethod):
 
         return {"dispatched": True}
 
-    def requires_run_match(self) -> bool:
+    def requires_run_match_param(self) -> bool:
         return True
 
 
@@ -221,7 +221,7 @@ class APIServer(SocketServer, JobInstanceManager):
 
         try:
             method.validate_params(params)
-            job_instances = self._matching_instances(params, method.requires_run_match())
+            job_instances = self._matching_instances(params, method.requires_run_match_param())
             result = []
             for job_instance in job_instances:
                 exec_result = method.execute(job_instance, params)
