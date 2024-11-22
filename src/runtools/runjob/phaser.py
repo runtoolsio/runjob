@@ -238,7 +238,7 @@ class Phaser:
         if not self._current_phase:
             raise InvalidStateError('Prime not executed before run')
 
-        task_tracker = task_tracker
+        task_tracker = task_tracker  # TODO ?
 
         class _RunContext(RunContext):
 

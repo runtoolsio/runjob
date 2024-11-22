@@ -12,7 +12,7 @@ import abc
 from enum import auto
 from typing import Tuple
 
-from runtools.runcore.run import TerminationStatus, Phase, RunState, TerminateRun, FailedRun
+from runtools.runcore.run import TerminationStatus, RunState, TerminateRun, FailedRun
 from runtools.runjob.phaser import AbstractPhase, RunContext
 
 
@@ -27,17 +27,6 @@ class ExecutionResult:
 
 
 class Execution(abc.ABC):
-    """
-    An execution of a task
-    """
-
-    @property
-    @abc.abstractmethod
-    def parameters(self):
-        """
-        Returns:
-            Tuple[str, str]: A sequence representing arbitrary immutable execution parameters
-        """
 
     @abc.abstractmethod
     def execute(self) -> ExecutionResult:

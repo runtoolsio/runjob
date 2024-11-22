@@ -39,7 +39,6 @@ class ProcessExecution(OutputExecution):
 
             try:
                 self._process.start()
-                print("started")
                 self._read_output()
                 self._process.join(timeout=2)  # Just in case as it should be completed at this point
             finally:
