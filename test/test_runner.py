@@ -7,15 +7,15 @@ from runtools.runcore.test.observer import TestOutputObserver
 from runtools.runjob import RunnerJobInstance
 from runtools.runjob.execution import ExecutingPhase
 from runtools.runjob.phaser import Phaser
-from runtools.runjob.process import ProcessExecution
+from runtools.runjob.process import ProcessPhase
 
 
 def test_output_observer():
     def print_it():
         print("Hello, lucky boy. Where are you today?")
 
-    execution = ProcessExecution(print_it)
-    instance = RunnerJobInstance('j1', 'i1', Phaser([ExecutingPhase('Printing', execution)]))
+    exec_phase = ProcessPhase('Printing', print_it)
+    instance = RunnerJobInstance('j1', 'i1', Phaser([exec_phase]))
     observer = TestOutputObserver()
     instance.add_observer_output(observer)
 
@@ -32,8 +32,8 @@ def test_last_output():
         for line in lines:
             print(line)
 
-    execution = ProcessExecution(print_it)
-    instance = RunnerJobInstance('j1', 'i1', Phaser([ExecutingPhase('Printing', execution)]))
+    exec_phase = ProcessPhase('Printing', print_it)
+    instance = RunnerJobInstance('j1', 'i1', Phaser([exec_phase]))
     instance.run()
     assert ([out for out, _ in instance.get_output(Mode.TAIL, lines=10)] ==
             "1 everyone in the world is doing something without me".split())

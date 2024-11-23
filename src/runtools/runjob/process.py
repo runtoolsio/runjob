@@ -10,49 +10,48 @@ from contextlib import contextmanager
 from multiprocessing import Queue
 from multiprocessing.context import Process
 from queue import Full, Empty
-from typing import Union, Tuple
+from typing import Union, Tuple, Optional
 
 import sys
 
-from runtools.runcore.util.observer import CallableNotification
-from runtools.runjob.execution import OutputExecution, ExecutionResult, ExecutionException
+from runtools.runcore.run import TerminateRun, TerminationStatus, FailedRun
+from runtools.runjob.phaser import ExecutingPhase
 
 log = logging.getLogger(__name__)
 
 
-class ProcessExecution(OutputExecution):
+class ProcessPhase(ExecutingPhase):
 
-    def __init__(self, target, args=(), tracking=None):
+    def __init__(self, phase_id: str, target, args=()):
+        super().__init__(phase_id)
         self.target = target
         self.args = args
-        self._tracking = tracking
-        self.output_queue: Queue[Tuple[Union[str, _QueueStop], bool]] = Queue(maxsize=2048)  # Create in execute method?
-        self._process: Union[Process, None] = None
-        self._status = None
+        self.output_queue: Queue[Tuple[Union[str, _QueueStop], bool]] = Queue(maxsize=2048)
+        self._process: Optional[Process] = None
         self._stopped: bool = False
         self._interrupted: bool = False
-        self._output_notification = CallableNotification()
 
-    def execute(self) -> ExecutionResult:
+    def run(self, run_ctx):
         if not self._stopped and not self._interrupted:
             self._process = Process(target=self._run)
 
             try:
                 self._process.start()
-                self._read_output()
+                self._read_output(run_ctx)
                 self._process.join(timeout=2)  # Just in case as it should be completed at this point
             finally:
                 self.output_queue.close()
 
             if self._process.exitcode == 0:
-                return ExecutionResult.DONE
+                    return
 
-        if self._interrupted or self._process.exitcode == -signal.SIGINT:
-            # Exit code is -SIGINT only when SIGINT handler is set back to DFL (KeyboardInterrupt gets exit code 1)
-            return ExecutionResult.INTERRUPTED
-        if self._stopped or self._process.exitcode < 0:  # Negative exit code means terminated by a signal
-            return ExecutionResult.STOPPED
-        raise ExecutionException("Process returned non-zero code " + str(self._process.exitcode))
+            if self._interrupted or self._process.exitcode == -signal.SIGINT:
+                # Exit code is -SIGINT only when SIGINT handler is set back to DFL (KeyboardInterrupt gets exit code 1)
+                raise TerminateRun(TerminationStatus.INTERRUPTED)
+            if self._stopped or self._process.exitcode < 0:
+                raise TerminateRun(TerminationStatus.STOPPED)
+
+            raise FailedRun('ProcessError', f"Process returned non-zero code {self._process.exitcode}")
 
     def _run(self):
         with self._capture_stdout():
@@ -82,21 +81,6 @@ class ProcessExecution(OutputExecution):
             sys.stderr = original_stderr
 
     @property
-    def tracking(self):
-        return self._tracking
-
-    @tracking.setter
-    def tracking(self, tracking):
-        self._tracking = tracking
-
-    @property
-    def status(self):
-        if self.tracking:
-            return str(self.tracking)
-        else:
-            return self._status
-
-    @property
     def parameters(self):
         return ('execution', 'process'),
 
@@ -109,20 +93,13 @@ class ProcessExecution(OutputExecution):
     def interrupted(self):
         self._interrupted = True
 
-    def add_callback_output(self, callback):
-        self._output_notification.add_observer(callback)
-
-    def remove_callback_output(self, callback):
-        self._output_notification.remove_observer(callback)
-
-    def _read_output(self):
+    def _read_output(self, run_ctx):
         while self._process.is_alive():
             try:
                 output_text, is_err = self.output_queue.get(timeout=2)
                 if isinstance(output_text, _QueueStop):
                     break
-                self._status = output_text
-                self._output_notification(output_text, is_err)
+                run_ctx.new_output(output_text, is_err)
             except Empty:
                 pass
 

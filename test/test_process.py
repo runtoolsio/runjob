@@ -7,16 +7,16 @@ from threading import Thread
 import pytest
 from time import sleep
 
-from runtools.runjob.execution import ExecutionResult, ExecutionException
-from runtools.runjob.process import ProcessExecution
+from runtools.runcore.run import FailedRun, TerminateRun, TerminationStatus
+from runtools.runjob.process import ProcessPhase
+from runtools.runjob.test.phaser import FakeRunContext
 
 
 def test_exec():
     parent, child = Pipe()
-    e = ProcessExecution(exec_hello, (child,))
-    exec_res = e.execute()
+    e = ProcessPhase('hello phase', exec_hello, (child,))
+    e.run(FakeRunContext())
     assert parent.recv() == ['hello']
-    assert exec_res == ExecutionResult.DONE
 
 
 def exec_hello(pipe):
@@ -25,35 +25,36 @@ def exec_hello(pipe):
 
 
 def test_failure_error():
-    e = ProcessExecution(exec_failure_error, ())
-    with pytest.raises(ExecutionException):
-        e.execute()
+    e = ProcessPhase('failed phase', raise_error, ())
+    with pytest.raises(FailedRun):
+        e.run(FakeRunContext())
 
 
-def exec_failure_error():
+def raise_error():
     raise AssertionError
 
 
 def test_failure_exit():
-    e = ProcessExecution(exec_failure_exit, ())
-    with pytest.raises(ExecutionException):
-        e.execute()
+    e = ProcessPhase('error code phase', exec_failure_exit, ())
+    with pytest.raises(FailedRun):
+        e.run(FakeRunContext())
 
 
 def exec_failure_exit():
     exit(1)
 
 
-# @pytest.mark.skip(reason="Hangs tests executed for all project")  # TODO
 def test_stop():
-    e = ProcessExecution(exec_never_ending_story, ())
+    e = ProcessPhase('never ending story', exec_infinity_loop, ())
     t = Thread(target=stop_after, args=(0.5, e))
     t.start()
-    term_state = e.execute()
-    assert term_state == ExecutionResult.STOPPED
+    with pytest.raises(TerminateRun) as exc_info:
+        e.run(FakeRunContext())
+
+    assert exc_info.value.term_status == TerminationStatus.STOPPED
 
 
-def exec_never_ending_story():
+def exec_infinity_loop():
     while True:
         sleep(0.1)
 

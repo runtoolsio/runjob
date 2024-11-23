@@ -110,6 +110,49 @@ class InitPhase(NoOpsPhase):
         return RunState.CREATED
 
 
+class ExecutingPhase(AbstractPhase, ABC):
+    """
+    Abstract base class for phases that execute some work.
+    Implementations should provide concrete run() and stop() methods
+    that handle their specific execution mechanics.
+    """
+    TYPE = 'EXEC'
+
+    def __init__(self, phase_id: str, phase_name: Optional[str] = None):
+        super().__init__(phase_id, phase_name)
+
+    @property
+    def type(self) -> str:
+        return ExecutingPhase.TYPE
+
+    @property
+    def run_state(self) -> RunState:
+        return RunState.EXECUTING
+
+    @property
+    def stop_status(self):
+        return TerminationStatus.STOPPED
+
+    @abstractmethod
+    def run(self, run_ctx):
+        """
+        Execute the phase's work.
+
+        Args:
+            run_ctx (RunContext): The run context for output/logging
+
+        Raises:
+            TerminateRun: If execution is stopped or interrupted
+            FailedRun: If execution fails
+        """
+        pass
+
+    @abstractmethod
+    def stop(self):
+        """Stop the currently running execution"""
+        pass
+
+
 class TerminalPhase(NoOpsPhase):
     ID = 'term'
     TYPE = 'TERMINAL'
