@@ -7,12 +7,11 @@ import pytest
 
 from runtools import runjob
 from runtools.runcore.job import JobRun, InstanceTransitionObserver
-from runtools.runcore.run import TerminationStatus, RunState
+from runtools.runcore.run import TerminationStatus, RunState, FailedRun
 from runtools.runcore.test.observer import TestTransitionObserver
-from runtools.runjob import runner, ExecutingPhase
-from runtools.runjob.execution import ExecutionException
+from runtools.runjob import runner
 from runtools.runjob.phaser import InitPhase, TerminalPhase
-from runtools.runjob.test.execution import TestExecution
+from runtools.runjob.test.phaser import TestPhase
 
 
 @pytest.fixture
@@ -27,7 +26,7 @@ EXEC = 'j1'
 
 
 def test_passed_args(observer: TestTransitionObserver):
-    runjob.run_uncoordinated('j1', TestExecution())
+    runjob.run_uncoordinated('j1', TestPhase(EXEC))
 
     assert observer.job_runs[0].metadata.job_id == 'j1'
     assert observer.phases == [(InitPhase.ID, EXEC), (EXEC, TerminalPhase.ID)]
@@ -36,17 +35,17 @@ def test_passed_args(observer: TestTransitionObserver):
 
 def test_raise_exc(observer: TestTransitionObserver):
     with pytest.raises(Exception):
-        runjob.run_uncoordinated('j1', TestExecution(raise_exc=Exception))
+        runjob.run_uncoordinated('j1', TestPhase(raise_exc=Exception))
 
     assert observer.run_states == [RunState.EXECUTING, RunState.ENDED]
     assert observer.job_runs[-1].termination.error.category == 'Exception'
 
 
 def test_raise_exec_exc(observer: TestTransitionObserver):
-    runjob.run_uncoordinated('j1', TestExecution(raise_exc=ExecutionException))
+    runjob.run_uncoordinated('j1', TestPhase(raise_exc=FailedRun('test_type', 'testing reason')))
 
     assert observer.run_states == [RunState.EXECUTING, RunState.ENDED]
-    assert observer.job_runs[-1].termination.failure.category == 'ExecutionException'
+    assert observer.job_runs[-1].termination.failure.category == 'test_type'
 
 
 def test_observer_raises_exception():
@@ -54,11 +53,11 @@ def test_observer_raises_exception():
     All exception raised by observer must be captured by runjob and not to disrupt job execution
     """
     observer = ExceptionRaisingObserver(Exception('Should be captured by runjob'))
-    execution = TestExecution()
-    job_instance = runjob.job_instance('j1', [ExecutingPhase('', execution)])
+    execution = TestPhase()
+    job_instance = runjob.job_instance('j1', [execution])
     job_instance.add_observer_transition(observer)
     job_instance.run()
-    assert execution.executed_latch.is_set()
+    assert execution.completed
     assert job_instance.job_run().termination.status == TerminationStatus.COMPLETED
 
 

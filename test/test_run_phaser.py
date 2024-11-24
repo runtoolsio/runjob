@@ -1,11 +1,11 @@
-from threading import Thread, Event
-from typing import Optional
+from threading import Thread
 
 import pytest
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.run import TerminationStatus, RunState, \
-    FailedRun, RunError, TerminateRun
-from runtools.runjob.phaser import Phaser, InitPhase, TerminalPhase, WaitWrapperPhase, AbstractPhase
+    FailedRun, RunError
+from runtools.runjob.phaser import Phaser, InitPhase, TerminalPhase, WaitWrapperPhase
+from runtools.runjob.test.phaser import TestPhase
 
 INIT = InitPhase.ID
 APPROVAL = 'approval'
@@ -14,45 +14,6 @@ EXEC1 = 'exec1'
 EXEC2 = 'exec2'
 PROGRAM = 'program'
 TERM = TerminalPhase.ID
-
-
-class TestPhase(AbstractPhase):
-
-    def __init__(self, phase_id, wait=False):
-        super().__init__(phase_id)
-        self.fail = False
-        self.failed_run = None
-        self.exception = None
-        self.wait: Optional[Event] = Event() if wait else None
-
-    @property
-    def type(self) -> str:
-        return 'TEST'
-
-    @property
-    def run_state(self) -> RunState:
-        return RunState.PENDING if self.wait else RunState.EXECUTING
-
-    @property
-    def stop_status(self):
-        if self.wait:
-            return TerminationStatus.CANCELLED
-        else:
-            return TerminationStatus.STOPPED
-
-    def run(self, run_ctx):
-        if self.wait:
-            self.wait.wait(2)
-        if self.exception:
-            raise self.exception
-        if self.failed_run:
-            raise self.failed_run
-        if self.fail:
-            raise TerminateRun(TerminationStatus.FAILED)
-
-    def stop(self):
-        if self.wait:
-            self.wait.set()
 
 
 @pytest.fixture

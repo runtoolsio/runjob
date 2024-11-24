@@ -5,7 +5,6 @@ from runtools.runcore.output import Mode
 from runtools.runcore.test.observer import TestOutputObserver
 
 from runtools.runjob import RunnerJobInstance
-from runtools.runjob.execution import ExecutingPhase
 from runtools.runjob.phaser import Phaser
 from runtools.runjob.process import ProcessPhase
 
