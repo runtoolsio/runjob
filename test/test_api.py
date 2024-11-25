@@ -17,11 +17,11 @@ def job_instances():
 
     j1 = FakeJobInstanceBuilder('j1', 'i1').add_phase(EXEC, RunState.EXECUTING).build()
     server.register_instance(j1)
-    j1.phaser.next_phase()
+    j1.next_phase()
 
     j2 = FakeJobInstanceBuilder('j2', 'i2').add_phase(APPROVAL, RunState.PENDING).build()
     server.register_instance(j2)
-    j2.phaser.next_phase()
+    j2.next_phase()
 
     server.start()
     try:

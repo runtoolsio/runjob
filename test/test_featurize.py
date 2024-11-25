@@ -94,7 +94,7 @@ def test_instance_management():
         assert not env.closed()
 
         inst = FakeJobInstanceBuilder().add_phase(EXEC, RunState.EXECUTING).build()
-        inst.phaser.next_phase()
+        inst.next_phase()
         env.ctx.add(inst)
         assert env.instance_registered(inst)
         assert env.instance_contained(inst)
@@ -103,7 +103,7 @@ def test_instance_management():
     assert env.instance_registered(inst)
     assert env.instance_contained(inst)  # Instance removed only after is terminated
 
-    inst.phaser.next_phase()  # Terminated
+    inst.next_phase()  # Terminated
     assert env.transition_observer.feature.last_state == RunState.ENDED
     assert env.closed()
     assert not env.instance_registered(inst)
@@ -116,11 +116,11 @@ def test_removed_when_terminated_before_closed():
     with env.ctx:
         inst = FakeJobInstanceBuilder().add_phase(EXEC, RunState.EXECUTING).build()
         env.ctx.add(inst)
-        inst.phaser.next_phase()
+        inst.next_phase()
         assert env.instance_registered(inst)
         assert env.instance_contained(inst)
 
-        inst.phaser.next_phase()  # Terminated
+        inst.next_phase()  # Terminated
         assert not env.instance_registered(inst)
         assert not env.instance_contained(inst)
 
@@ -129,13 +129,13 @@ def test_keep_removed():
     env = TestEnv(transient=False)
     with env.ctx:
         inst = FakeJobInstanceBuilder().add_phase(EXEC, RunState.EXECUTING).build()
-        inst.phaser.next_phase()
+        inst.next_phase()
         env.ctx.add(inst)
         assert env.instance_registered(inst)
         assert env.instance_contained(inst)
         assert env.instance_manager_volatile.feature.instances
 
-        inst.phaser.next_phase()  # Terminated
+        inst.next_phase()  # Terminated
         assert not env.instance_registered(inst)
         assert env.instance_contained(inst)
         assert not env.instance_manager_volatile.feature.instances  # Set to unregister terminated
