@@ -8,10 +8,10 @@ from typing import Dict
 
 import runtools.runcore
 from runtools.runcore import paths
-from runtools.runcore.criteria import InstanceMetadataCriterion, JobRunCriteria, PhaseCriterion
+from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion
 from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
 from runtools.runcore.listening import InstanceTransitionReceiver
-from runtools.runcore.run import RunState, Phase, TerminationStatus, PhaseRun, TerminateRun, PhaseInfo, \
+from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, TerminateRun, PhaseInfo, \
     register_phase_info
 from runtools.runcore.util import lock, KVParser
 from runtools.runcore.util.log import ForwardLogs
@@ -468,8 +468,7 @@ class ExecutionQueue(AbstractPhase, InstanceTransitionObserver):
 
         self._log.debug("event[dispatching] free_slots=[%d]", free_slots)
         for next_proceed in sorted_group_runs.queued:
-            c = JobRunCriteria(metadata_criteria=InstanceMetadataCriterion.for_run(next_proceed))
-            signal_resp = runtools.runcore.signal_dispatch(c, self._queue_id)
+            signal_resp = runtools.runcore.signal_dispatch(JobRunCriteria.match_run(next_proceed), self._queue_id)
             for r in signal_resp.successful:
                 if r.dispatched:
                     self._log.debug("event[dispatched] run=[%s]", next_proceed.metadata)
