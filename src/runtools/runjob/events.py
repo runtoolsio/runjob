@@ -13,7 +13,7 @@ import logging
 
 from runtools.runcore import util, paths
 from runtools.runcore.job import JobInstanceMetadata, JobRun, InstanceTransitionObserver, InstanceOutputObserver
-from runtools.runcore.run import PhaseInfo
+from runtools.runcore.output import OutputLine
 from runtools.runcore.util.socket import SocketClient, PayloadTooLarge
 
 TRANSITION_LISTENER_FILE_EXTENSION = '.tlistener'
@@ -79,10 +79,10 @@ class OutputDispatcher(EventDispatcher, InstanceOutputObserver):
         super(OutputDispatcher, self).__init__(
             SocketClient(paths.socket_files_provider(OUTPUT_LISTENER_FILE_EXTENSION)))
 
-    def new_instance_output(self, instance_meta: JobInstanceMetadata, phase: PhaseInfo, output, is_error):
+    def new_instance_output(self, instance_meta: JobInstanceMetadata, line: OutputLine):
         event = {
-            "phase": phase.serialize(),
-            "output": util.truncate(output, 10000, truncated_suffix=".. (truncated)"),
-            "is_error": is_error,
+            "text": util.truncate(line.text, 10000, truncated_suffix=".. (truncated)"),
+            "is_error": line.is_error,
+            "phase_id": line.source,
         }
         self._send_event("new_instance_output", instance_meta, event)

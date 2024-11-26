@@ -6,6 +6,7 @@ from typing import Dict, Iterable, Optional, Callable, Tuple
 
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
+from runtools.runcore.output import OutputLine
 from runtools.runcore.run import Phase, PhaseRun, PhaseInfo, Lifecycle, TerminationStatus, TerminationInfo, Run, \
     TerminateRun, FailedRun, RunError, RunState
 
@@ -236,7 +237,7 @@ class Phaser:
         self._timestamp_generator = timestamp_generator
         self._transition_lock = Condition()
         self.transition_hook: Optional[Callable[[PhaseRun, PhaseRun, int], None]] = None
-        self.output_hook: Optional[Callable[[PhaseInfo, str, bool], None]] = None
+        self.output_hook: Optional[Callable[[OutputLine], None]] = None
         # Guarded by the transition/state lock:
         self._lifecycle = lifecycle or Lifecycle()
         self._current_phase = None
@@ -285,7 +286,7 @@ class Phaser:
 
         class _RunContext(RunContext):
 
-            def __init__(self, phaser: Phaser, ctx_phase):
+            def __init__(self, phaser: Phaser, ctx_phase: Phase):
                 self._phaser = phaser
                 self._ctx_phase = ctx_phase
                 self._task_tracker = task_tracker
@@ -294,8 +295,8 @@ class Phaser:
             def task_tracker(self):
                 return self._task_tracker
 
-            def new_output(self, output, is_err=False):
-                self._phaser.output_hook(self._ctx_phase.info(), output, is_err)
+            def new_output(self, text, is_err=False):
+                self._phaser.output_hook(OutputLine(text, is_err, self._ctx_phase.id))
 
         for phase in self._key_to_phase.values():
             with self._transition_lock:

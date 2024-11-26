@@ -3,6 +3,7 @@ import pytest
 import runtools.runcore
 from runtools.runcore.client import APIClient, ApprovalResult, StopResult
 from runtools.runcore.criteria import parse_criteria, JobRunCriteria
+from runtools.runcore.output import OutputLine
 from runtools.runcore.run import RunState, TerminationStatus
 from runtools.runcore.test.job import FakeJobInstanceBuilder
 from runtools.runjob.api import APIServer, ErrorCode
@@ -77,13 +78,13 @@ def test_stop(job_instances):
 
 def test_tail(job_instances):
     j1, j2 = job_instances
-    j1.output.add('EXEC', 'Meditate, do not delay, lest you later regret it.', False)
+    j1.output.tail_buffer.add_line(OutputLine('Meditate, do not delay, lest you later regret it.', False, 'EXEC'))
 
     instances, errors = runtools.runcore.get_output()
     assert not errors
 
     assert instances[0].instance_metadata.job_id == 'j1'
-    assert instances[0].output == [['Meditate, do not delay, lest you later regret it.', False]]
+    assert instances[0].output == [OutputLine('Meditate, do not delay, lest you later regret it.', False, 'EXEC')]
 
     assert instances[1].instance_metadata.job_id == 'j2'
     assert not instances[1].output

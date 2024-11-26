@@ -20,7 +20,7 @@ def test_output_observer():
 
     instance.run()
 
-    assert observer.last_line == "Hello, lucky boy. Where are you today?"
+    assert observer.last_text == "Hello, lucky boy. Where are you today?"
 
 
 def test_last_output():
@@ -34,5 +34,5 @@ def test_last_output():
     exec_phase = ProcessPhase('Printing', print_it)
     instance = RunnerJobInstance('j1', 'i1', Phaser([exec_phase]))
     instance.run()
-    assert ([out for out, _ in instance.get_output(Mode.TAIL, lines=10)] ==
+    assert ([line.text for line in instance.output.tail(count=10)] ==
             "1 everyone in the world is doing something without me".split())

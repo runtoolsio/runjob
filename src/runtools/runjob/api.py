@@ -113,7 +113,7 @@ class InstancesOutputMethod(JsonRpcMethod):
         return "instances.get_output"
 
     def execute(self, job_instance, params):
-        return {"output": job_instance.get_output()}
+        return {"output": [line.serialize() for line in job_instance.output.tail()]}
 
 
 class InstancesDispatchMethod(JsonRpcMethod):
