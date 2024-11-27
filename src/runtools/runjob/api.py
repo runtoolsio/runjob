@@ -107,13 +107,14 @@ class InstancesStopMethod(JsonRpcMethod):
         return {"stop_result": StopResult.STOP_INITIATED.name}
 
 
-class InstancesOutputMethod(JsonRpcMethod):
+class InstancesTailMethod(JsonRpcMethod):
+
     @property
     def method_name(self):
-        return "instances.get_output"
+        return "instances.get_tail"
 
     def execute(self, job_instance, params):
-        return {"output": [line.serialize() for line in job_instance.output.tail()]}
+        return {"tail": [line.serialize() for line in job_instance.output.tail()]}
 
 
 class InstancesDispatchMethod(JsonRpcMethod):
@@ -146,7 +147,7 @@ DEFAULT_METHODS = (
     InstancesGetMethod(),
     InstancesApproveMethod(),
     InstancesStopMethod(),
-    InstancesOutputMethod(),
+    InstancesTailMethod(),
     InstancesDispatchMethod()
 )
 

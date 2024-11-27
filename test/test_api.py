@@ -80,7 +80,7 @@ def test_tail(job_instances):
     j1, j2 = job_instances
     j1.output.tail_buffer.add_line(OutputLine('Meditate, do not delay, lest you later regret it.', False, 'EXEC'))
 
-    instances, errors = runtools.runcore.get_output()
+    instances, errors = runtools.runcore.get_tail()
     assert not errors
 
     assert instances[0].instance_metadata.job_id == 'j1'
