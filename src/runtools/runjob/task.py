@@ -1,45 +1,56 @@
 import logging
 from enum import Enum
+from typing import Set
 
 from runtools.runcore import util
 from runtools.runcore.util import convert_if_number
 
 
 class Fields(Enum):
-    EVENT = 'event'
-    OPERATION = 'operation'
-    TASK = 'task'
-    TIMESTAMP = 'timestamp'
-    COMPLETED = 'completed'
-    INCREMENT = 'increment'
-    TOTAL = 'total'
-    UNIT = 'unit'
-    RESULT = 'result'
+    EVENT = {'event', 'message', 'msg'}
+    OPERATION = {'operation', 'op', 'task'}
+    TIMESTAMP = {'timestamp', 'time', 'ts'}
+    COMPLETED = {'completed', 'done', 'processed', 'count', 'increment', 'incr', 'added'}
+    TOTAL = {'total', 'max', 'target'}
+    UNIT = {'unit'}
+    RESULT = {'result', 'status'}
+
+    def __init__(self, aliases: Set[str]):
+        self.aliases = aliases
+
+    @classmethod
+    def find_field(cls, key: str) -> 'Fields | None':
+        """Find field enum by any of its aliases"""
+        key = key.lower()
+        for field in cls:
+            if key in field.aliases:
+                return field
+        return None
 
 
 DEFAULT_PATTERN = ''
 
 
-def field_conversion(parsed):
-    converted = {
-        Fields.EVENT: parsed.get(Fields.EVENT.value),
-        Fields.TASK: parsed.get(Fields.TASK.value),
-        Fields.TIMESTAMP: util.parse_datetime(parsed.get(Fields.TIMESTAMP.value)),
-        Fields.OPERATION: parsed.get(Fields.OPERATION.value),
-        Fields.COMPLETED: convert_if_number(parsed.get(Fields.COMPLETED.value)),
-        Fields.INCREMENT: convert_if_number(parsed.get(Fields.INCREMENT.value)),
-        Fields.TOTAL: convert_if_number(parsed.get(Fields.TOTAL.value)),
-        Fields.UNIT: parsed.get(Fields.UNIT.value),
-        Fields.RESULT: parsed.get(Fields.RESULT.value),
-    }
+def field_conversion(parsed: dict) -> dict:
+    """Convert parsed fields with alias support"""
+    converted = {}
 
-    return {key: value for key, value in converted.items() if value is not None}
+    for key, value in parsed.items():
+        if field := Fields.find_field(key):
+            if field == Fields.TIMESTAMP:
+                value = util.parse_datetime(value)
+            elif field in {Fields.COMPLETED, Fields.TOTAL}:
+                value = convert_if_number(value)
+            if value:
+                converted[field] = value
+
+    return converted
 
 
-class OutputToTask:
+class OutputToStatus:
 
-    def __init__(self, task_tracker, *, parsers, conversion=field_conversion):
-        self.tracker = task_tracker
+    def __init__(self, status_tracker, *, parsers, conversion=field_conversion):
+        self.tracker = status_tracker
         self.parsers = list(parsers)
         self.conversion = conversion
 
@@ -48,8 +59,7 @@ class OutputToTask:
 
     def create_logging_handler(self):
         """
-        Creates and returns a logging.Handler instance that forwards log records
-        to this OutputToTask instance.
+        Creates and returns a logging.Handler instance that forwards log records to this instance.
         """
         class InternalHandler(logging.Handler):
             def __init__(self, outer_instance):
@@ -76,42 +86,26 @@ class OutputToTask:
         if not kv:
             return
 
-        self._update_task(kv)
+        self._update_status(kv)
 
-    def _update_task(self, fields):
-        task = fields.get(Fields.TASK)
-        prev_task = self.tracker.subtasks[-1] if self.tracker.subtasks else None
-        is_finished = False
-        if task:
-            current_task = self.tracker.subtask(task, timestamp=fields.get(Fields.TIMESTAMP))
-            if prev_task == current_task:
-                is_finished = True
-        else:
-            if prev_task and not prev_task.is_finished:
-                current_task = prev_task
-            else:
-                current_task = self.tracker
+    def _update_status(self, fields):
+        is_op = self._update_operation(fields)
+        if not is_op and (event := fields.get(Fields.EVENT)):
+            self.tracker.event(event, timestamp=fields.get(Fields.TIMESTAMP))
 
-        is_op = self._update_operation(current_task, fields)
-        if (event := fields.get(Fields.EVENT)) and not is_op:
-            current_task.event(event, timestamp=fields.get(Fields.TIMESTAMP))
+        if result := fields.get(Fields.RESULT):
+            self.tracker.result(result)
 
-        result = fields.get(Fields.RESULT)
-        if result or is_finished:
-            current_task.finished(fields.get(Fields.RESULT), timestamp=fields.get(Fields.TIMESTAMP))
-
-    @staticmethod
-    def _update_operation(task, fields):
+    def _update_operation(self, fields):
         op_name = fields.get(Fields.OPERATION) or fields.get(Fields.EVENT)
         ts = fields.get(Fields.TIMESTAMP)
         completed = fields.get(Fields.COMPLETED)
-        increment = fields.get(Fields.INCREMENT)
         total = fields.get(Fields.TOTAL)
         unit = fields.get(Fields.UNIT)
 
-        if not completed and not increment and not total and not unit:
+        if not any((completed, total, unit)):
             return False
 
-        op = task.operation(op_name, timestamp=ts)
-        op.update(completed or increment, total, unit, increment=increment is not None, timestamp=ts)
+        op = self.tracker.operation(op_name, timestamp=ts)
+        op.update(completed, total, unit, ts)
         return True

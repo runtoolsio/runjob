@@ -16,13 +16,13 @@ from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, Terminat
 from runtools.runcore.util import lock, KVParser
 from runtools.runcore.util.log import LogForwarding
 from runtools.runjob.phaser import RunContext, AbstractPhase
-from runtools.runjob.task import OutputToTask
+from runtools.runjob.task import OutputToStatus
 
 log = logging.getLogger(__name__)
 
 
 def output_to_task_handler(run_ctx):
-    return OutputToTask(run_ctx.task_tracker, parsers=[KVParser()]).create_logging_handler()
+    return OutputToStatus(run_ctx.task_tracker, parsers=[KVParser()]).create_logging_handler()
 
 
 def forward_logs(logger, run_ctx):
