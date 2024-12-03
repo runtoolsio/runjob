@@ -5,7 +5,8 @@ from typing import Sequence
 from runtools.runcore import util
 from runtools.runcore.job import (JobRun, InstanceTransitionObserver, JobInstance, JobInstanceMetadata,
                                   InstanceOutputObserver)
-from runtools.runcore.run import RunState, PhaseRun, PhaseInfo
+from runtools.runcore.output import OutputLine
+from runtools.runcore.run import RunState, PhaseRun
 
 
 def exec_time_exceeded(job_instance: JobInstance, warning_name: str, time: float):
@@ -44,7 +45,7 @@ class _ExecTimeWarning(InstanceTransitionObserver):
 
     def _check(self):
         if self.job_instance.job_run().lifecycle.run_state != RunState.ENDED:
-            self.job_instance.task_tracker.warning(self.text)
+            self.job_instance.status_tracker.warning(self.text)
 
     def __repr__(self):
         return "{}({!r}, {!r}, {!r})".format(
@@ -58,7 +59,7 @@ class _OutputMatchesWarning(InstanceOutputObserver):
         self.text = text
         self.regex = re.compile(regex)
 
-    def new_instance_output(self, instance_meta: JobInstanceMetadata, phase: PhaseInfo, output: str, is_err: bool):
-        m = self.regex.search(output)
+    def new_instance_output(self, instance_meta: JobInstanceMetadata, output_line: OutputLine):
+        m = self.regex.search(output_line.text)
         if m:
-            self.job_instance.task_tracker.warning(self.text)
+            self.job_instance.status_tracker.warning(self.text)

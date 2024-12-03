@@ -4,14 +4,14 @@ import pytest
 import time
 
 import runtools.runjob
-from runtools.runcore.track import TaskTrackerMem
+from runtools.runjob.track import StatusTracker
 from runtools.runjob import warning
 from runtools.runjob.test.phaser import TestPhase
 
 
 @pytest.fixture
 def job_instance():
-    return runtools.runjob.job_instance('j1', [TestPhase('p1', wait=True)], task_tracker=TaskTrackerMem())
+    return runtools.runjob.job_instance('j1', [TestPhase('p1', wait=True)], task_tracker=StatusTracker())
 
 
 def test_exec_time_warning(job_instance):
@@ -23,4 +23,4 @@ def test_exec_time_warning(job_instance):
 
     job_instance.get_phase('p1').release()
     run_thread.join(1)
-    assert job_instance.task_tracker.tracked_task.warnings
+    assert job_instance.status_tracker.to_status().warnings

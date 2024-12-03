@@ -83,7 +83,7 @@ class RunnerJobInstance(JobInstance):
         self._metadata = JobInstanceMetadata(job_id, run_id or instance_id, instance_id, parameters, user_params)
         self._phaser = phaser
         self._output = _Output(tail_buffer or InMemoryTailBuffer(max_capacity=10))
-        self._task_tracker = task_tracker
+        self._status_tracker = task_tracker
         self._transition_notification = ObservableNotification[InstanceTransitionObserver](
             error_hook=log_observer_error)
         self._output_notification = ObservableNotification[InstanceOutputObserver](error_hook=log_observer_error)
@@ -102,8 +102,8 @@ class RunnerJobInstance(JobInstance):
         return self._metadata
 
     @property
-    def task_tracker(self):
-        return self._task_tracker
+    def status_tracker(self):
+        return self._status_tracker
 
     @property
     def current_phase(self):
@@ -121,7 +121,7 @@ class RunnerJobInstance(JobInstance):
         return self._phaser.get_phase(phase_id, phase_type)
 
     def job_run(self) -> JobRun:
-        tracked_task = self._task_tracker.tracked_task if self.task_tracker else None
+        tracked_task = self._status_tracker.to_status() if self.status_tracker else None
         return JobRun(self.metadata, self._phaser.run_info(), tracked_task)
 
     def _process_output(self, output_line):
@@ -133,7 +133,7 @@ class RunnerJobInstance(JobInstance):
         self._output_notification.add_observer(_output_observers.observer_proxy)
 
         try:
-            self._phaser.run(self._task_tracker)
+            self._phaser.run(self._status_tracker)
         finally:
             self._transition_notification.remove_observer(_transition_observer.observer_proxy)
             self._output_notification.remove_observer(_output_observers.observer_proxy)
