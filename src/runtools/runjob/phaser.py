@@ -9,6 +9,9 @@ from runtools.runcore.common import InvalidStateError
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import Phase, PhaseRun, PhaseInfo, Lifecycle, TerminationStatus, TerminationInfo, Run, \
     TerminateRun, FailedRun, RunError, RunState
+from runtools.runcore.util import KVParser
+from runtools.runcore.util.log import LogForwarding
+from runtools.runjob.track import OutputToStatusTransformer
 
 log = logging.getLogger(__name__)
 
@@ -204,7 +207,7 @@ class RunContext(ABC):
 
     @property
     @abstractmethod
-    def task_tracker(self):
+    def status_tracker(self):
         pass
 
     @abstractmethod
@@ -228,6 +231,18 @@ class RunContext(ABC):
                 self.outer_instance.new_output(output, is_error)
 
         return InternalHandler(self)
+
+
+def output_to_status_handler(run_ctx):
+    return OutputToStatusTransformer(run_ctx.status_tracker, parsers=[KVParser()]).create_logging_handler()
+
+
+def forward_logs(logger, run_ctx):
+    handlers = [run_ctx.create_logging_handler()]
+    if run_ctx.status_tracker:
+        handlers.append(output_to_status_handler(run_ctx))
+
+    return LogForwarding(logger, handlers)
 
 
 class Phaser:
@@ -278,22 +293,22 @@ class Phaser:
                 raise InvalidStateError("Primed already")
             self._next_phase(InitPhase())
 
-    def run(self, task_tracker=None):
+    def run(self, status_tracker=None):
         if not self._current_phase:
             raise InvalidStateError('Prime not executed before run')
 
-        task_tracker = task_tracker  # TODO ?
+        status_tracker = status_tracker
 
         class _RunContext(RunContext):
 
             def __init__(self, phaser: Phaser, ctx_phase: Phase):
                 self._phaser = phaser
                 self._ctx_phase = ctx_phase
-                self._task_tracker = task_tracker
+                self._status_tracker = status_tracker
 
             @property
-            def task_tracker(self):
-                return self._task_tracker
+            def status_tracker(self):
+                return self._status_tracker
 
             def new_output(self, text, is_err=False):
                 self._phaser.output_hook(OutputLine(text, is_err, self._ctx_phase.id))

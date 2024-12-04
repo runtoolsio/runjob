@@ -13,20 +13,10 @@ from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
 from runtools.runcore.listening import InstanceTransitionReceiver
 from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, TerminateRun, PhaseInfo, \
     register_phase_info
-from runtools.runcore.util import lock, KVParser
-from runtools.runcore.util.log import LogForwarding
-from runtools.runjob.phaser import RunContext, AbstractPhase
-from runtools.runjob.track import OutputToStatus
+from runtools.runcore.util import lock
+from runtools.runjob.phaser import RunContext, AbstractPhase, forward_logs
 
 log = logging.getLogger(__name__)
-
-
-def output_to_task_handler(run_ctx):
-    return OutputToStatus(run_ctx.status_tracker, parsers=[KVParser()]).create_logging_handler()
-
-
-def forward_logs(logger, run_ctx):
-    return LogForwarding(logger, [run_ctx.create_logging_handler(), output_to_task_handler(run_ctx)])
 
 
 class CoordTypes(Enum):

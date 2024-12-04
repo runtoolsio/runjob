@@ -12,7 +12,7 @@ class FakeRunContext(RunContext):
         self.output = []
 
     @property
-    def task_tracker(self):
+    def status_tracker(self):
         return None
 
     def new_output(self, output, is_err=False):

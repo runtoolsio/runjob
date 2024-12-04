@@ -50,10 +50,10 @@ def field_conversion(parsed: dict) -> dict:
     return converted
 
 
-class OutputToStatus:
+class OutputToStatusTransformer:
 
     def __init__(self, status_tracker, *, parsers, conversion=field_conversion):
-        self.tracker = status_tracker
+        self.status_tracker = status_tracker
         self.parsers = list(parsers)
         self.conversion = conversion
 
@@ -95,10 +95,10 @@ class OutputToStatus:
     def _update_status(self, fields):
         is_op = self._update_operation(fields)
         if not is_op and (event := fields.get(Fields.EVENT)):
-            self.tracker.event(event, timestamp=fields.get(Fields.TIMESTAMP))
+            self.status_tracker.event(event, timestamp=fields.get(Fields.TIMESTAMP))
 
         if result := fields.get(Fields.RESULT):
-            self.tracker.result(result)
+            self.status_tracker.result(result)
 
     def _update_operation(self, fields):
         op_name = fields.get(Fields.OPERATION) or fields.get(Fields.EVENT)
@@ -110,7 +110,7 @@ class OutputToStatus:
         if not any((completed, total, unit)):
             return False
 
-        op = self.tracker.operation(op_name, timestamp=ts)
+        op = self.status_tracker.operation(op_name, timestamp=ts)
         op.update(completed, total, unit, ts)
         return True
 

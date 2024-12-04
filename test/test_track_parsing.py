@@ -1,12 +1,12 @@
 from datetime import datetime
 
 from runtools.runcore.util import KVParser, iso_date_time_parser
-from runtools.runjob.track import OutputToStatus, StatusTracker
+from runtools.runjob.track import OutputToStatusTransformer, StatusTracker
 
 
 def test_parse_event():
     tracker = StatusTracker()
-    parser = OutputToStatus(tracker, parsers=[KVParser()])
+    parser = OutputToStatusTransformer(tracker, parsers=[KVParser()])
 
     parser.new_output('no events here')
     assert tracker.to_status().last_event is None
@@ -23,7 +23,7 @@ def test_parse_event():
 
 def test_operation_without_name():
     tracker = StatusTracker()
-    sut = OutputToStatus(tracker, parsers=[KVParser()])
+    sut = OutputToStatusTransformer(tracker, parsers=[KVParser()])
 
     sut.new_output('operation without name completed=[5]')
     assert tracker.to_status().last_event is None
@@ -32,7 +32,7 @@ def test_operation_without_name():
 
 def test_event_timestamps():
     tracker = StatusTracker()
-    sut = OutputToStatus(tracker, parsers=[KVParser(post_parsers=[(iso_date_time_parser('timestamp'))])])
+    sut = OutputToStatusTransformer(tracker, parsers=[KVParser(post_parsers=[(iso_date_time_parser('timestamp'))])])
 
     sut.new_output('2020-10-01 10:30:30 event=[e1]')
     assert tracker.to_status().last_event.timestamp == datetime.strptime('2020-10-01 10:30:30', "%Y-%m-%d %H:%M:%S")
@@ -43,7 +43,7 @@ def test_event_timestamps():
 
 def test_parse_progress():
     tracker = StatusTracker()
-    sut = OutputToStatus(tracker, parsers=[KVParser(aliases={'count': 'completed'})])
+    sut = OutputToStatusTransformer(tracker, parsers=[KVParser(aliases={'count': 'completed'})])
 
     sut.new_output("event=[downloaded] count=[10] total=[100] unit=[files]")
     task = tracker.to_status()
@@ -61,7 +61,7 @@ def test_multiple_parsers_and_tasks():
 
     tracker = StatusTracker()
     # Test multiple parsers can be used together to parse the same input
-    sut = OutputToStatus(tracker, parsers=[KVParser(value_split=":"), KVParser(field_split="&"), fake_parser])
+    sut = OutputToStatusTransformer(tracker, parsers=[KVParser(value_split=":"), KVParser(field_split="&"), fake_parser])
 
     sut.new_output('task:task1')
     sut.new_output('?time=2.3&task=task2&event=e1')
@@ -72,7 +72,7 @@ def test_multiple_parsers_and_tasks():
 
 def test_operation_when_progress():
     tracker = StatusTracker()
-    sut = OutputToStatus(tracker, parsers=[KVParser()])
+    sut = OutputToStatusTransformer(tracker, parsers=[KVParser()])
     sut.new_output("event=[upload]")
     sut.new_output("event=[decoding] completed=[10]")
 
@@ -81,7 +81,7 @@ def test_operation_when_progress():
 
 def test_event_deactivate_completed_operation():
     tracker = StatusTracker()
-    sut = OutputToStatus(tracker, parsers=[KVParser()])
+    sut = OutputToStatusTransformer(tracker, parsers=[KVParser()])
 
     sut.new_output("event=[encoding] completed=[10] total=[10]")
     assert tracker.to_status().operations[0].finished
@@ -94,7 +94,7 @@ def test_event_deactivate_completed_operation():
 
 def test_task_started_and_updated_on_operation():
     tracker = StatusTracker()
-    sut = OutputToStatus(tracker, parsers=[KVParser(), iso_date_time_parser('timestamp')])
+    sut = OutputToStatusTransformer(tracker, parsers=[KVParser(), iso_date_time_parser('timestamp')])
 
     sut.new_output('2020-10-01 14:40:00 event=[op1] completed=[200]')
     sut.new_output('2020-10-01 15:30:30 event=[op1] completed=[400]')
@@ -106,7 +106,7 @@ def test_task_started_and_updated_on_operation():
 
 def test_op_end_date():
     tracker = StatusTracker()
-    sut = OutputToStatus(tracker, parsers=[KVParser(), iso_date_time_parser('timestamp')])
+    sut = OutputToStatusTransformer(tracker, parsers=[KVParser(), iso_date_time_parser('timestamp')])
     sut.new_output('2020-10-01 14:40:00 event=[op1] completed=[5] total=[10]')
     assert not tracker.to_status().find_operation('op1').finished
 
@@ -117,7 +117,7 @@ def test_op_end_date():
 
 def test_result():
     tracker = StatusTracker()
-    sut = OutputToStatus(tracker, parsers=[KVParser()])
+    sut = OutputToStatusTransformer(tracker, parsers=[KVParser()])
 
     sut.new_output('2020-10-01 10:30:3Fields.TIMESTAMP.value0 event=[e1]')
     sut.new_output('result=[res]')
