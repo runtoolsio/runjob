@@ -2,16 +2,12 @@ import logging
 from abc import ABC, abstractmethod
 from copy import copy
 from threading import Condition, Event
-from typing import Dict, Iterable, Optional, Callable, Tuple
+from typing import Dict, Iterable, Optional, Callable, Tuple, Generic
 
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
-from runtools.runcore.output import OutputLine
 from runtools.runcore.run import Phase, PhaseRun, PhaseInfo, Lifecycle, TerminationStatus, TerminationInfo, Run, \
-    TerminateRun, FailedRun, RunError, RunState
-from runtools.runcore.util import KVParser
-from runtools.runcore.util.log import LogForwarding
-from runtools.runjob.track import OutputToStatusTransformer
+    TerminateRun, FailedRun, RunError, RunState, E
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +21,7 @@ def unique_phases_to_dict(phases) -> Dict[str, Phase]:
     return id_to_phase
 
 
-class AbstractPhase(Phase, ABC):
+class AbstractPhase(Phase[E], ABC):
     """
     TODO repr
     """
@@ -71,7 +67,7 @@ class AbstractPhase(Phase, ABC):
         pass
 
     @abstractmethod
-    def run(self, run_ctx):
+    def run(self, env, ctx):
         pass
 
     @abstractmethod
@@ -89,7 +85,7 @@ class NoOpsPhase(AbstractPhase, ABC):
     def stop_status(self):
         return self._stop_status
 
-    def run(self, run_ctx):
+    def run(self, env, ctx):
         """No activity on run"""
         pass
 
@@ -114,7 +110,7 @@ class InitPhase(NoOpsPhase):
         return RunState.CREATED
 
 
-class ExecutingPhase(AbstractPhase, ABC):
+class ExecutingPhase(AbstractPhase[E], ABC):
     """
     Abstract base class for phases that execute some work.
     Implementations should provide concrete run() and stop() methods
@@ -138,12 +134,13 @@ class ExecutingPhase(AbstractPhase, ABC):
         return TerminationStatus.STOPPED
 
     @abstractmethod
-    def run(self, run_ctx):
+    def run(self, env, ctx):
         """
         Execute the phase's work.
 
         Args:
-            run_ctx (RunContext): The run context for output/logging
+            env (E): External run environment
+            ctx (RunContext): Context object related to the given phase
 
         Raises:
             TerminateRun: If execution is stopped or interrupted
@@ -195,64 +192,25 @@ class WaitWrapperPhase(AbstractPhase):
     def wait(self, timeout):
         self._run_event.wait(timeout)
 
-    def run(self, run_ctx):
+    def run(self, env, ctx):
         self._run_event.set()
-        self.wrapped_phase.run(run_ctx)
+        self.wrapped_phase.run(env, ctx)
 
     def stop(self):
         self.wrapped_phase.stop()
 
 
 class RunContext(ABC):
-
-    @property
-    @abstractmethod
-    def status_tracker(self):
-        pass
-
-    @abstractmethod
-    def new_output(self, output, is_err=False):
-        pass
-
-    def create_logging_handler(self):
-        """
-        Creates and returns a logging.Handler instance that forwards log records
-        to this OutputToTask instance.
-        """
-
-        class InternalHandler(logging.Handler):
-            def __init__(self, outer_instance):
-                super().__init__()
-                self.outer_instance = outer_instance
-
-            def emit(self, record):
-                output = self.format(record)  # Convert log record to a string
-                is_error = record.levelno >= logging.ERROR
-                self.outer_instance.new_output(output, is_error)
-
-        return InternalHandler(self)
+    """Members to be added later"""
 
 
-def output_to_status_handler(run_ctx):
-    return OutputToStatusTransformer(run_ctx.status_tracker, parsers=[KVParser()]).create_logging_handler()
+class Phaser(Generic[E]):
 
-
-def forward_logs(logger, run_ctx):
-    handlers = [run_ctx.create_logging_handler()]
-    if run_ctx.status_tracker:
-        handlers.append(output_to_status_handler(run_ctx))
-
-    return LogForwarding(logger, handlers)
-
-
-class Phaser:
-
-    def __init__(self, phases: Iterable[Phase], lifecycle=None, *, timestamp_generator=util.utc_now):
-        self._key_to_phase: Dict[str, Phase] = unique_phases_to_dict(phases)
+    def __init__(self, phases: Iterable[Phase[E]], lifecycle=None, *, timestamp_generator=util.utc_now):
+        self._key_to_phase: Dict[str, Phase[E]] = unique_phases_to_dict(phases)
         self._timestamp_generator = timestamp_generator
         self._transition_lock = Condition()
         self.transition_hook: Optional[Callable[[PhaseRun, PhaseRun, int], None]] = None
-        self.output_hook: Optional[Callable[[OutputLine], None]] = None
         # Guarded by the transition/state lock:
         self._lifecycle = lifecycle or Lifecycle()
         self._current_phase = None
@@ -293,25 +251,12 @@ class Phaser:
                 raise InvalidStateError("Primed already")
             self._next_phase(InitPhase())
 
-    def run(self, status_tracker=None):
+    def run(self, environment: Optional[E] = None):
         if not self._current_phase:
             raise InvalidStateError('Prime not executed before run')
 
-        status_tracker = status_tracker
-
         class _RunContext(RunContext):
-
-            def __init__(self, phaser: Phaser, ctx_phase: Phase):
-                self._phaser = phaser
-                self._ctx_phase = ctx_phase
-                self._status_tracker = status_tracker
-
-            @property
-            def status_tracker(self):
-                return self._status_tracker
-
-            def new_output(self, text, is_err=False):
-                self._phaser.output_hook(OutputLine(text, is_err, self._ctx_phase.id))
+            pass
 
         for phase in self._key_to_phase.values():
             with self._transition_lock:
@@ -320,7 +265,7 @@ class Phaser:
 
                 self._next_phase(phase)
 
-            term_info, exc = self._run_handle_errors(phase, _RunContext(self, phase))
+            term_info, exc = self._run_handle_errors(phase, environment, _RunContext())
 
             with self._transition_lock:
                 if self._stop_status:
@@ -340,10 +285,10 @@ class Phaser:
             self._termination = self._term_info(TerminationStatus.COMPLETED)
             self._next_phase(TerminalPhase())
 
-    def _run_handle_errors(self, phase: Phase, run_ctx: RunContext) \
+    def _run_handle_errors(self, phase: Phase, environment: E, run_ctx: RunContext) \
             -> Tuple[Optional[TerminationInfo], Optional[BaseException]]:
         try:
-            phase.run(run_ctx)
+            phase.run(environment, run_ctx)
             return None, None
         except TerminateRun as e:
             return self._term_info(e.term_status), None

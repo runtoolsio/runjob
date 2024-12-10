@@ -14,30 +14,33 @@ from typing import Union, Tuple, Optional
 
 import sys
 
+from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminateRun, TerminationStatus, FailedRun
 from runtools.runjob.phaser import ExecutingPhase
+from runtools.runjob.track import TrackedEnvironment
 
 log = logging.getLogger(__name__)
 
 
-class ProcessPhase(ExecutingPhase):
+class ProcessPhase(ExecutingPhase[TrackedEnvironment]):
 
-    def __init__(self, phase_id: str, target, args=()):
+    def __init__(self, phase_id: str, target, args=(), *, output_id = None):
         super().__init__(phase_id)
         self.target = target
         self.args = args
+        self.output_id = output_id
         self.output_queue: Queue[Tuple[Union[str, _QueueStop], bool]] = Queue(maxsize=2048)
         self._process: Optional[Process] = None
         self._stopped: bool = False
         self._interrupted: bool = False
 
-    def run(self, run_ctx):
+    def run(self, env, run_ctx):
         if not self._stopped and not self._interrupted:
             self._process = Process(target=self._run)
 
             try:
                 self._process.start()
-                self._read_output(run_ctx)
+                self._read_output(env.output)
                 self._process.join(timeout=2)  # Just in case as it should be completed at this point
             finally:
                 self.output_queue.close()
@@ -93,13 +96,13 @@ class ProcessPhase(ExecutingPhase):
     def interrupted(self):
         self._interrupted = True
 
-    def _read_output(self, run_ctx):
+    def _read_output(self, output_sink):
         while self._process.is_alive():
             try:
                 output_text, is_err = self.output_queue.get(timeout=2)
                 if isinstance(output_text, _QueueStop):
                     break
-                run_ctx.new_output(output_text, is_err)
+                output_sink.new_output(OutputLine(output_text, is_err, self.output_id))
             except Empty:
                 pass
 

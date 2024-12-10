@@ -46,9 +46,10 @@ import logging
 
 from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserver,
                                   InstanceOutputObserver, JobInstanceMetadata)
-from runtools.runcore.output import Mode, Output, InMemoryTailBuffer, TailNotSupportedError
+from runtools.runcore.output import Output, TailNotSupportedError, Mode
 from runtools.runcore.run import PhaseRun, Outcome, RunState
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
+from runtools.runjob.track import InMemoryTailBuffer, OutputSink, TrackedEnvironment
 
 log = logging.getLogger(__name__)
 
@@ -61,36 +62,58 @@ _transition_observer = ObservableNotification[InstanceTransitionObserver](error_
 _output_observers = ObservableNotification[InstanceOutputObserver](error_hook=log_observer_error)
 
 
-class _Output(Output):
+class _JobOutput(Output, OutputSink):
 
-    def __init__(self, tail_buffer):
+    def __init__(self, metadata, tail_buffer = None):
+        super().__init__()
+        self.metadata = metadata
         self.tail_buffer = tail_buffer
+        self.output_notification = ObservableNotification[InstanceOutputObserver](error_hook=log_observer_error)
 
-    def tail(self, count: int = 0):
+    def process_output(self, output_line):
+        if self.tail_buffer:
+            self.tail_buffer.add_line(output_line)
+        self.output_notification.observer_proxy.new_instance_output(self.metadata, output_line)
+
+    def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
         if not self.tail_buffer:
             raise TailNotSupportedError
 
-        return self.tail_buffer.get_lines(count=count)
+        return self.tail_buffer.get_lines(mode, max_lines)
+
+
+class JobEnvironment(TrackedEnvironment):
+
+    def __init__(self, status_tracker, output: _JobOutput):
+        self._status_tracker = status_tracker
+        self._output: _JobOutput = output
+
+    @property
+    def status_tracker(self):
+        return self._status_tracker
+
+    @property
+    def output(self) -> OutputSink:
+        return self._output
 
 
 class RunnerJobInstance(JobInstance):
 
     def __init__(self, job_id, instance_id, phaser,
-                 tail_buffer=None, task_tracker=None,
+                 tail_buffer=None, status_tracker=None,
                  *, run_id=None,
                  **user_params):
         parameters = {}  # TODO
         self._metadata = JobInstanceMetadata(job_id, run_id or instance_id, instance_id, parameters, user_params)
         self._phaser = phaser
-        self._output = _Output(tail_buffer or InMemoryTailBuffer(max_capacity=10))
-        self._status_tracker = task_tracker
+        self._output = _JobOutput(self._metadata, tail_buffer or InMemoryTailBuffer(max_capacity=10))
+        self._environment = JobEnvironment(status_tracker, self._output)
+
         self._transition_notification = ObservableNotification[InstanceTransitionObserver](
             error_hook=log_observer_error)
-        self._output_notification = ObservableNotification[InstanceOutputObserver](error_hook=log_observer_error)
 
         # TODO Move the below out of constructor?
         self._phaser.transition_hook = self._transition_hook
-        self._phaser.output_hook = self._process_output
         self._phaser.prime()  # TODO
 
     def _log(self, event: str, msg: str = '', *params):
@@ -103,7 +126,7 @@ class RunnerJobInstance(JobInstance):
 
     @property
     def status_tracker(self):
-        return self._status_tracker
+        return self._environment.status_tracker
 
     @property
     def current_phase(self):
@@ -114,29 +137,25 @@ class RunnerJobInstance(JobInstance):
         return self._phaser.phases
 
     @property
-    def output(self, mode=Mode.HEAD, *, lines=0):
-        return self._output
+    def output(self):
+        return self._environment.output
 
     def get_phase(self, phase_id: str, phase_type: str = None):
         return self._phaser.get_phase(phase_id, phase_type)
 
     def job_run(self) -> JobRun:
-        tracked_task = self._status_tracker.to_status() if self.status_tracker else None
+        tracked_task = self._environment.status_tracker.to_status() if self.status_tracker else None
         return JobRun(self.metadata, self._phaser.run_info(), tracked_task)
-
-    def _process_output(self, output_line):
-        self._output.tail_buffer.add_line(output_line)
-        self._output_notification.observer_proxy.new_instance_output(self.metadata, output_line)
 
     def run(self):
         self._transition_notification.add_observer(_transition_observer.observer_proxy)
-        self._output_notification.add_observer(_output_observers.observer_proxy)
+        self._output.output_notification.add_observer(_output_observers.observer_proxy)
 
         try:
-            self._phaser.run(self._status_tracker)
+            self._phaser.run(self._environment)
         finally:
             self._transition_notification.remove_observer(_transition_observer.observer_proxy)
-            self._output_notification.remove_observer(_output_observers.observer_proxy)
+            self._output.output_notification.remove_observer(_output_observers.observer_proxy)
 
     def stop(self):
         """
@@ -194,10 +213,10 @@ class RunnerJobInstance(JobInstance):
         self._transition_notification.observer_proxy.new_instance_phase(snapshot, old_phase, new_phase, ordinal)
 
     def add_observer_output(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        self._output_notification.add_observer(observer, priority)
+        self._output.output_notification.add_observer(observer, priority)
 
     def remove_observer_output(self, observer):
-        self._output_notification.remove_observer(observer)
+        self._output.output_notification.remove_observer(observer)
 
 
 def register_transition_observer(observer, priority=DEFAULT_OBSERVER_PRIORITY):

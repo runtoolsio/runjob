@@ -9,13 +9,13 @@ from time import sleep
 
 from runtools.runcore.run import FailedRun, TerminateRun, TerminationStatus
 from runtools.runjob.process import ProcessPhase
-from runtools.runjob.test.phaser import FakeRunContext
+from runtools.runjob.test.phaser import FakeRunContext, TestEnvironment
 
 
 def test_exec():
     parent, child = Pipe()
     e = ProcessPhase('hello phase', exec_hello, (child,))
-    e.run(FakeRunContext())
+    e.run(TestEnvironment(), FakeRunContext())
     assert parent.recv() == ['hello']
 
 
@@ -27,7 +27,7 @@ def exec_hello(pipe):
 def test_failure_error():
     e = ProcessPhase('failed phase', raise_error, ())
     with pytest.raises(FailedRun):
-        e.run(FakeRunContext())
+        e.run(TestEnvironment(), FakeRunContext())
 
 
 def raise_error():
@@ -37,7 +37,7 @@ def raise_error():
 def test_failure_exit():
     e = ProcessPhase('error code phase', exec_failure_exit, ())
     with pytest.raises(FailedRun):
-        e.run(FakeRunContext())
+        e.run(TestEnvironment(), FakeRunContext())
 
 
 def exec_failure_exit():
@@ -49,7 +49,7 @@ def test_stop():
     t = Thread(target=stop_after, args=(0.5, e))
     t.start()
     with pytest.raises(TerminateRun) as exc_info:
-        e.run(FakeRunContext())
+        e.run(TestEnvironment(), FakeRunContext())
 
     assert exc_info.value.term_status == TerminationStatus.STOPPED
 

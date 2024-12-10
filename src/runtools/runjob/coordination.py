@@ -14,7 +14,7 @@ from runtools.runcore.listening import InstanceTransitionReceiver
 from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, TerminateRun, PhaseInfo, \
     register_phase_info
 from runtools.runcore.util import lock
-from runtools.runjob.phaser import RunContext, AbstractPhase, forward_logs
+from runtools.runjob.phaser import RunContext, AbstractPhase
 
 log = logging.getLogger(__name__)
 
@@ -49,8 +49,8 @@ class ApprovalPhase(AbstractPhase):
     def run_state(self) -> RunState:
         return RunState.PENDING
 
-    def run(self, run_ctx: RunContext):
-        with forward_logs(self._log, run_ctx):
+    def run(self, env, run_ctx: RunContext):
+        with env.forward_logs(self._log):
             self._log.debug("task=[Approval] operation=[Waiting]")
 
             approved = self._event.wait(self._timeout or None)
@@ -103,8 +103,8 @@ class NoOverlapPhase(AbstractPhase):
     def run_state(self) -> RunState:
         return RunState.EVALUATING
 
-    def run(self, run_ctx):
-        with forward_logs(self._log, run_ctx):
+    def run(self, env, run_ctx):
+        with env.forward_logs(self._log):
             self._log.debug("task=[No Overlap Check]")
             with self._locker():
                 no_overlap_filter = PhaseCriterion(phase_type=CoordTypes.NO_OVERLAP, protection_id=self._protection_id)
@@ -145,8 +145,8 @@ class DependencyPhase(AbstractPhase):
     def dependency_match(self):
         return self._dependency_match
 
-    def run(self, run_ctx):
-        with forward_logs(self._log, run_ctx):
+    def run(self, env, run_ctx):
+        with env.forward_logs(self._log):
             self._log.debug("task=[Dependency pre-check] dependency=[%s]", self._dependency_match)
             runs, _ = runtools.runcore.get_active_runs()
             matches = [r.metadata for r in runs if self._dependency_match(r.metadata)]
@@ -183,7 +183,7 @@ class WaitingPhase(AbstractPhase):
     def run_state(self) -> RunState:
         return RunState.WAITING
 
-    def run(self, run_ctx):
+    def run(self, env, run_ctx):
         for condition in self._observable_conditions:
             condition.add_result_listener(self._result_observer)
             condition.start_evaluating()
@@ -392,8 +392,8 @@ class ExecutionQueue(AbstractPhase, InstanceTransitionObserver):
     def queue_id(self):
         return self._queue_id
 
-    def run(self, run_ctx):
-        with forward_logs(self._log, run_ctx):
+    def run(self, env, run_ctx):
+        with env.forward_logs(self._log):
             with self._wait_guard:
                 if self._state == QueuedState.NONE:
                     self._state = QueuedState.IN_QUEUE

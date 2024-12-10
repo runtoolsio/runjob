@@ -34,5 +34,5 @@ def test_last_output():
     exec_phase = ProcessPhase('Printing', print_it)
     instance = RunnerJobInstance('j1', 'i1', Phaser([exec_phase]))
     instance.run()
-    assert ([line.text for line in instance.output.tail(count=10)] ==
+    assert ([line.text for line in instance.output.tail(max_lines=10)] ==
             "1 everyone in the world is doing something without me".split())

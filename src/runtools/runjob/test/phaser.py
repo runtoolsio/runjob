@@ -4,6 +4,22 @@ from typing import Optional
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.run import RunState, TerminationStatus, TerminateRun
 from runtools.runjob.phaser import RunContext, AbstractPhase
+from runtools.runjob.track import TrackedEnvironment, OutputSink, StatusTracker
+
+
+class TestEnvironment(TrackedEnvironment):
+
+    @property
+    def status_tracker(self):
+        return StatusTracker()
+
+    @property
+    def output(self):
+        class TestSink(OutputSink):
+            def process_output(self, output_line):
+                pass
+
+        return TestSink()
 
 
 class FakeRunContext(RunContext):
@@ -28,7 +44,6 @@ class TestPhase(AbstractPhase):
         self.exception = raise_exc
         self.wait: Optional[Event] = Event() if wait else None
         self.completed = False
-        self.output_text = output_text
 
     @property
     def type(self) -> str:
@@ -51,11 +66,9 @@ class TestPhase(AbstractPhase):
         else:
             raise InvalidStateError('Wait not set')
 
-    def run(self, run_ctx):
+    def run(self, env, run_ctx):
         if self.wait:
             self.wait.wait(2)
-        if self.output_text:
-            run_ctx.new_output(self.output_text)
         if self.exception:
             raise self.exception
         if self.failed_run:
