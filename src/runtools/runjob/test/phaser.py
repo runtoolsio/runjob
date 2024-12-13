@@ -4,7 +4,8 @@ from typing import Optional
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.run import RunState, TerminationStatus, TerminateRun
 from runtools.runjob.phaser import RunContext, AbstractPhase
-from runtools.runjob.track import TrackedEnvironment, OutputSink, StatusTracker
+from runtools.runjob.track import TrackedEnvironment, StatusTracker
+from runtools.runjob.output import OutputSink
 
 
 class TestEnvironment(TrackedEnvironment):

@@ -1,7 +1,8 @@
 from datetime import datetime
 
 from runtools.runcore.util import KVParser, iso_date_time_parser
-from runtools.runjob.track import OutputToStatusTransformer, StatusTracker, OutputLine
+from runtools.runcore.output import OutputLine
+from runtools.runjob.track import OutputToStatusTransformer, StatusTracker
 
 
 def test_parse_event():

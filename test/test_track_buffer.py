@@ -1,6 +1,6 @@
 import pytest
 from runtools.runcore.output import OutputLine, Mode
-from runtools.runjob.track import InMemoryTailBuffer
+from runtools.runjob.output import InMemoryTailBuffer
 
 
 def test_max_capacity():

@@ -49,7 +49,8 @@ from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserve
 from runtools.runcore.output import Output, TailNotSupportedError, Mode
 from runtools.runcore.run import PhaseRun, Outcome, RunState
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
-from runtools.runjob.track import InMemoryTailBuffer, OutputSink, TrackedEnvironment
+from runtools.runjob.track import TrackedEnvironment
+from runtools.runjob.output import OutputSink, InMemoryTailBuffer
 
 log = logging.getLogger(__name__)
 
@@ -109,8 +110,8 @@ class RunnerJobInstance(JobInstance):
         self._output = _JobOutput(self._metadata, tail_buffer or InMemoryTailBuffer(max_capacity=10))
         self._environment = JobEnvironment(status_tracker, self._output)
 
-        self._transition_notification = ObservableNotification[InstanceTransitionObserver](
-            error_hook=log_observer_error)
+        self._transition_notification = (
+            ObservableNotification[InstanceTransitionObserver](error_hook=log_observer_error))
 
         # TODO Move the below out of constructor?
         self._phaser.transition_hook = self._transition_hook
