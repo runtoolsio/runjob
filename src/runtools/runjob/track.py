@@ -108,7 +108,8 @@ class OperationTracker:
         self.unit = ''
         self.created_at = created_at or datetime.now(UTC).replace(tzinfo=None)
         self.updated_at = self.created_at
-        self.active = True
+        self.is_active = True
+        self.is_completed = False
 
     def update(self,
                completed: Optional[float] = None,
@@ -124,6 +125,10 @@ class OperationTracker:
             self.total = total
         if unit is not None:
             self.unit = unit
+        self.updated_at = updated_at or datetime.now(UTC).replace(tzinfo=None)
+
+    def finish(self, updated_at: Optional[datetime] = None) -> None:
+        self.is_completed = True
         self.updated_at = updated_at or datetime.now(UTC).replace(tzinfo=None)
 
     def parse_value(self, value):
@@ -154,7 +159,8 @@ class OperationTracker:
             self.unit,
             self.created_at,
             self.updated_at,
-            self.active
+            self.is_active,
+            self.is_completed
         )
 
 
@@ -171,7 +177,7 @@ class StatusTracker:
         self._last_event = Event(text, timestamp)
         for op in self._operations:
             if op.finished:
-                op.active = False
+                op.is_active = False
 
     def warning(self, text: str, timestamp=None) -> None:
         timestamp = timestamp or datetime.now(UTC).replace(tzinfo=None)

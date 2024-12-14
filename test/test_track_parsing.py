@@ -88,11 +88,11 @@ def test_event_deactivate_completed_operation():
 
     sut.new_output(OutputLine("event=[encoding] completed=[10] total=[10]"))
     assert tracker.to_status().operations[0].finished
-    assert tracker.to_status().operations[0].active
+    assert tracker.to_status().operations[0].is_active
 
     sut.new_output(OutputLine("event=[new_event]"))
     assert tracker.to_status().operations[0].finished
-    assert not tracker.to_status().operations[0].active
+    assert not tracker.to_status().operations[0].is_active
 
 
 def test_task_started_and_updated_on_operation():

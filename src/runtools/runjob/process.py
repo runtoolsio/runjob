@@ -40,7 +40,7 @@ class ProcessPhase(ExecutingPhase[MonitoredEnvironment]):
 
             try:
                 self._process.start()
-                self._read_output(env.output)
+                self._read_output(env.output_sink)
                 self._process.join(timeout=2)  # Just in case as it should be completed at this point
             finally:
                 self.output_queue.close()

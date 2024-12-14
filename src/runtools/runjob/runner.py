@@ -94,7 +94,7 @@ class JobEnvironment(MonitoredEnvironment):
         return self._status_tracker
 
     @property
-    def output(self) -> OutputSink:
+    def output_sink(self) -> OutputSink:
         return self._output
 
 
@@ -139,7 +139,7 @@ class RunnerJobInstance(JobInstance):
 
     @property
     def output(self):
-        return self._environment.output
+        return self._environment.output_sink
 
     def get_phase(self, phase_id: str, phase_type: str = None):
         return self._phaser.get_phase(phase_id, phase_type)
