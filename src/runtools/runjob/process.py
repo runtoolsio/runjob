@@ -17,12 +17,12 @@ import sys
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminateRun, TerminationStatus, FailedRun
 from runtools.runjob.phaser import ExecutingPhase
-from runtools.runjob.track import TrackedEnvironment
+from runtools.runjob.track import MonitoredEnvironment
 
 log = logging.getLogger(__name__)
 
 
-class ProcessPhase(ExecutingPhase[TrackedEnvironment]):
+class ProcessPhase(ExecutingPhase[MonitoredEnvironment]):
 
     def __init__(self, phase_id: str, target, args=(), *, output_id = None):
         super().__init__(phase_id)

@@ -49,7 +49,7 @@ from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserve
 from runtools.runcore.output import Output, TailNotSupportedError, Mode
 from runtools.runcore.run import PhaseRun, Outcome, RunState
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
-from runtools.runjob.track import TrackedEnvironment
+from runtools.runjob.track import MonitoredEnvironment
 from runtools.runjob.output import OutputSink, InMemoryTailBuffer
 
 log = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ class _JobOutput(Output, OutputSink):
         return self.tail_buffer.get_lines(mode, max_lines)
 
 
-class JobEnvironment(TrackedEnvironment):
+class JobEnvironment(MonitoredEnvironment):
 
     def __init__(self, status_tracker, output: _JobOutput):
         self._status_tracker = status_tracker

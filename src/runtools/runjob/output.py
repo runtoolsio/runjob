@@ -88,3 +88,11 @@ class InMemoryTailBuffer(TailBuffer):
 
         if mode == Mode.HEAD:
             return output[:max_lines]
+
+
+class OutputEnvironment(ABC):
+
+    @property
+    @abstractmethod
+    def output_sink(self):
+        pass

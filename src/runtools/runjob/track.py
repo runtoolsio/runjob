@@ -7,6 +7,7 @@ from typing import Set, Optional, List
 from runtools.runcore import util
 from runtools.runcore.status import Event, Operation, Status
 from runtools.runcore.util import convert_if_number
+from runtools.runjob.output import OutputEnvironment
 
 
 class Fields(Enum):
@@ -202,7 +203,6 @@ class TrackedEnvironment(ABC):
     def status_tracker(self):
         pass
 
-    @property
-    @abstractmethod
-    def output(self):
-        pass
+
+class MonitoredEnvironment(TrackedEnvironment, OutputEnvironment, ABC):
+    pass

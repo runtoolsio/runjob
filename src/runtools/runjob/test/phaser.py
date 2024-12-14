@@ -4,18 +4,18 @@ from typing import Optional
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.run import RunState, TerminationStatus, TerminateRun
 from runtools.runjob.phaser import RunContext, AbstractPhase
-from runtools.runjob.track import TrackedEnvironment, StatusTracker
+from runtools.runjob.track import MonitoredEnvironment, StatusTracker
 from runtools.runjob.output import OutputSink
 
 
-class TestEnvironment(TrackedEnvironment):
+class TestEnvironment(MonitoredEnvironment):
 
     @property
     def status_tracker(self):
         return StatusTracker()
 
     @property
-    def output(self):
+    def output_sink(self):
         class TestSink(OutputSink):
             def process_output(self, output_line):
                 pass

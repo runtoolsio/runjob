@@ -15,6 +15,7 @@ from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, Terminat
     register_phase_info
 from runtools.runcore.util import lock
 from runtools.runjob.phaser import RunContext, AbstractPhase
+from runtools.runjob.track import TrackedEnvironment
 
 log = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class CoordTypes(Enum):
     QUEUE = 'QUEUE'
 
 
-class ApprovalPhase(AbstractPhase):
+class ApprovalPhase(AbstractPhase[TrackedEnvironment]):
     """
     Approval parameters (incl. timeout) + approval eval as separate objects
     TODO: parameters
@@ -49,19 +50,18 @@ class ApprovalPhase(AbstractPhase):
     def run_state(self) -> RunState:
         return RunState.PENDING
 
-    def run(self, env, run_ctx: RunContext):
-        with env.forward_logs(self._log):
-            self._log.debug("task=[Approval] operation=[Waiting]")
+    def run(self, env: TrackedEnvironment, run_ctx: RunContext):
+        self._log.debug("task=[Approval] operation=[Waiting]")
 
-            approved = self._event.wait(self._timeout or None)
-            if self._stopped:
-                self._log.debug("task=[Approval] result=[Cancelled]")
-                return
-            if not approved:
-                self._log.debug("task=[Approval] result=[Not Approved]")
-                raise TerminateRun(TerminationStatus.TIMEOUT)
+        approved = self._event.wait(self._timeout or None)
+        if self._stopped:
+            self._log.debug("task=[Approval] result=[Cancelled]")
+            return
+        if not approved:
+            self._log.debug("task=[Approval] result=[Not Approved]")
+            raise TerminateRun(TerminationStatus.TIMEOUT)
 
-            self._log.debug("task=[Approval] result=[Approved]")
+        self._log.debug("task=[Approval] result=[Approved]")
 
     def approve(self):
         self._event.set()

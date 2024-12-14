@@ -2,7 +2,7 @@ import logging
 from abc import ABC, abstractmethod
 from copy import copy
 from threading import Condition, Event
-from typing import Dict, Iterable, Optional, Callable, Tuple, Generic
+from typing import Any, Dict, Iterable, Optional, Callable, Tuple, Generic
 
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
@@ -67,7 +67,7 @@ class AbstractPhase(Phase[E], ABC):
         pass
 
     @abstractmethod
-    def run(self, env, ctx):
+    def run(self, env: E, ctx):
         pass
 
     @abstractmethod
@@ -75,7 +75,7 @@ class AbstractPhase(Phase[E], ABC):
         pass
 
 
-class NoOpsPhase(AbstractPhase, ABC):
+class NoOpsPhase(AbstractPhase[Any], ABC):
 
     def __init__(self, phase_id, stop_status):
         super().__init__(phase_id)
@@ -134,7 +134,7 @@ class ExecutingPhase(AbstractPhase[E], ABC):
         return TerminationStatus.STOPPED
 
     @abstractmethod
-    def run(self, env, ctx):
+    def run(self, env: E, ctx):
         """
         Execute the phase's work.
 
@@ -170,9 +170,9 @@ class TerminalPhase(NoOpsPhase):
         return RunState.ENDED
 
 
-class WaitWrapperPhase(AbstractPhase):
+class WaitWrapperPhase(AbstractPhase[E]):
 
-    def __init__(self, wrapped_phase):
+    def __init__(self, wrapped_phase: Phase[E]):
         super().__init__(wrapped_phase.id)
         self.wrapped_phase = wrapped_phase
         self._run_event = Event()
@@ -285,7 +285,7 @@ class Phaser(Generic[E]):
             self._termination = self._term_info(TerminationStatus.COMPLETED)
             self._next_phase(TerminalPhase())
 
-    def _run_handle_errors(self, phase: Phase, environment: E, run_ctx: RunContext) \
+    def _run_handle_errors(self, phase: Phase[E], environment: E, run_ctx: RunContext) \
             -> Tuple[Optional[TerminationInfo], Optional[BaseException]]:
         try:
             phase.run(environment, run_ctx)
