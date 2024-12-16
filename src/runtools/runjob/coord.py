@@ -2,7 +2,6 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
-from logging import DEBUG
 from threading import Condition, Event, Lock
 from typing import Dict
 
@@ -36,8 +35,6 @@ class ApprovalPhase(AbstractPhase[TrackedEnvironment]):
 
     def __init__(self, phase_id='approval', phase_name='Approval', *, timeout=0):
         super().__init__(phase_id, phase_name)
-        self._log = logging.getLogger(self.__class__.__name__)
-        self._log.setLevel(DEBUG)
         self._timeout = timeout
         self._event = Event()
         self._stopped = False
@@ -51,17 +48,18 @@ class ApprovalPhase(AbstractPhase[TrackedEnvironment]):
         return RunState.PENDING
 
     def run(self, env: TrackedEnvironment, run_ctx: RunContext):
-        self._log.debug("task=[Approval] operation=[Waiting]")
+        op = env.status_tracker.operation('Waiting for approval')
+        # TODO Add support for denial request (rejection)
 
         approved = self._event.wait(self._timeout or None)
         if self._stopped:
-            self._log.debug("task=[Approval] result=[Cancelled]")
+            op.finished('Approval cancelled')
             return
         if not approved:
-            self._log.debug("task=[Approval] result=[Not Approved]")
+            op.finished('Approval timed out')
             raise TerminateRun(TerminationStatus.TIMEOUT)
 
-        self._log.debug("task=[Approval] result=[Approved]")
+        op.finished("Approved")
 
     def approve(self):
         self._event.set()
@@ -78,7 +76,7 @@ class ApprovalPhase(AbstractPhase[TrackedEnvironment]):
         return TerminationStatus.CANCELLED
 
 
-class NoOverlapPhase(AbstractPhase):
+class NoOverlapPhase(AbstractPhase[TrackedEnvironment]):
     """
     TODO Docs
     1. Set continue flag to be checked
@@ -91,8 +89,6 @@ class NoOverlapPhase(AbstractPhase):
 
         super().__init__(phase_id or no_overlap_id, phase_name,
                          protection_id=no_overlap_id, last_protected_phase=until_phase)
-        self._log = logging.getLogger(self.__class__.__name__)
-        self._log.setLevel(DEBUG)
         self._locker = locker_factory(paths.lock_path(f"noo-{no_overlap_id}.lock", True))
 
     @property
@@ -103,18 +99,18 @@ class NoOverlapPhase(AbstractPhase):
     def run_state(self) -> RunState:
         return RunState.EVALUATING
 
-    def run(self, env, run_ctx):
-        with env.forward_logs(self._log):
-            self._log.debug("task=[No Overlap Check]")
-            with self._locker():
-                no_overlap_filter = PhaseCriterion(phase_type=CoordTypes.NO_OVERLAP, protection_id=self._protection_id)
-                c = JobRunCriteria(phase_criteria=no_overlap_filter)
-                runs, _ = runtools.runcore.get_active_runs(c)
-                if any(r for r in runs if r.in_protected_phase(CoordTypes.NO_OVERLAP, self._protection_id)):
-                    self._log.debug("task=[No Overlap Check] result=[Overlap found]")
-                    raise TerminateRun(TerminationStatus.OVERLAP)
+    def run(self, env: TrackedEnvironment, run_ctx):
+        op = env.status_tracker.operation("No overlap check")
 
-        self._log.debug("task=[No Overlap Check] result=[No overlap found]")
+        with self._locker():
+            no_overlap_filter = PhaseCriterion(phase_type=CoordTypes.NO_OVERLAP, protection_id=self._protection_id)
+            c = JobRunCriteria(phase_criteria=no_overlap_filter)
+            runs, _ = runtools.runcore.get_active_runs(c)
+            if any(r for r in runs if r.in_protected_phase(CoordTypes.NO_OVERLAP, self._protection_id)):
+                op.finished("Overlap found")
+                raise TerminateRun(TerminationStatus.OVERLAP)
+
+        op.finished("No overlap found")
 
     def stop(self):
         pass
@@ -124,13 +120,11 @@ class NoOverlapPhase(AbstractPhase):
         return TerminationStatus.CANCELLED
 
 
-class DependencyPhase(AbstractPhase):
+class DependencyPhase(AbstractPhase[TrackedEnvironment]):
 
     def __init__(self, dependency_match, phase_id=None, phase_name='Active dependency check'):
         phase_id = phase_id or str(dependency_match)
         super().__init__(phase_id, phase_name)
-        self._log = logging.getLogger(self.__class__.__name__)
-        self._log.setLevel(DEBUG)
         self._dependency_match = dependency_match
 
     @property
@@ -145,15 +139,15 @@ class DependencyPhase(AbstractPhase):
     def dependency_match(self):
         return self._dependency_match
 
-    def run(self, env, run_ctx):
-        with env.forward_logs(self._log):
-            self._log.debug("task=[Dependency pre-check] dependency=[%s]", self._dependency_match)
-            runs, _ = runtools.runcore.get_active_runs()
-            matches = [r.metadata for r in runs if self._dependency_match(r.metadata)]
-            if not matches:
-                self._log.debug("result=[No active dependency found] dependency=[%s]]", self._dependency_match)
-                raise TerminateRun(TerminationStatus.UNSATISFIED)
-            self._log.debug("result=[Active dependency found] matches=%s", matches)
+    def run(self, env: TrackedEnvironment, run_ctx):
+        op = env.status_tracker.operation("Dependency check")
+
+        runs, _ = runtools.runcore.get_active_runs()
+        matches = [r.metadata for r in runs if self._dependency_match(r.metadata)]
+        if not matches:
+            op.finished(f"Required dependency `{self._dependency_match}` not found")
+            raise TerminateRun(TerminationStatus.UNSATISFIED)
+        op.finished(f"Required dependency `{self._dependency_match}` found")
 
     def stop(self):
         pass
@@ -163,7 +157,7 @@ class DependencyPhase(AbstractPhase):
         return TerminationStatus.CANCELLED
 
 
-class WaitingPhase(AbstractPhase):
+class WaitingPhase(AbstractPhase[TrackedEnvironment]):
     """
     """
 
@@ -183,7 +177,7 @@ class WaitingPhase(AbstractPhase):
     def run_state(self) -> RunState:
         return RunState.WAITING
 
-    def run(self, env, run_ctx):
+    def run(self, env: TrackedEnvironment, run_ctx):
         for condition in self._observable_conditions:
             condition.add_result_listener(self._result_observer)
             condition.start_evaluating()
@@ -337,7 +331,7 @@ class ExecutionQueueInfo(PhaseInfo):
         return d
 
 
-class ExecutionQueue(AbstractPhase, InstanceTransitionObserver):
+class ExecutionQueue(AbstractPhase[TrackedEnvironment], InstanceTransitionObserver):
 
     def __init__(self, queue_id, max_executions, phase_id=None, phase_name=None, *,
                  until_phase=None,
@@ -349,8 +343,6 @@ class ExecutionQueue(AbstractPhase, InstanceTransitionObserver):
             raise ValueError('Max executions must be greater than zero')
 
         super().__init__(phase_id or queue_id, phase_name, protection_id=queue_id, last_protected_phase=until_phase)
-        self._log = logging.getLogger(f'{__name__}.{self.__class__.__name__}')
-        self._log.setLevel(DEBUG)
         self._state = QueuedState.NONE
         self._queue_id = queue_id
         self._max_executions = max_executions
@@ -392,26 +384,25 @@ class ExecutionQueue(AbstractPhase, InstanceTransitionObserver):
     def queue_id(self):
         return self._queue_id
 
-    def run(self, env, run_ctx):
-        with env.forward_logs(self._log):
+    def run(self, env: TrackedEnvironment, run_ctx):
+        with self._wait_guard:
+            if self._state == QueuedState.NONE:
+                self._state = QueuedState.IN_QUEUE
+
+        while True:
             with self._wait_guard:
-                if self._state == QueuedState.NONE:
-                    self._state = QueuedState.IN_QUEUE
+                if self._state.dequeued:
+                    return
 
-            while True:
-                with self._wait_guard:
-                    if self._state.dequeued:
-                        return
+                if self._current_wait:
+                    self._wait_guard.wait()
+                    continue
 
-                    if self._current_wait:
-                        self._wait_guard.wait()
-                        continue
+                self._current_wait = True
+                self._start_listening()
 
-                    self._current_wait = True
-                    self._start_listening()
-
-                with self._locker():
-                    self._dispatch_next()
+            with self._locker():
+                self._dispatch_next()
 
     def stop(self):
         with self._wait_guard:
@@ -423,7 +414,6 @@ class ExecutionQueue(AbstractPhase, InstanceTransitionObserver):
             self._wait_guard.notify_all()
 
     def signal_dispatch(self):
-        self._log.debug("event[dispatch_signalled]")
         with self._wait_guard:
             if self._state == QueuedState.CANCELLED:
                 return False
@@ -453,15 +443,15 @@ class ExecutionQueue(AbstractPhase, InstanceTransitionObserver):
              or (r.current_phase_id.phase_type == CoordTypes.QUEUE and r.current_phase_id.queued_state.dequeued)])
         free_slots = self._max_executions - occupied
         if free_slots <= 0:
-            self._log.debug("event[no_dispatch] slots=[%d] occupied=[%d]", self._max_executions, occupied)
+            # self._log.debug("event[no_dispatch] slots=[%d] occupied=[%d]", self._max_executions, occupied)
             return False
 
-        self._log.debug("event[dispatching] free_slots=[%d]", free_slots)
+        # self._log.debug("event[dispatching] free_slots=[%d]", free_slots)
         for next_proceed in sorted_group_runs.queued:
             signal_resp = runtools.runcore.signal_dispatch(JobRunCriteria.match_run(next_proceed), self._queue_id)
             for r in signal_resp.successful:
                 if r.dispatched:
-                    self._log.debug("event[dispatched] run=[%s]", next_proceed.metadata)
+                    # self._log.debug("event[dispatched] run=[%s]", next_proceed.metadata)
                     free_slots -= 1
                     if free_slots <= 0:
                         return

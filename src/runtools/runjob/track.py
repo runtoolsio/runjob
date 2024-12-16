@@ -109,7 +109,7 @@ class OperationTracker:
         self.created_at = created_at or datetime.now(UTC).replace(tzinfo=None)
         self.updated_at = self.created_at
         self.is_active = True
-        self.is_completed = False
+        self.result: Optional[str] = None
 
     def update(self,
                completed: Optional[float] = None,
@@ -127,8 +127,8 @@ class OperationTracker:
             self.unit = unit
         self.updated_at = updated_at or datetime.now(UTC).replace(tzinfo=None)
 
-    def finish(self, updated_at: Optional[datetime] = None) -> None:
-        self.is_completed = True
+    def finished(self, result, updated_at: Optional[datetime] = None) -> None:
+        self.result = result
         self.updated_at = updated_at or datetime.now(UTC).replace(tzinfo=None)
 
     def parse_value(self, value):
@@ -149,7 +149,7 @@ class OperationTracker:
 
     @property
     def finished(self):
-        return self.completed and self.total and (self.completed == self.total)
+        return self.result is not None or (self.total and (self.completed == self.total))
 
     def to_operation(self) -> Operation:
         return Operation(
@@ -160,7 +160,7 @@ class OperationTracker:
             self.created_at,
             self.updated_at,
             self.is_active,
-            self.is_completed
+            self.result
         )
 
 
@@ -206,7 +206,7 @@ class TrackedEnvironment(ABC):
 
     @property
     @abstractmethod
-    def status_tracker(self):
+    def status_tracker(self) -> StatusTracker:
         pass
 
 
