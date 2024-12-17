@@ -1,7 +1,7 @@
 import logging
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Optional, Callable, List
+from typing import Optional, Callable, List, Iterable
 
 from runtools.runcore.output import OutputLine, OutputObserver, TailBuffer, Mode
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY, ObserverContext
@@ -9,7 +9,7 @@ from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSER
 
 class LogForwarding:
 
-    def __init__(self, logger, target_handlers):
+    def __init__(self, logger, target_handlers: Iterable[logging.Handler]):
         self.logger = logger
         self.target_handlers = target_handlers
 
@@ -30,14 +30,14 @@ class OutputSink(ABC):
         self._output_notification = ObservableNotification[OutputObserver]()
 
     @abstractmethod
-    def process_output(self, output_line):
+    def _process_output(self, output_line):
         pass
 
     def new_output(self, output_line):
         if self.preprocessing:
             output_line = self.preprocessing(output_line)
 
-        self.process_output(output_line)
+        self._process_output(output_line)
         self._output_notification.observer_proxy.new_output(output_line)
 
     def observer(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY) -> ObserverContext[OutputObserver]:
@@ -61,7 +61,7 @@ class OutputSink(ABC):
         return InternalHandler(self)
 
     def forward_logs(self, logger, format_record=True):
-        return LogForwarding(logger, self.forward_logs_handler(format_record))
+        return LogForwarding(logger, [self.forward_logs_handler(format_record)])
 
 
 class InMemoryTailBuffer(TailBuffer):

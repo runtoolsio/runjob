@@ -71,7 +71,7 @@ class _JobOutput(Output, OutputSink):
         self.tail_buffer = tail_buffer
         self.output_notification = ObservableNotification[InstanceOutputObserver](error_hook=log_observer_error)
 
-    def process_output(self, output_line):
+    def _process_output(self, output_line):
         if self.tail_buffer:
             self.tail_buffer.add_line(output_line)
         self.output_notification.observer_proxy.new_instance_output(self.metadata, output_line)

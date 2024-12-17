@@ -17,7 +17,7 @@ class TestEnvironment(MonitoredEnvironment):
     @property
     def output_sink(self):
         class TestSink(OutputSink):
-            def process_output(self, output_line):
+            def _process_output(self, output_line):
                 pass
 
         return TestSink()
