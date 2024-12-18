@@ -44,12 +44,14 @@ State lock
 """
 import logging
 
+from runtools.runcore import util
 from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserver,
                                   InstanceOutputObserver, JobInstanceMetadata)
 from runtools.runcore.output import Output, TailNotSupportedError, Mode
 from runtools.runcore.run import PhaseRun, Outcome, RunState
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
-from runtools.runjob.track import MonitoredEnvironment
+from runtools.runjob import Phaser
+from runtools.runjob.track import MonitoredEnvironment, StatusTracker
 from runtools.runjob.output import OutputSink, InMemoryTailBuffer
 
 log = logging.getLogger(__name__)
@@ -65,7 +67,7 @@ _output_observers = ObservableNotification[InstanceOutputObserver](error_hook=lo
 
 class _JobOutput(Output, OutputSink):
 
-    def __init__(self, metadata, tail_buffer = None):
+    def __init__(self, metadata, tail_buffer=None):
         super().__init__()
         self.metadata = metadata
         self.tail_buffer = tail_buffer
@@ -98,16 +100,28 @@ class JobEnvironment(MonitoredEnvironment):
         return self._output
 
 
-class RunnerJobInstance(JobInstance):
+def create(job_id, phases, status_tracker=None,
+           *, instance_id=None, run_id=None, tail_buffer=None,
+           **user_params) -> JobInstance:
+    if not job_id:
+        raise ValueError("Job ID is mandatory")
 
-    def __init__(self, job_id, instance_id, phaser,
-                 tail_buffer=None, status_tracker=None,
-                 *, run_id=None,
-                 **user_params):
-        parameters = {}  # TODO
+    instance_id = instance_id or util.unique_timestamp_hex()
+    run_id = run_id or instance_id
+    phaser = Phaser(phases)
+    tail_buffer = tail_buffer or InMemoryTailBuffer(max_capacity=10)
+    status_tracker = status_tracker or StatusTracker()
+    inst = _JobInstance(job_id, instance_id, run_id, phaser, tail_buffer, status_tracker, user_params)
+    return inst
+
+
+class _JobInstance(JobInstance):
+
+    def __init__(self, job_id, instance_id, run_id, phaser, tail_buffer, status_tracker, user_params):
+        parameters = {}
         self._metadata = JobInstanceMetadata(job_id, run_id or instance_id, instance_id, parameters, user_params)
         self._phaser = phaser
-        self._output = _JobOutput(self._metadata, tail_buffer or InMemoryTailBuffer(max_capacity=10))
+        self._output = _JobOutput(self._metadata, tail_buffer)
         self._environment = JobEnvironment(status_tracker, self._output)
 
         self._transition_notification = (

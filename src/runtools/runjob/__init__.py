@@ -15,7 +15,7 @@ from runtools.runcore.util import lock
 from runtools.runcore.util.socket import SocketClient
 from runtools.runjob.featurize import FeaturedContextBuilder
 from runtools.runjob.phaser import Phaser
-from runtools.runjob.runner import RunnerJobInstance
+from runtools.runjob.instance import _JobInstance
 
 __version__ = "0.11.0"
 
@@ -47,11 +47,11 @@ def configure(**kwargs):
 
 
 def job_instance(job_id, phases, output=None, task_tracker=None, *, run_id=None, instance_id=None, **user_params)\
-        -> RunnerJobInstance:
+        -> _JobInstance:
     instance_id = instance_id or util.unique_timestamp_hex()
     with FeaturedContextBuilder().standard_features(plugins=_plugins).build() as ctx:
         phaser = Phaser(phases)
-        instance = RunnerJobInstance(job_id, instance_id, phaser, output, task_tracker, run_id=run_id, **user_params)
+        instance = _JobInstance(job_id, instance_id, phaser, output, task_tracker, run_id=run_id, **user_params)
         return ctx.add(instance)
 
 
@@ -83,8 +83,8 @@ def run(job_id, execution, sync_=None, state_locker=lock.default_queue_locker(),
 
 def job_instance_uncoordinated(job_id, exec_, *, instance_id=None, **user_params) \
         -> JobInstance:
-    return RunnerJobInstance(job_id, instance_id, Phaser([exec_]), run_id=instance_id,
-                             user_params=user_params)
+    return _JobInstance(job_id, instance_id, Phaser([exec_]), run_id=instance_id,
+                        user_params=user_params)
 
 
 def run_uncoordinated(job_id, exec_, *, instance_id=None, **user_params) -> JobInstance:

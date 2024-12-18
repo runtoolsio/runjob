@@ -3,8 +3,7 @@ Tests :mod:`runjob` module
 """
 from runtools.runcore.test.observer import TestOutputObserver
 
-from runtools.runjob import RunnerJobInstance
-from runtools.runjob.phaser import Phaser
+from runtools.runjob import instance
 from runtools.runjob.process import ProcessPhase
 
 
@@ -22,18 +21,18 @@ def print_countdown():
 
 def test_output_observer():
     exec_phase = ProcessPhase('Printing', print_hello)
-    instance = RunnerJobInstance('j1', 'i1', Phaser([exec_phase]))
+    i = instance.create('j1', [exec_phase], instance_id='i1')
     observer = TestOutputObserver()
-    instance.add_observer_output(observer)
+    i.add_observer_output(observer)
 
-    instance.run()
+    i.run()
 
     assert observer.last_text == "Hello, lucky boy. Where are you today?"
 
 
 def test_last_output():
     exec_phase = ProcessPhase('Printing', print_countdown)
-    instance = RunnerJobInstance('j1', 'i1', Phaser([exec_phase]))
-    instance.run()
-    assert ([line.text for line in instance.output.tail(max_lines=10)] ==
+    i = instance.create('j1', [exec_phase], instance_id='i1')
+    i.run()
+    assert ([line.text for line in i.output.tail(max_lines=10)] ==
             "1 everyone in the world is doing something without me".split())

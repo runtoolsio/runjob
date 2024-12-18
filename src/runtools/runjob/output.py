@@ -46,6 +46,7 @@ class OutputSink(ABC):
     def forward_logs_handler(self, format_record=True):
         """
         Creates and returns a logging.Handler instance that forwards log records to this sink.
+        TODO source
         """
 
         class InternalHandler(logging.Handler):
@@ -56,7 +57,7 @@ class OutputSink(ABC):
             def emit(self, record):
                 output = self.format(record) if format_record else record.getMessage()
                 is_error = record.levelno >= logging.ERROR
-                self.sink.new_output(output, is_error)
+                self.sink.new_output(OutputLine(output, is_error))
 
         return InternalHandler(self)
 

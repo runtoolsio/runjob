@@ -5,11 +5,10 @@ Tests that :mod:`runjob` sends correct notification to state observers.
 
 import pytest
 
-from runtools import runjob
 from runtools.runcore.job import JobRun, InstanceTransitionObserver
 from runtools.runcore.run import TerminationStatus, RunState, FailedRun
 from runtools.runcore.test.observer import TestTransitionObserver
-from runtools.runjob import runner
+from runtools.runjob import instance
 from runtools.runjob.phaser import InitPhase, TerminalPhase
 from runtools.runjob.test.phaser import TestPhase
 
@@ -17,16 +16,16 @@ from runtools.runjob.test.phaser import TestPhase
 @pytest.fixture
 def observer():
     observer = TestTransitionObserver()
-    runner.register_transition_observer(observer)
+    instance.register_transition_observer(observer)
     yield observer
-    runner.deregister_transition_observer(observer)
+    instance.deregister_transition_observer(observer)
 
 
 EXEC = 'j1'
 
 
 def test_passed_args(observer: TestTransitionObserver):
-    runjob.run_uncoordinated('j1', TestPhase(EXEC))
+    instance.create('j1', [TestPhase(EXEC)]).run()
 
     assert observer.job_runs[0].metadata.job_id == 'j1'
     assert observer.phases == [(InitPhase.ID, EXEC), (EXEC, TerminalPhase.ID)]
@@ -35,14 +34,14 @@ def test_passed_args(observer: TestTransitionObserver):
 
 def test_raise_exc(observer: TestTransitionObserver):
     with pytest.raises(Exception):
-        runjob.run_uncoordinated('j1', TestPhase(raise_exc=Exception))
+        instance.create('j1', [TestPhase(raise_exc=Exception)]).run()
 
     assert observer.run_states == [RunState.EXECUTING, RunState.ENDED]
     assert observer.job_runs[-1].termination.error.category == 'Exception'
 
 
 def test_raise_exec_exc(observer: TestTransitionObserver):
-    runjob.run_uncoordinated('j1', TestPhase(raise_exc=FailedRun('test_type', 'testing reason')))
+    instance.create('j1', [TestPhase(raise_exc=FailedRun('test_type', 'testing reason'))]).run()
 
     assert observer.run_states == [RunState.EXECUTING, RunState.ENDED]
     assert observer.job_runs[-1].termination.failure.category == 'test_type'
@@ -54,7 +53,7 @@ def test_observer_raises_exception():
     """
     observer = ExceptionRaisingObserver(Exception('Should be captured by runjob'))
     execution = TestPhase()
-    job_instance = runjob.job_instance('j1', [execution])
+    job_instance = instance.create('j1', [execution])
     job_instance.add_observer_transition(observer)
     job_instance.run()
     assert execution.completed
