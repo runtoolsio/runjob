@@ -148,7 +148,7 @@ class OperationTracker:
                             + str(value))
 
     @property
-    def finished(self):
+    def is_finished(self):
         return self.result is not None or (self.total and (self.completed == self.total))
 
     def to_operation(self) -> Operation:
@@ -176,7 +176,7 @@ class StatusTracker:
         timestamp = timestamp or datetime.now(UTC).replace(tzinfo=None)
         self._last_event = Event(text, timestamp)
         for op in self._operations:
-            if op.finished:
+            if op.is_finished:
                 op.is_active = False
 
     def warning(self, text: str, timestamp=None) -> None:

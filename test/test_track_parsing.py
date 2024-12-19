@@ -33,7 +33,7 @@ def test_operation_without_name():
 
 def test_event_timestamps():
     tracker = StatusTracker()
-    sut = OutputToStatusTransformer(tracker, parsers=[KVParser(post_parsers=[(iso_date_time_parser('timestamp'))])])
+    sut = OutputToStatusTransformer(tracker, parsers=[iso_date_time_parser('timestamp'), KVParser()])
 
     sut.new_output(OutputLine('2020-10-01 10:30:30 event=[e1]'))
     assert tracker.to_status().last_event.timestamp == datetime.strptime('2020-10-01 10:30:30', "%Y-%m-%d %H:%M:%S")
