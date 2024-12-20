@@ -58,12 +58,12 @@ def test_result_handling():
 
     # Result can be set and retrieved
     tracker.result("Success")
-    assert tracker.to_status().result == "Success"
+    assert tracker.to_status().result.text == "Success"
 
     # Result persists after new operations/events
     tracker.operation("test").update(1, 10)
     tracker.event("Still working")
-    assert tracker.to_status().result == "Success"
+    assert tracker.to_status().result.text == "Success"
 
 
 def test_multiple_operations_same_name():

@@ -252,6 +252,9 @@ class Phaser(Generic[E]):
             self._next_phase(InitPhase())
 
     def run(self, environment: Optional[E] = None):
+        """
+        TODO prevent rerun
+        """
         if not self._current_phase:
             raise InvalidStateError('Prime not executed before run')
 

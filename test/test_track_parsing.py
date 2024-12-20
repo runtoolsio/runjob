@@ -124,7 +124,7 @@ def test_result():
 
     sut.new_output(OutputLine('2020-10-01 10:30:30 event=[e1]'))
     sut.new_output(OutputLine('result=[res]'))
-    assert tracker.to_status().result == 'res'
+    assert tracker.to_status().result.text == 'res'
 
 
 def test_error_output():

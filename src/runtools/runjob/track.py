@@ -164,23 +164,27 @@ class OperationTracker:
         )
 
 
+def ts_or_now(timestamp):
+    return timestamp or datetime.now(UTC).replace(tzinfo=None)
+
+
 class StatusTracker:
 
     def __init__(self):
         self._last_event: Optional[Event] = None
         self._operations: List[OperationTracker] = []
         self._warnings: List[Event] = []
-        self._result: Optional[str] = None
+        self._result: Optional[Event] = None
 
     def event(self, text: str, timestamp=None) -> None:
-        timestamp = timestamp or datetime.now(UTC).replace(tzinfo=None)
+        timestamp = ts_or_now(timestamp)
         self._last_event = Event(text, timestamp)
         for op in self._operations:
             if op.is_finished:
                 op.is_active = False
 
     def warning(self, text: str, timestamp=None) -> None:
-        timestamp = timestamp or datetime.now(UTC).replace(tzinfo=None)
+        timestamp = ts_or_now(timestamp)
         self._warnings.append(Event(text, timestamp))
 
     def operation(self, name: str, timestamp=None) -> OperationTracker:
@@ -194,8 +198,11 @@ class StatusTracker:
     def _get_operation(self, name: str) -> Optional[OperationTracker]:
         return next((op for op in self._operations if op.name == name), None)
 
-    def result(self, result: str) -> None:
-        self._result = result
+    def result(self, result: str, timestamp=None) -> None:
+        timestamp = ts_or_now(timestamp)
+        self._result = Event(result, timestamp)
+        for op in self._operations:
+            op.is_active = False
 
     def to_status(self) -> Status:
         return Status(self._last_event, [op.to_operation() for op in self._operations],
