@@ -288,6 +288,19 @@ class Phaser(Generic[E]):
             self._termination = self._term_info(TerminationStatus.COMPLETED)
             self._next_phase(TerminalPhase())
 
+    def _next_phase(self, phase):
+        """
+        Impl note: The execution must be guarded by the phase lock (except terminal phase)
+        """
+        assert self._current_phase != phase
+
+        self._current_phase = phase
+        self._lifecycle.add_phase_run(PhaseRun(phase.id, phase.run_state, self._timestamp_generator()))
+        if self.transition_hook:
+            self.execute_transition_hook_safely(self.transition_hook)
+        with self._transition_lock:
+            self._transition_lock.notify_all()
+
     def _run_handle_errors(self, phase: Phase[E], environment: E, run_ctx: RunContext) \
             -> Tuple[Optional[TerminationInfo], Optional[BaseException]]:
         try:
@@ -309,19 +322,6 @@ class Phaser(Generic[E]):
             # Consider UNKNOWN (or new state DETACHED?) if there is possibility the execution is not completed
             term_status = TerminationStatus.COMPLETED if e.code == 0 else TerminationStatus.FAILED
             return self._term_info(term_status), e
-
-    def _next_phase(self, phase):
-        """
-        Impl note: The execution must be guarded by the phase lock (except terminal phase)
-        """
-        assert self._current_phase != phase
-
-        self._current_phase = phase
-        self._lifecycle.add_phase_run(PhaseRun(phase.id, phase.run_state, self._timestamp_generator()))
-        if self.transition_hook:
-            self.execute_transition_hook_safely(self.transition_hook)
-        with self._transition_lock:
-            self._transition_lock.notify_all()
 
     def execute_transition_hook_safely(self, transition_hook: Optional[Callable[[PhaseRun, PhaseRun, int], None]]):
         with self._transition_lock:
