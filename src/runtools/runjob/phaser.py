@@ -1,13 +1,16 @@
 import logging
+import traceback
 from abc import ABC, abstractmethod
 from copy import copy
 from threading import Condition, Event
-from typing import Any, Dict, Iterable, Optional, Callable, Tuple, Generic
+from typing import Any, Dict, Iterable, Optional, Callable, Tuple, Generic, List
+
+import sys
 
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.run import Phase, PhaseRun, PhaseInfo, Lifecycle, TerminationStatus, TerminationInfo, Run, \
-    TerminateRun, FailedRun, RunError, RunState, E
+    TerminateRun, FailedRun, RunError, RunState, E, ErrorCategory
 
 log = logging.getLogger(__name__)
 
@@ -207,16 +210,18 @@ class RunContext(ABC):
 class Phaser(Generic[E]):
 
     def __init__(self, phases: Iterable[Phase[E]], lifecycle=None, *, timestamp_generator=util.utc_now):
+        self.transition_hook: Optional[Callable[[PhaseRun, PhaseRun, int], None]] = None
         self._key_to_phase: Dict[str, Phase[E]] = unique_phases_to_dict(phases)
         self._timestamp_generator = timestamp_generator
-        self._transition_lock = Condition()
-        self.transition_hook: Optional[Callable[[PhaseRun, PhaseRun, int], None]] = None
-        # Guarded by the transition/state lock:
+        self._lock = Condition()
+        self._non_terminal_errors: List[RunError] = []
+        # Guarded by the lock:
         self._lifecycle = lifecycle or Lifecycle()
+        self._started = False
         self._current_phase = None
-        self._stop_status = TerminationStatus.NONE
         self._abort = False
-        self._termination: Optional[TerminationInfo] = None
+        self._stop_status = TerminationStatus.NONE
+        self._termination_info: Optional[TerminationInfo] = None
         # ----------------------- #
 
     @property
@@ -241,52 +246,57 @@ class Phaser(Generic[E]):
         return TerminationInfo(termination_status, self._timestamp_generator(), failure, error)
 
     def run_info(self) -> Run:
-        with self._transition_lock:
+        with self._lock:
             phases = tuple(p.info() for p in self._key_to_phase.values())
-            return Run(phases, copy(self._lifecycle), self._termination)
+            return Run(phases, copy(self._lifecycle), self._termination_info, tuple(self._non_terminal_errors))
 
     def prime(self):
-        with self._transition_lock:
+        with self._lock:
+            if self._abort:
+                return
             if self._current_phase:
                 raise InvalidStateError("Primed already")
             self._next_phase(InitPhase())
 
+        self._execute_transition_hook()
+
     def run(self, environment: Optional[E] = None):
-        """
-        TODO prevent rerun
-        """
-        if not self._current_phase:
+        class _RunContext(RunContext):
+            """TODO Members will be added later"""
+
+        if self._current_phase is None:
             raise InvalidStateError('Prime not executed before run')
 
-        class _RunContext(RunContext):
-            pass
+        with self._lock:
+            if self._started:
+                raise InvalidStateError('The run has been already started')
+            if self._abort:
+                return
+            self._started = True
 
+        term_info, exc = None, None
         for phase in self._key_to_phase.values():
-            with self._transition_lock:
-                if self._abort:
-                    return
+            with self._lock:
+                if term_info or exc or self._stop_status:
+                    break
 
                 self._next_phase(phase)
 
+            self._execute_transition_hook()  # Hook exec without lock
             term_info, exc = self._run_handle_errors(phase, environment, _RunContext())
 
-            with self._transition_lock:
-                if self._stop_status:
-                    self._termination = self._term_info(self._stop_status)
-                elif term_info:
-                    self._termination = term_info
-
-                if isinstance(exc, BaseException):
-                    assert self._termination
-                    self._next_phase(TerminalPhase())
-                    raise exc
-                if self._termination:
-                    self._next_phase(TerminalPhase())
-                    return
-
-        with self._transition_lock:
-            self._termination = self._term_info(TerminationStatus.COMPLETED)
+        with self._lock:
+            # Set termination info and terminal phase 'atomically'
+            if self._stop_status:
+                term_info = self._term_info(self._stop_status)
+            self._termination_info = term_info or self._term_info(TerminationStatus.COMPLETED)
             self._next_phase(TerminalPhase())
+
+        self._execute_transition_hook()  # Hook exec without lock
+
+        if exc:
+            # TODO Wrap
+            raise exc
 
     def _next_phase(self, phase):
         """
@@ -296,10 +306,7 @@ class Phaser(Generic[E]):
 
         self._current_phase = phase
         self._lifecycle.add_phase_run(PhaseRun(phase.id, phase.run_state, self._timestamp_generator()))
-        if self.transition_hook:
-            self.execute_transition_hook_safely(self.transition_hook)
-        with self._transition_lock:
-            self._transition_lock.notify_all()
+        self._lock.notify_all()
 
     def _run_handle_errors(self, phase: Phase[E], environment: E, run_ctx: RunContext) \
             -> Tuple[Optional[TerminationInfo], Optional[BaseException]]:
@@ -311,11 +318,10 @@ class Phaser(Generic[E]):
         except FailedRun as e:
             return self._term_info(TerminationStatus.FAILED, failure=e.fault), None
         except Exception as e:
-            # TODO print exception
-            run_error = RunError(e.__class__.__name__, str(e))
+            stack_trace = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            run_error = RunError(ErrorCategory.PHASE_RUN_ERROR, f"{e.__class__.__name__}: {e}", stack_trace)
             return self._term_info(TerminationStatus.ERROR, error=run_error), e
         except KeyboardInterrupt as e:
-            log.warning('keyboard_interruption')
             phase.stop()
             return self._term_info(TerminationStatus.INTERRUPTED), e
         except SystemExit as e:
@@ -323,33 +329,42 @@ class Phaser(Generic[E]):
             term_status = TerminationStatus.COMPLETED if e.code == 0 else TerminationStatus.FAILED
             return self._term_info(term_status), e
 
-    def execute_transition_hook_safely(self, transition_hook: Optional[Callable[[PhaseRun, PhaseRun, int], None]]):
-        with self._transition_lock:
-            lc = copy(self._lifecycle)
-            transition_hook(lc.previous_run, lc.current_run, lc.phase_count)
+    def _execute_transition_hook(self):
+        if self.transition_hook is None:
+            return
+
+        try:
+            self.transition_hook(self._lifecycle.previous_run, self._lifecycle.current_run, self._lifecycle.phase_count)
+        except Exception as e:
+            traceback.print_exc(file=sys.stderr)
+            stack_trace = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            self._non_terminal_errors.append(
+                RunError(ErrorCategory.TRANSITION_HOOK_ERROR, f"{e.__class__.__name__}: {e}", stack_trace)
+            )
 
     def stop(self):
-        with self._transition_lock:
-            if self._termination:
+        with self._lock:
+            if self._termination_info:
                 return
 
             self._stop_status = self._current_phase.stop_status if self._current_phase else TerminationStatus.STOPPED
-            if not self._current_phase or (type(self._current_phase) == InitPhase):
-                # Not started yet
-                self._abort = True  # Prevent phase transition...
-                self._termination = self._term_info(self._stop_status)
+            if not self._started:
+                self._abort = True
+                self._termination_info = self._term_info(self._stop_status)
                 self._next_phase(TerminalPhase())
 
-        self._current_phase.stop()
+        self._current_phase.stop()  # Set stop status prevents next phase execution
+        if self._abort:
+            self._execute_transition_hook()
 
     def wait_for_transition(self, phase_id=None, run_state=RunState.NONE, *, timeout=None):
-        with self._transition_lock:
+        with self._lock:
             while True:
                 for run in self._lifecycle.phase_runs:
                     if run.phase_id == phase_id or run.run_state == run_state:
                         return True
 
-                if not self._transition_lock.wait(timeout):
+                if not self._lock.wait(timeout):
                     return False
                 if not phase_id and not run_state:
                     return True

@@ -6,7 +6,7 @@ Tests that :mod:`runjob` sends correct notification to state observers.
 import pytest
 
 from runtools.runcore.job import JobRun, InstanceTransitionObserver
-from runtools.runcore.run import TerminationStatus, RunState, FailedRun
+from runtools.runcore.run import TerminationStatus, RunState, FailedRun, ErrorCategory
 from runtools.runcore.test.observer import TestTransitionObserver
 from runtools.runjob import instance
 from runtools.runjob.phaser import InitPhase, TerminalPhase
@@ -37,7 +37,7 @@ def test_raise_exc(observer: TestTransitionObserver):
         instance.create('j1', [TestPhase(raise_exc=Exception)]).run()
 
     assert observer.run_states == [RunState.EXECUTING, RunState.ENDED]
-    assert observer.job_runs[-1].termination.error.category == 'Exception'
+    assert observer.job_runs[-1].termination.error.category == ErrorCategory.PHASE_RUN_ERROR
 
 
 def test_raise_exec_exc(observer: TestTransitionObserver):

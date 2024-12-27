@@ -193,13 +193,8 @@ class _JobInstance(JobInstance):
 
     def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, notify_on_register=False):
         if notify_on_register:
-            def add_and_notify_callback(*args):
-                self._transition_notification.add_observer(observer, priority)
-                observer.new_instance_phase(self._phaser.run_info(), *args)
-
-            self._phaser.execute_transition_hook_safely(add_and_notify_callback)
-        else:
-            self._transition_notification.add_observer(observer, priority)
+            """TODO"""
+        self._transition_notification.add_observer(observer, priority)
 
     def remove_observer_transition(self, callback):
         self._transition_notification.remove_observer(callback)

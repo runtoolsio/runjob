@@ -1,9 +1,10 @@
 from threading import Thread
 
 import pytest
+
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.run import TerminationStatus, RunState, \
-    FailedRun, RunError
+    FailedRun, ErrorCategory
 from runtools.runjob.phaser import Phaser, InitPhase, TerminalPhase, WaitWrapperPhase
 from runtools.runjob.test.phaser import TestPhase
 
@@ -153,7 +154,8 @@ def test_exception(sut):
     assert snapshot.termination.status == TerminationStatus.ERROR
     assert (snapshot.lifecycle.phases == [INIT, EXEC1, TERM])
 
-    assert snapshot.termination.error == RunError('InvalidStateError', 'reason')
+    assert snapshot.termination.error.category == ErrorCategory.PHASE_RUN_ERROR
+    assert snapshot.termination.error.reason == 'InvalidStateError: reason'
 
 
 def test_interruption(sut):
