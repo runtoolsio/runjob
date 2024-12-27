@@ -8,7 +8,8 @@ from typing import Any, Dict, Iterable, Optional, Callable, Tuple, Generic, List
 import sys
 
 from runtools.runcore import util
-from runtools.runcore.common import InvalidStateError, MultipleExceptions
+from runtools.runcore.common import InvalidStateError
+from runtools.runcore.util.observer import MultipleExceptions
 from runtools.runcore.run import Phase, PhaseRun, PhaseInfo, Lifecycle, TerminationStatus, TerminationInfo, Run, \
     TerminateRun, FailedRun, RunError, RunState, E, ErrorCategory
 

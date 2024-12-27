@@ -43,6 +43,7 @@ State lock
 
 """
 import logging
+from typing import Callable, Tuple, Any
 
 from runtools.runcore import util
 from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserver,
@@ -56,6 +57,7 @@ from runtools.runjob.output import OutputSink, InMemoryTailBuffer
 
 log = logging.getLogger(__name__)
 
+TransitionObserverErrorHook = Callable[[InstanceTransitionObserver, Tuple[Any, ...], Exception], None]
 
 def log_observer_error(observer, args, exc):
     log.error("event=[observer_error] observer=[%s], args=[%s] error=[%s]", observer, args, exc, exc_info=True)
@@ -101,7 +103,7 @@ class JobEnvironment(MonitoredEnvironment):
 
 
 def create(job_id, phases, status_tracker=None,
-           *, instance_id=None, run_id=None, tail_buffer=None,
+           *, instance_id=None, run_id=None, tail_buffer=None, transition_observer_error_hook=None,
            **user_params) -> JobInstance:
     if not job_id:
         raise ValueError("Job ID is mandatory")
@@ -111,13 +113,15 @@ def create(job_id, phases, status_tracker=None,
     phaser = Phaser(phases)
     tail_buffer = tail_buffer or InMemoryTailBuffer(max_capacity=10)
     status_tracker = status_tracker or StatusTracker()
-    inst = _JobInstance(job_id, instance_id, run_id, phaser, tail_buffer, status_tracker, user_params)
+    inst = _JobInstance(job_id, instance_id, run_id, phaser, tail_buffer, status_tracker, transition_observer_error_hook,
+                        user_params)
     return inst
 
 
 class _JobInstance(JobInstance):
 
-    def __init__(self, job_id, instance_id, run_id, phaser, tail_buffer, status_tracker, user_params):
+    def __init__(self, job_id, instance_id, run_id, phaser, tail_buffer, status_tracker, transition_observer_err_hook,
+                 user_params):
         parameters = {}
         self._metadata = JobInstanceMetadata(job_id, run_id or instance_id, instance_id, parameters, user_params)
         self._phaser = phaser
@@ -125,7 +129,7 @@ class _JobInstance(JobInstance):
         self._environment = JobEnvironment(status_tracker, self._output)
 
         self._transition_notification = (
-            ObservableNotification[InstanceTransitionObserver](error_hook=log_observer_error))
+            ObservableNotification[InstanceTransitionObserver](error_hook=transition_observer_err_hook, force_reraise=True))
 
         # TODO Move the below out of constructor?
         self._phaser.transition_hook = self._transition_hook
