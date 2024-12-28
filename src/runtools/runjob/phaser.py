@@ -10,7 +10,7 @@ import sys
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.run import Phase, PhaseRun, PhaseInfo, Lifecycle, TerminationStatus, TerminationInfo, Run, \
-    TerminateRun, FailedRun, Fault, RunState, E
+    TerminateRun, FailedRun, Fault, RunState, E, PhaseExecutionError
 
 log = logging.getLogger(__name__)
 
@@ -320,7 +320,9 @@ class Phaser(Generic[E]):
             return self._term_info(TerminationStatus.FAILED, failure=e.fault), None
         except Exception as e:
             run_error = Fault.from_exception(UNCAUGHT_PHASE_RUN_EXCEPTION, e)
-            return self._term_info(TerminationStatus.ERROR, error=run_error), e
+            wrapped_exc = PhaseExecutionError(phase.id)
+            wrapped_exc.__cause__ = e
+            return self._term_info(TerminationStatus.ERROR, error=run_error), wrapped_exc
         except KeyboardInterrupt as e:
             phase.stop()
             return self._term_info(TerminationStatus.INTERRUPTED), e

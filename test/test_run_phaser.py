@@ -3,7 +3,7 @@ from threading import Thread
 import pytest
 
 from runtools.runcore.common import InvalidStateError
-from runtools.runcore.run import TerminationStatus, RunState, FailedRun, Fault
+from runtools.runcore.run import TerminationStatus, RunState, FailedRun, Fault, PhaseExecutionError
 from runtools.runjob import phaser
 from runtools.runjob.phaser import Phaser, InitPhase, TerminalPhase, WaitWrapperPhase
 from runtools.runjob.test.phaser import TestPhase
@@ -145,8 +145,11 @@ def test_exception(sut):
     sut.get_phase(EXEC1).exception = exc
     sut.prime()
 
-    with pytest.raises(InvalidStateError):
+    with pytest.raises(PhaseExecutionError) as exc_info:
         sut.run()
+
+    assert exc_info.value.phase_id == EXEC1
+    assert exc_info.value.__cause__ == exc
 
     snapshot = sut.run_info()
     assert snapshot.termination.status == TerminationStatus.ERROR
