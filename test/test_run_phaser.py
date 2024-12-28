@@ -35,19 +35,19 @@ def test_run_with_approval(sut_approve):
     wait_wrapper = sut_approve.get_phase(APPROVAL)
 
     wait_wrapper.wait(1)
-    snapshot = sut_approve.run_info()
+    snapshot = sut_approve.snapshot()
     assert snapshot.lifecycle.current_phase_id == APPROVAL
     assert snapshot.lifecycle.run_state == RunState.PENDING
 
     wait_wrapper.wrapped_phase.wait.set()
     run_thread.join(1)
-    assert (sut_approve.run_info().lifecycle.phases == [INIT, APPROVAL, EXEC, TERM])
+    assert (sut_approve.snapshot().lifecycle.phases == [INIT, APPROVAL, EXEC, TERM])
 
 
 def test_post_prime(sut):
     sut.prime()
 
-    snapshot = sut.run_info()
+    snapshot = sut.snapshot()
     assert snapshot.lifecycle.current_phase_id == INIT
     assert snapshot.lifecycle.run_state == RunState.CREATED
 
@@ -55,11 +55,11 @@ def test_post_prime(sut):
 def test_empty_phaser():
     empty = Phaser([])
     empty.prime()
-    assert empty.run_info().lifecycle.phases == [INIT]
+    assert empty.snapshot().lifecycle.phases == [INIT]
 
     empty.run()
 
-    snapshot = empty.run_info()
+    snapshot = empty.snapshot()
     assert snapshot.lifecycle.phases == [INIT, TERM]
     assert snapshot.termination.status == TerminationStatus.COMPLETED
 
@@ -67,7 +67,7 @@ def test_empty_phaser():
 def test_stop_before_prime(sut):
     sut.stop()
 
-    snapshot = sut.run_info()
+    snapshot = sut.snapshot()
     assert snapshot.lifecycle.phases == [TERM]
     assert snapshot.termination.status == TerminationStatus.STOPPED
 
@@ -76,7 +76,7 @@ def test_stop_before_run(sut):
     sut.prime()
     sut.stop()
 
-    snapshot = sut.run_info()
+    snapshot = sut.snapshot()
     assert snapshot.lifecycle.phases == [INIT, TERM]
     assert snapshot.termination.status == TerminationStatus.STOPPED
 
@@ -91,7 +91,7 @@ def test_stop_in_run(sut_approve):
     sut_approve.stop()
     run_thread.join(1)  # Let the run end
 
-    run = sut_approve.run_info()
+    run = sut_approve.snapshot()
     assert (run.lifecycle.phases == [INIT, APPROVAL, TERM])
     assert run.termination.status == TerminationStatus.CANCELLED
 
@@ -101,7 +101,7 @@ def test_premature_termination(sut):
     sut.prime()
     sut.run()
 
-    run = sut.run_info()
+    run = sut.snapshot()
     assert run.termination.status == TerminationStatus.FAILED
     assert (run.lifecycle.phases == [INIT, EXEC1, TERM])
 
@@ -133,7 +133,7 @@ def test_failed_run_exception(sut):
     sut.prime()
     sut.run()
 
-    snapshot = sut.run_info()
+    snapshot = sut.snapshot()
     assert snapshot.termination.status == TerminationStatus.FAILED
     assert (snapshot.lifecycle.phases == [INIT, EXEC1, TERM])
 
@@ -151,7 +151,7 @@ def test_exception(sut):
     assert exc_info.value.phase_id == EXEC1
     assert exc_info.value.__cause__ == exc
 
-    snapshot = sut.run_info()
+    snapshot = sut.snapshot()
     assert snapshot.termination.status == TerminationStatus.ERROR
     assert (snapshot.lifecycle.phases == [INIT, EXEC1, TERM])
 
@@ -166,5 +166,5 @@ def test_interruption(sut):
     with pytest.raises(KeyboardInterrupt):
         sut.run()
 
-    snapshot = sut.run_info()
+    snapshot = sut.snapshot()
     assert snapshot.termination.status == TerminationStatus.INTERRUPTED

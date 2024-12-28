@@ -246,7 +246,7 @@ class Phaser(Generic[E]):
     def _term_info(self, termination_status, failure=None, error=None):
         return TerminationInfo(termination_status, self._timestamp_generator(), failure, error)
 
-    def run_info(self) -> Run:
+    def snapshot(self) -> Run:
         with self._lock:
             phases = tuple(p.info() for p in self._key_to_phase.values())
             return Run(phases, copy(self._lifecycle), self._termination_info)
@@ -340,6 +340,7 @@ class Phaser(Generic[E]):
         except Exception:
             # The exception is not propagated to prevent breaking the run
             # The implementer should prevent the hook to raise any exceptions
+            # TODO Add the exception to the run context
             traceback.print_exc(file=sys.stderr)
 
     def stop(self):

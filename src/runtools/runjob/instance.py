@@ -189,7 +189,7 @@ class _JobInstance(JobInstance):
     def job_run(self) -> JobRun:
         status = self._environment.status_tracker.to_status() if self.status_tracker else None
         faults = JobFaults(tuple(self._transition_observer_faults), tuple(self._output.output_observer_faults))
-        return JobRun(self.metadata, self._phaser.run_info(), faults, status)
+        return JobRun(self.metadata, self._phaser.snapshot(), faults, status)
 
     def run(self):
         self._transition_notification.add_observer(_transition_observer.observer_proxy)
