@@ -3,13 +3,12 @@ import traceback
 from abc import ABC, abstractmethod
 from copy import copy
 from threading import Condition, Event
-from typing import Any, Dict, Iterable, Optional, Callable, Tuple, Generic, List
+from typing import Any, Dict, Iterable, Optional, Callable, Tuple, Generic
 
 import sys
 
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
-from runtools.runcore.util.observer import MultipleExceptions
 from runtools.runcore.run import Phase, PhaseRun, PhaseInfo, Lifecycle, TerminationStatus, TerminationInfo, Run, \
     TerminateRun, FailedRun, RunError, RunState, E, ErrorCategory
 
@@ -215,7 +214,6 @@ class Phaser(Generic[E]):
         self._key_to_phase: Dict[str, Phase[E]] = unique_phases_to_dict(phases)
         self._timestamp_generator = timestamp_generator
         self._lock = Condition()
-        self._non_terminal_errors: List[RunError] = []
         # Guarded by the lock:
         self._lifecycle = lifecycle or Lifecycle()
         self._started = False
@@ -249,7 +247,7 @@ class Phaser(Generic[E]):
     def run_info(self) -> Run:
         with self._lock:
             phases = tuple(p.info() for p in self._key_to_phase.values())
-            return Run(phases, copy(self._lifecycle), self._termination_info, tuple(self._non_terminal_errors))
+            return Run(phases, copy(self._lifecycle), self._termination_info)
 
     def prime(self):
         with self._lock:
@@ -334,23 +332,12 @@ class Phaser(Generic[E]):
         if self.transition_hook is None:
             return
 
-        exceptions = []
         try:
             self.transition_hook(self._lifecycle.previous_run, self._lifecycle.current_run, self._lifecycle.phase_count)
-        except MultipleExceptions as me:
-            exceptions = me.exceptions
-        except Exception as e:
-            exceptions = [e]
-
-        for e in exceptions:
-            stack_trace = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
-            self._non_terminal_errors.append(
-                RunError(
-                    ErrorCategory.TRANSITION_HOOK_ERROR,
-                    f"{e.__class__.__name__}: {e}",
-                    stack_trace
-                )
-            )
+        except Exception:
+            # The exception is not propagated to prevent breaking the run
+            # The implementer should prevent the hook to raise any exceptions
+            traceback.print_exc(file=sys.stderr)
 
     def stop(self):
         with self._lock:
