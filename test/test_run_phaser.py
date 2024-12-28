@@ -3,8 +3,8 @@ from threading import Thread
 import pytest
 
 from runtools.runcore.common import InvalidStateError
-from runtools.runcore.run import TerminationStatus, RunState, \
-    FailedRun, ErrorCategory
+from runtools.runcore.run import TerminationStatus, RunState, FailedRun, Fault
+from runtools.runjob import phaser
 from runtools.runjob.phaser import Phaser, InitPhase, TerminalPhase, WaitWrapperPhase
 from runtools.runjob.test.phaser import TestPhase
 
@@ -19,14 +19,12 @@ TERM = TerminalPhase.ID
 
 @pytest.fixture
 def sut():
-    phaser = Phaser([TestPhase(EXEC1), TestPhase(EXEC2)])
-    return phaser
+    return Phaser([TestPhase(EXEC1), TestPhase(EXEC2)])
 
 
 @pytest.fixture
 def sut_approve():
-    phaser = Phaser([WaitWrapperPhase(TestPhase(APPROVAL, wait=True)), TestPhase(EXEC)])
-    return phaser
+    return Phaser([WaitWrapperPhase(TestPhase(APPROVAL, wait=True)), TestPhase(EXEC)])
 
 
 def test_run_with_approval(sut_approve):
@@ -130,7 +128,7 @@ def test_transition_hook(sut):
 
 
 def test_failed_run_exception(sut):
-    failed_run = FailedRun('FaultType', 'reason')
+    failed_run = FailedRun(Fault('FaultType', 'reason'))
     sut.get_phase(EXEC1).failed_run = failed_run
     sut.prime()
     sut.run()
@@ -154,7 +152,7 @@ def test_exception(sut):
     assert snapshot.termination.status == TerminationStatus.ERROR
     assert (snapshot.lifecycle.phases == [INIT, EXEC1, TERM])
 
-    assert snapshot.termination.error.category == ErrorCategory.PHASE_RUN_ERROR
+    assert snapshot.termination.error.category == phaser.UNCAUGHT_PHASE_RUN_EXCEPTION
     assert snapshot.termination.error.reason == 'InvalidStateError: reason'
 
 

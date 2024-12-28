@@ -10,7 +10,7 @@ import sys
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.run import Phase, PhaseRun, PhaseInfo, Lifecycle, TerminationStatus, TerminationInfo, Run, \
-    TerminateRun, FailedRun, RunError, RunState, E, ErrorCategory
+    TerminateRun, FailedRun, Fault, RunState, E
 
 log = logging.getLogger(__name__)
 
@@ -207,6 +207,8 @@ class RunContext(ABC):
     """Members to be added later"""
 
 
+UNCAUGHT_PHASE_RUN_EXCEPTION = "UNCAUGHT_PHASE_RUN_EXCEPTION"
+
 class Phaser(Generic[E]):
 
     def __init__(self, phases: Iterable[Phase[E]], lifecycle=None, *, timestamp_generator=util.utc_now):
@@ -317,8 +319,7 @@ class Phaser(Generic[E]):
         except FailedRun as e:
             return self._term_info(TerminationStatus.FAILED, failure=e.fault), None
         except Exception as e:
-            stack_trace = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
-            run_error = RunError(ErrorCategory.PHASE_RUN_ERROR, f"{e.__class__.__name__}: {e}", stack_trace)
+            run_error = Fault.from_exception(UNCAUGHT_PHASE_RUN_EXCEPTION, e)
             return self._term_info(TerminationStatus.ERROR, error=run_error), e
         except KeyboardInterrupt as e:
             phase.stop()

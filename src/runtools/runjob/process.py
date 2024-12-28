@@ -15,12 +15,13 @@ from typing import Union, Tuple, Optional
 import sys
 
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import TerminateRun, TerminationStatus, FailedRun
+from runtools.runcore.run import TerminateRun, TerminationStatus, FailedRun, Fault
 from runtools.runjob.phaser import ExecutingPhase
 from runtools.runjob.track import MonitoredEnvironment
 
 log = logging.getLogger(__name__)
 
+NON_ZERO_RETURN_CODE = "NON_ZERO_RETURN_CODE"
 
 class ProcessPhase(ExecutingPhase[MonitoredEnvironment]):
 
@@ -54,7 +55,7 @@ class ProcessPhase(ExecutingPhase[MonitoredEnvironment]):
             if self._stopped or self._process.exitcode < 0:
                 raise TerminateRun(TerminationStatus.STOPPED)
 
-            raise FailedRun('ProcessError', f"Process returned non-zero code {self._process.exitcode}")
+            raise FailedRun(Fault(NON_ZERO_RETURN_CODE, f"Process returned non-zero code {self._process.exitcode}"))
 
     def _run(self):
         with self._capture_stdout():
