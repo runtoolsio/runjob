@@ -57,29 +57,47 @@ from runtools.runjob.output import OutputSink, InMemoryTailBuffer
 
 log = logging.getLogger(__name__)
 
+TRANSITION_OBSERVER_ERROR = "TRANSITION_OBSERVER_ERROR"
+OUTPUT_OBSERVER_ERROR = "OUTPUT_OBSERVER_ERROR"
+
+# TODO `Any` to actual types
 TransitionObserverErrorHook = Callable[[InstanceTransitionObserver, Tuple[Any, ...], Exception], None]
 OutputObserverErrorHook = Callable[[InstanceOutputObserver, Tuple[Any, ...], Exception], None]
 
-def log_observer_error(observer, args, exc):
-    log.error("event=[observer_error] observer=[%s], args=[%s] error=[%s]", observer, args, exc, exc_info=True)
+global_transition_observer_error_hook: Optional[TransitionObserverErrorHook] = None
+global_output_observer_error_hook: Optional[OutputObserverErrorHook] = None
+
+def _global_transition_observer_error_hook(observer, args, exc):
+    if global_transition_observer_error_hook:
+        global_transition_observer_error_hook(observer, args, exc)
+
+def _global_output_observer_error_hook(observer, args, exc):
+    if global_output_observer_error_hook:
+        global_output_observer_error_hook(observer, args, exc)
 
 
-_transition_observer = ObservableNotification[InstanceTransitionObserver](error_hook=log_observer_error)
-_output_observers = ObservableNotification[InstanceOutputObserver](error_hook=log_observer_error)
+_transition_observer = ObservableNotification[InstanceTransitionObserver](error_hook=_global_transition_observer_error_hook)
+_output_observers = ObservableNotification[InstanceOutputObserver](error_hook=_global_output_observer_error_hook)
 
 
 class _JobOutput(Output, OutputSink):
 
-    def __init__(self, metadata, tail_buffer=None, output_observer_err_hook=log_observer_error):
+    def __init__(self, metadata, tail_buffer, output_observer_err_hook):
         super().__init__()
         self.metadata = metadata
         self.tail_buffer = tail_buffer
-        self.output_notification = ObservableNotification[InstanceOutputObserver](error_hook=output_observer_err_hook)
+        self.output_notification =(
+            ObservableNotification[InstanceOutputObserver](error_hook=output_observer_err_hook, force_reraise=True))
+        self.output_observer_faults: List[Fault] = []
 
     def _process_output(self, output_line):
         if self.tail_buffer:
             self.tail_buffer.add_line(output_line)
-        self.output_notification.observer_proxy.new_instance_output(self.metadata, output_line)
+        try:
+            self.output_notification.observer_proxy.new_instance_output(self.metadata, output_line)
+        except MultipleExceptions as me:
+            for e in me:
+                self.output_observer_faults.append(Fault.from_exception(OUTPUT_OBSERVER_ERROR, e))
 
     def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
         if not self.tail_buffer:
@@ -105,8 +123,8 @@ class JobEnvironment(MonitoredEnvironment):
 
 def create(job_id, phases, status_tracker=None,
            *, instance_id=None, run_id=None, tail_buffer=None,
-           transition_observer_error_hook: Optional[TransitionObserverErrorHook]=None,
-           output_observer_error_hook: Optional[OutputObserverErrorHook]=None,
+           transition_observer_error_hook: TransitionObserverErrorHook=_global_transition_observer_error_hook,
+           output_observer_error_hook: OutputObserverErrorHook=_global_output_observer_error_hook,
            **user_params) -> JobInstance:
     if not job_id:
         raise ValueError("Job ID is mandatory")
@@ -120,8 +138,6 @@ def create(job_id, phases, status_tracker=None,
                         transition_observer_error_hook, output_observer_error_hook,
                         user_params)
     return inst
-
-TRANSITION_OBSERVER_ERROR = "TRANSITION_OBSERVER_ERROR"
 
 
 class _JobInstance(JobInstance):
@@ -139,7 +155,6 @@ class _JobInstance(JobInstance):
             ObservableNotification[InstanceTransitionObserver](error_hook=transition_observer_err_hook, force_reraise=True))
 
         self._transition_observer_faults: List[Fault] = []
-        self._output_observer_faults: List[Fault] = []
         # TODO Move the below out of constructor?
         self._phaser.transition_hook = self._transition_hook
         self._phaser.prime()  # TODO
@@ -173,7 +188,7 @@ class _JobInstance(JobInstance):
 
     def job_run(self) -> JobRun:
         status = self._environment.status_tracker.to_status() if self.status_tracker else None
-        faults = JobFaults(tuple(self._transition_observer_faults), tuple(self._output_observer_faults))
+        faults = JobFaults(tuple(self._transition_observer_faults), tuple(self._output.output_observer_faults))
         return JobRun(self.metadata, self._phaser.run_info(), faults, status)
 
     def run(self):
