@@ -43,14 +43,14 @@ State lock
 
 """
 import logging
-from typing import Callable, Tuple, Any, Optional
+from typing import Callable, Tuple, Any, Optional, List
 
 from runtools.runcore import util
 from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserver,
-                                  InstanceOutputObserver, JobInstanceMetadata)
+                                  InstanceOutputObserver, JobInstanceMetadata, JobFaults)
 from runtools.runcore.output import Output, TailNotSupportedError, Mode
-from runtools.runcore.run import PhaseRun, Outcome, RunState
-from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
+from runtools.runcore.run import PhaseRun, Outcome, RunState, Fault
+from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification, MultipleExceptions
 from runtools.runjob import Phaser
 from runtools.runjob.track import MonitoredEnvironment, StatusTracker
 from runtools.runjob.output import OutputSink, InMemoryTailBuffer
@@ -121,6 +121,8 @@ def create(job_id, phases, status_tracker=None,
                         user_params)
     return inst
 
+TRANSITION_OBSERVER_ERROR = "TRANSITION_OBSERVER_ERROR"
+
 
 class _JobInstance(JobInstance):
 
@@ -130,12 +132,14 @@ class _JobInstance(JobInstance):
         parameters = {}
         self._metadata = JobInstanceMetadata(job_id, run_id or instance_id, instance_id, parameters, user_params)
         self._phaser = phaser
-        self._output = _JobOutput(self._metadata, tail_buffer)
+        self._output = _JobOutput(self._metadata, tail_buffer, output_observer_err_hook)
         self._environment = JobEnvironment(status_tracker, self._output)
 
         self._transition_notification = (
             ObservableNotification[InstanceTransitionObserver](error_hook=transition_observer_err_hook, force_reraise=True))
 
+        self._transition_observer_faults: List[Fault] = []
+        self._output_observer_faults: List[Fault] = []
         # TODO Move the below out of constructor?
         self._phaser.transition_hook = self._transition_hook
         self._phaser.prime()  # TODO
@@ -168,8 +172,9 @@ class _JobInstance(JobInstance):
         return self._phaser.get_phase(phase_id, phase_type)
 
     def job_run(self) -> JobRun:
-        tracked_task = self._environment.status_tracker.to_status() if self.status_tracker else None
-        return JobRun(self.metadata, self._phaser.run_info(), tracked_task)
+        status = self._environment.status_tracker.to_status() if self.status_tracker else None
+        faults = JobFaults(tuple(self._transition_observer_faults), tuple(self._output_observer_faults))
+        return JobRun(self.metadata, self._phaser.run_info(), faults, status)
 
     def run(self):
         self._transition_notification.add_observer(_transition_observer.observer_proxy)
@@ -229,7 +234,11 @@ class _JobInstance(JobInstance):
 
             log.info(self._log('run_terminated', "termination_status=[{}]", termination.status.name))
 
-        self._transition_notification.observer_proxy.new_instance_phase(snapshot, old_phase, new_phase, ordinal)
+        try:
+            self._transition_notification.observer_proxy.new_instance_phase(snapshot, old_phase, new_phase, ordinal)
+        except MultipleExceptions as me:
+            for e in me:
+                self._transition_observer_faults.append(Fault.from_exception(TRANSITION_OBSERVER_ERROR, e))
 
     def add_observer_output(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         self._output.output_notification.add_observer(observer, priority)
