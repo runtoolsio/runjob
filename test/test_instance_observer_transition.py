@@ -57,7 +57,7 @@ def test_observer_raises_exception():
     job_instance.add_observer_transition(observer)
     job_instance.run()
     assert execution.completed
-    assert job_instance.job_run().termination.status == TerminationStatus.COMPLETED
+    assert job_instance.snapshot().termination.status == TerminationStatus.COMPLETED
 
 
 class ExceptionRaisingObserver(InstanceTransitionObserver):

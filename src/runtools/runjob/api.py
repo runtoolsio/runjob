@@ -67,7 +67,7 @@ class InstancesGetMethod(JsonRpcMethod):
         return "instances.get"
 
     def execute(self, job_instance, params):
-        return {"job_run": job_instance.job_run().serialize()}
+        return {"job_run": job_instance.snapshot().serialize()}
 
 
 class InstancesApproveMethod(JsonRpcMethod):

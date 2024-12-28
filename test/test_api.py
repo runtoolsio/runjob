@@ -72,8 +72,8 @@ def test_stop(job_instances):
     assert instances[0].stop_result == StopResult.STOP_INITIATED
 
     j1, j2 = job_instances
-    assert j1.job_run().termination.status == TerminationStatus.STOPPED
-    assert not j2.job_run().termination
+    assert j1.snapshot().termination.status == TerminationStatus.STOPPED
+    assert not j2.snapshot().termination
 
 
 def test_tail(job_instances):

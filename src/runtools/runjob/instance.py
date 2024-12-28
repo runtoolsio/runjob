@@ -49,7 +49,7 @@ from runtools.runcore import util
 from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserver,
                                   InstanceOutputObserver, JobInstanceMetadata, JobFaults)
 from runtools.runcore.output import Output, TailNotSupportedError, Mode
-from runtools.runcore.run import PhaseRun, Outcome, RunState, Fault
+from runtools.runcore.run import PhaseRun, Outcome, RunState, Fault, PhaseInfo
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification, MultipleExceptions
 from runtools.runjob import Phaser
 from runtools.runjob.track import MonitoredEnvironment, StatusTracker
@@ -172,21 +172,14 @@ class _JobInstance(JobInstance):
         return self._environment.status_tracker
 
     @property
-    def current_phase(self):
-        return self._phaser.current_phase_id
-
-    @property
-    def phases(self):
-        return self._phaser.phases
+    def phases(self) -> List[PhaseInfo]:
+        return [phase.info() for phase in self._phaser.phases.values()]
 
     @property
     def output(self):
         return self._environment.output_sink
 
-    def get_phase(self, phase_id: str, phase_type: str = None):
-        return self._phaser.get_phase(phase_id, phase_type)
-
-    def job_run(self) -> JobRun:
+    def snapshot(self) -> JobRun:
         status = self._environment.status_tracker.to_status() if self.status_tracker else None
         faults = JobFaults(tuple(self._transition_observer_faults), tuple(self._output.output_observer_faults))
         return JobRun(self.metadata, self._phaser.snapshot(), faults, status)
@@ -230,7 +223,7 @@ class _JobInstance(JobInstance):
 
     def _transition_hook(self, old_phase: PhaseRun, new_phase: PhaseRun, ordinal):
         """Executed under phaser transition lock"""
-        snapshot = self.job_run()
+        snapshot = self.snapshot()
         termination = snapshot.termination
 
         log.info(self._log('new_phase', "new_phase=[{}] prev_phase=[{}] run_state=[{}]",
