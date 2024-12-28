@@ -41,7 +41,7 @@ def test_run_with_approval(sut_approve):
 
     wait_wrapper.wrapped_phase.wait.set()
     run_thread.join(1)
-    assert (sut_approve.snapshot().lifecycle.phases == [INIT, APPROVAL, EXEC, TERM])
+    assert (sut_approve.snapshot().lifecycle.phase_ids == [INIT, APPROVAL, EXEC, TERM])
 
 
 def test_post_prime(sut):
@@ -55,12 +55,12 @@ def test_post_prime(sut):
 def test_empty_phaser():
     empty = Phaser([])
     empty.prime()
-    assert empty.snapshot().lifecycle.phases == [INIT]
+    assert empty.snapshot().lifecycle.phase_ids == [INIT]
 
     empty.run()
 
     snapshot = empty.snapshot()
-    assert snapshot.lifecycle.phases == [INIT, TERM]
+    assert snapshot.lifecycle.phase_ids == [INIT, TERM]
     assert snapshot.termination.status == TerminationStatus.COMPLETED
 
 
@@ -68,7 +68,7 @@ def test_stop_before_prime(sut):
     sut.stop()
 
     snapshot = sut.snapshot()
-    assert snapshot.lifecycle.phases == [TERM]
+    assert snapshot.lifecycle.phase_ids == [TERM]
     assert snapshot.termination.status == TerminationStatus.STOPPED
 
 
@@ -77,7 +77,7 @@ def test_stop_before_run(sut):
     sut.stop()
 
     snapshot = sut.snapshot()
-    assert snapshot.lifecycle.phases == [INIT, TERM]
+    assert snapshot.lifecycle.phase_ids == [INIT, TERM]
     assert snapshot.termination.status == TerminationStatus.STOPPED
 
 
@@ -92,7 +92,7 @@ def test_stop_in_run(sut_approve):
     run_thread.join(1)  # Let the run end
 
     run = sut_approve.snapshot()
-    assert (run.lifecycle.phases == [INIT, APPROVAL, TERM])
+    assert (run.lifecycle.phase_ids == [INIT, APPROVAL, TERM])
     assert run.termination.status == TerminationStatus.CANCELLED
 
 
@@ -103,7 +103,7 @@ def test_premature_termination(sut):
 
     run = sut.snapshot()
     assert run.termination.status == TerminationStatus.FAILED
-    assert (run.lifecycle.phases == [INIT, EXEC1, TERM])
+    assert (run.lifecycle.phase_ids == [INIT, EXEC1, TERM])
 
 
 def test_transition_hook(sut):
@@ -135,7 +135,7 @@ def test_failed_run_exception(sut):
 
     snapshot = sut.snapshot()
     assert snapshot.termination.status == TerminationStatus.FAILED
-    assert (snapshot.lifecycle.phases == [INIT, EXEC1, TERM])
+    assert (snapshot.lifecycle.phase_ids == [INIT, EXEC1, TERM])
 
     assert snapshot.termination.failure == failed_run.fault
 
@@ -153,7 +153,7 @@ def test_exception(sut):
 
     snapshot = sut.snapshot()
     assert snapshot.termination.status == TerminationStatus.ERROR
-    assert (snapshot.lifecycle.phases == [INIT, EXEC1, TERM])
+    assert (snapshot.lifecycle.phase_ids == [INIT, EXEC1, TERM])
 
     assert snapshot.termination.error.category == phaser.UNCAUGHT_PHASE_RUN_EXCEPTION
     assert snapshot.termination.error.reason == 'InvalidStateError: reason'
