@@ -13,8 +13,8 @@ from runtools.runcore import util, InvalidConfiguration
 from runtools.runcore.job import JobInstance
 from runtools.runcore.util import lock
 from runtools.runcore.util.socket import SocketClient
+from runtools.runjob import instance
 from runtools.runjob.featurize import FeaturedContextBuilder
-from runtools.runjob.phaser import Phaser
 from runtools.runjob.instance import _JobInstance
 
 __version__ = "0.11.0"
@@ -46,13 +46,13 @@ def configure(**kwargs):
     _persistence = tuple(dbs)
 
 
-def job_instance(job_id, phases, output=None, task_tracker=None, *, run_id=None, instance_id=None, **user_params)\
+def job_instance(job_id, phases, output=None, task_tracker=None, *, run_id=None, instance_id=None, **user_params) \
         -> _JobInstance:
     instance_id = instance_id or util.unique_timestamp_hex()
     with FeaturedContextBuilder().standard_features(plugins=_plugins).build() as ctx:
-        phaser = Phaser(phases)
-        instance = _JobInstance(job_id, instance_id, phaser, output, task_tracker, run_id=run_id, **user_params)
-        return ctx.add(instance)
+        inst = instance.create(job_id, phases, task_tracker, instance_id=instance_id, tail_buffer=output, run_id=run_id,
+                               **user_params)
+        return ctx.add(inst)
 
 
 def run_job(job_id, phases, output=None, task_tracker=None, *, run_id=None, instance_id=None, **user_params):
@@ -81,18 +81,6 @@ def run(job_id, execution, sync_=None, state_locker=lock.default_queue_locker(),
     return instance
 
 
-def job_instance_uncoordinated(job_id, exec_, *, instance_id=None, **user_params) \
-        -> JobInstance:
-    return _JobInstance(job_id, instance_id, Phaser([exec_]), run_id=instance_id,
-                        user_params=user_params)
-
-
-def run_uncoordinated(job_id, exec_, *, instance_id=None, **user_params) -> JobInstance:
-    instance = job_instance_uncoordinated(job_id, exec_, instance_id=instance_id, user_params=user_params)
-    instance.run()
-    return instance
-
-
 def clean_stale_sockets(file_extension) -> List[str]:
     cleaned = []
 
@@ -107,4 +95,3 @@ def clean_stale_sockets(file_extension) -> List[str]:
         cleaned.append(stale_socket.name)
 
     return cleaned
-
