@@ -11,7 +11,7 @@ from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion
 from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
 from runtools.runcore.listening import InstanceTransitionReceiver
 from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, TerminateRun, PhaseInfo, \
-    register_phase_info, PhaseControl
+    register_phase_info, control_api
 from runtools.runcore.util import lock
 from runtools.runjob.phaser import RunContext, AbstractPhase
 from runtools.runjob.track import TrackedEnvironment
@@ -25,14 +25,6 @@ class CoordTypes(Enum):
     DEPENDENCY = 'DEPENDENCY'
     WAITING = 'WAITING'
     QUEUE = 'QUEUE'
-
-
-class ApprovalPhaseControl(PhaseControl):
-    def __init__(self, phase):
-        self._phase = phase
-
-    def approve(self):
-        return self._phase.approve()
 
 
 class ApprovalPhase(AbstractPhase[TrackedEnvironment]):
@@ -56,28 +48,27 @@ class ApprovalPhase(AbstractPhase[TrackedEnvironment]):
         return RunState.PENDING
 
     def run(self, env: TrackedEnvironment, run_ctx: RunContext):
-        op = env.status_tracker.operation('Waiting for approval')
+        finished = env.status_tracker.operation('Waiting for approval').finished
         # TODO Add support for denial request (rejection)
 
         approved = self._event.wait(self._timeout or None)
         if self._stopped:
-            op.finished('Approval cancelled')
+            finished('Approval cancelled')
             return
         if not approved:
-            op.finished('Approval timed out')
+            finished('Approval timed out')
             raise TerminateRun(TerminationStatus.TIMEOUT)
 
-        op.finished("Approved")
+        finished("Approved")
 
+    @control_api
     def approve(self):
         self._event.set()
 
-    def is_approved(self):
-        self._event.is_set() and not self._stopped
-
+    @control_api
     @property
-    def control(self) -> ApprovalPhaseControl:
-        return ApprovalPhaseControl(self)
+    def approved(self):
+        return self._event.is_set() and not self._stopped
 
     def stop(self):
         self._stopped = True

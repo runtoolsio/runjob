@@ -2,10 +2,10 @@ from threading import Event
 from typing import Optional
 
 from runtools.runcore.common import InvalidStateError
-from runtools.runcore.run import RunState, TerminationStatus, TerminateRun, PhaseControl
+from runtools.runcore.run import RunState, TerminationStatus, TerminateRun, control_api
+from runtools.runjob.output import OutputSink
 from runtools.runjob.phaser import RunContext, AbstractPhase
 from runtools.runjob.track import MonitoredEnvironment, StatusTracker
-from runtools.runjob.output import OutputSink
 
 
 class TestEnvironment(MonitoredEnvironment):
@@ -36,7 +36,7 @@ class FakeRunContext(RunContext):
         self.output.append((output, is_err))
 
 
-class TestPhase(AbstractPhase, PhaseControl):
+class TestPhase(AbstractPhase):
 
     def __init__(self, phase_id='test_phase', *, wait=False, output_text=None, raise_exc=None):
         super().__init__(phase_id)
@@ -61,15 +61,12 @@ class TestPhase(AbstractPhase, PhaseControl):
         else:
             return TerminationStatus.STOPPED
 
+    @control_api
     def release(self):
         if self.wait:
             self.wait.set()
         else:
             raise InvalidStateError('Wait not set')
-
-    @property
-    def control(self):
-        return self
 
     def run(self, env, run_ctx):
         if self.wait:
