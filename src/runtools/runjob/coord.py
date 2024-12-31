@@ -11,7 +11,7 @@ from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion
 from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
 from runtools.runcore.listening import InstanceTransitionReceiver
 from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, TerminateRun, PhaseInfo, \
-    register_phase_info
+    register_phase_info, PhaseControl
 from runtools.runcore.util import lock
 from runtools.runjob.phaser import RunContext, AbstractPhase
 from runtools.runjob.track import TrackedEnvironment
@@ -25,6 +25,14 @@ class CoordTypes(Enum):
     DEPENDENCY = 'DEPENDENCY'
     WAITING = 'WAITING'
     QUEUE = 'QUEUE'
+
+
+class ApprovalPhaseControl(PhaseControl):
+    def __init__(self, phase):
+        self._phase = phase
+
+    def approve(self):
+        return self._phase.approve()
 
 
 class ApprovalPhase(AbstractPhase[TrackedEnvironment]):
@@ -66,6 +74,10 @@ class ApprovalPhase(AbstractPhase[TrackedEnvironment]):
 
     def is_approved(self):
         self._event.is_set() and not self._stopped
+
+    @property
+    def control(self) -> ApprovalPhaseControl:
+        return ApprovalPhaseControl(self)
 
     def stop(self):
         self._stopped = True

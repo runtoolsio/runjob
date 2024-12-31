@@ -21,6 +21,6 @@ def test_exec_time_warning(job_instance):
 
     time.sleep(0.6)
 
-    job_instance.get_phase('p1').release()  # TODO PhaseControl
+    job_instance.get_phase_control('p1').release()
     run_thread.join(1)
     assert job_instance.status_tracker.to_status().warnings

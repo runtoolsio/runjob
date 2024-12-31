@@ -213,6 +213,9 @@ class _JobInstance(JobInstance):
     def wait_for_transition(self, phase_name=None, run_state=RunState.NONE, *, timeout=None):
         return self._phaser.wait_for_transition(phase_name, run_state, timeout=timeout)
 
+    def get_phase_control(self, phase_id: str):
+        return self._phaser.get_phase(phase_id).control
+
     def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, notify_on_register=False):
         if notify_on_register:
             """TODO"""
