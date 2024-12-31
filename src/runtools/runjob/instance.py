@@ -43,6 +43,7 @@ State lock
 
 """
 import logging
+from threading import Thread
 from typing import Callable, Tuple, Any, Optional, List
 
 from runtools.runcore import util
@@ -175,8 +176,8 @@ class _JobInstance(JobInstance):
     def phases(self) -> List[PhaseInfo]:
         return [phase.info() for phase in self._phaser.phases.values()]
 
-    def get_phase_control(self, phase_id: str):
-        return self._phaser.get_phase(phase_id).control
+    def get_phase_control(self, phase_id: str, phase_type: str = None):
+        return self._phaser.get_phase(phase_id, phase_type).control
 
     @property
     def output(self):
@@ -196,6 +197,17 @@ class _JobInstance(JobInstance):
         finally:
             self._transition_notification.remove_observer(_transition_observer.observer_proxy)
             self._output.output_notification.remove_observer(_output_observers.observer_proxy)
+
+    def run_in_new_thread(self, daemon=False):
+        """
+        Run the job.
+
+        This method is not expected to raise any errors. In case of any failure the error details can be retrieved
+        by calling `exec_error` method.
+        """
+
+        t = Thread(target=self.run, daemon=daemon)
+        t.start()
 
     def stop(self):
         """

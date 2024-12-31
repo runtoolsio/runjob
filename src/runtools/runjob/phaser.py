@@ -235,6 +235,7 @@ class Phaser(Generic[E]):
             raise KeyError(f"No phase found with id '{phase_id}'")
 
         if phase_type is not None and phase.type != phase_type:
+            # TODO More specific exc
             raise ValueError(f"Phase type mismatch: Expected '{phase_type}', but found '{phase.type}'")
 
         return phase
@@ -296,7 +297,6 @@ class Phaser(Generic[E]):
         self._execute_transition_hook()  # Hook exec without lock
 
         if exc:
-            # TODO Wrap
             raise exc
 
     def _next_phase(self, phase):

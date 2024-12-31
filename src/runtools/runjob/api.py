@@ -9,7 +9,7 @@ from runtools.runcore import paths
 from runtools.runcore.client import StopResult
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.job import JobInstanceManager
-from runtools.runcore.run import util
+from runtools.runcore.run import util, PhaseControlNotAvailable
 from runtools.runcore.util.socket import SocketServer
 from runtools.runjob.coord import CoordTypes
 
@@ -82,13 +82,15 @@ class InstancesApproveMethod(JsonRpcMethod):
                 phase = job_instance.get_phase_control(phase_id)
             except KeyError:
                 return {"approved": False, "reason": f"Phase `{phase_id}` to approve not found"}
+            except PhaseControlNotAvailable:
+                return {"approved": False, "reason": f"Phase `{phase_id}` does not provide control to support approval"}
         else:
             phase = job_instance.current_phase
 
         try:
             phase.approve()
         except AttributeError:
-            return {"approved": False, "reason": f"Phase `{phase.id}` does not support approval"}
+            return {"approved": False, "reason": f"Phase `{phase_id}` does not support approval"}
 
         return {"approved": True}
 
