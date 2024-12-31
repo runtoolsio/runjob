@@ -79,7 +79,7 @@ class InstancesApproveMethod(JsonRpcMethod):
     def execute(self, job_instance, params):
         if phase_id := params.get('phase_id'):
             try:
-                phase = job_instance.get_phase(phase_id)
+                phase = job_instance.get_phase_control(phase_id)
             except KeyError:
                 return {"approved": False, "reason": f"Phase `{phase_id}` to approve not found"}
         else:
