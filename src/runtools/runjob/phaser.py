@@ -9,7 +9,7 @@ import sys
 
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
-from runtools.runcore.run import Phase, PhaseRun, PhaseInfo, Lifecycle, TerminationStatus, TerminationInfo, Run, \
+from runtools.runcore.run import Phase, PhaseRun, Lifecycle, TerminationStatus, TerminationInfo, Run, \
     TerminateRun, FailedRun, Fault, RunState, E, PhaseExecutionError
 
 log = logging.getLogger(__name__)
@@ -59,10 +59,6 @@ class AbstractPhase(Phase[E], ABC):
     @property
     def name(self):
         return self._phase_name
-
-    def info(self) -> PhaseInfo:
-        return PhaseInfo(
-            self.id, self.type, self.run_state, self._phase_name, self._protection_id, self._last_protected_phase)
 
     @property
     @abstractmethod
@@ -249,7 +245,7 @@ class Phaser(Generic[E]):
 
     def snapshot(self) -> Run:
         with self._lock:
-            phases = tuple(p.info() for p in self._key_to_phase.values())
+            phases = tuple(p.info for p in self._key_to_phase.values())
             return Run(phases, copy(self._lifecycle), self._termination_info)
 
     def prime(self):

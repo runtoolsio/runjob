@@ -5,13 +5,12 @@ from enum import Enum, auto
 from threading import Condition, Event, Lock
 from typing import Dict
 
-import runtools.runcore
+from runtools import runcore
 from runtools.runcore import paths
 from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion
 from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
 from runtools.runcore.listening import InstanceTransitionReceiver
-from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, TerminateRun, PhaseInfo, \
-    register_phase_info, control_api
+from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, TerminateRun, PhaseInfo, control_api
 from runtools.runcore.util import lock
 from runtools.runjob.phaser import RunContext, AbstractPhase
 from runtools.runjob.track import TrackedEnvironment
@@ -88,7 +87,7 @@ class NoOverlapPhase(AbstractPhase[TrackedEnvironment]):
     def __init__(self, no_overlap_id, phase_id=None, phase_name='No Overlap Check',
                  *, until_phase=None, locker_factory=lock.default_locker_factory()):
         if not no_overlap_id:
-            raise ValueError("no_overlap_id cannot be empty")
+            raise ValueError("Parameter `no_overlap_id` cannot be empty")
 
         super().__init__(phase_id or no_overlap_id, phase_name,
                          protection_id=no_overlap_id, last_protected_phase=until_phase)
@@ -103,17 +102,17 @@ class NoOverlapPhase(AbstractPhase[TrackedEnvironment]):
         return RunState.EVALUATING
 
     def run(self, env: TrackedEnvironment, run_ctx):
-        op = env.status_tracker.operation("No overlap check")
+        finished = env.status_tracker.operation("No overlap check").finished
 
         with self._locker():
             no_overlap_filter = PhaseCriterion(phase_type=CoordTypes.NO_OVERLAP, protection_id=self._protection_id)
             c = JobRunCriteria(phase_criteria=no_overlap_filter)
-            runs, _ = runtools.runcore.get_active_runs(c)
+            runs, _ = runcore.get_active_runs(c)
             if any(r for r in runs if r.in_protected_phase(CoordTypes.NO_OVERLAP, self._protection_id)):
-                op.finished("Overlap found")
+                finished("Overlap found")
                 raise TerminateRun(TerminationStatus.OVERLAP)
 
-        op.finished("No overlap found")
+        finished("No overlap found")
 
     def stop(self):
         pass
@@ -145,7 +144,7 @@ class DependencyPhase(AbstractPhase[TrackedEnvironment]):
     def run(self, env: TrackedEnvironment, run_ctx):
         op = env.status_tracker.operation("Dependency check")
 
-        runs, _ = runtools.runcore.get_active_runs()
+        runs, _ = runcore.get_active_runs()
         matches = [r.metadata for r in runs if self._dependency_match(r.metadata)]
         if not matches:
             op.finished(f"Required dependency `{self._dependency_match}` not found")
@@ -323,7 +322,6 @@ class ExecutionGroupLimit:
     max_executions: int
 
 
-@register_phase_info(CoordTypes.QUEUE)
 @dataclass(frozen=True)
 class ExecutionQueueInfo(PhaseInfo):
     queued_state: QueuedState = QueuedState.NONE  # TODO Make mandatory
@@ -436,7 +434,7 @@ class ExecutionQueue(AbstractPhase[TrackedEnvironment], InstanceTransitionObserv
     def _dispatch_next(self):
         phase_filter = PhaseCriterion(phase_type=CoordTypes.QUEUE, protection_id=self._queue_id)
         criteria = JobRunCriteria(phase_criteria=phase_filter)
-        runs, _ = runtools.runcore.get_active_runs(criteria)
+        runs, _ = runcore.get_active_runs(criteria)
 
         # TODO Sort by phase start
         sorted_group_runs = JobRuns(sorted(runs, key=lambda job_run: job_run.lifecycle.created_at))
@@ -451,7 +449,7 @@ class ExecutionQueue(AbstractPhase[TrackedEnvironment], InstanceTransitionObserv
 
         # self._log.debug("event[dispatching] free_slots=[%d]", free_slots)
         for next_proceed in sorted_group_runs.queued:
-            signal_resp = runtools.runcore.signal_dispatch(JobRunCriteria.match_run(next_proceed), self._queue_id)
+            signal_resp = runcore.signal_dispatch(JobRunCriteria.match_run(next_proceed), self._queue_id)
             for r in signal_resp.successful:
                 if r.dispatched:
                     # self._log.debug("event[dispatched] run=[%s]", next_proceed.metadata)
