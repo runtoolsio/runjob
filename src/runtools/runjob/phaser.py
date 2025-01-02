@@ -24,61 +24,26 @@ def unique_phases_to_dict(phases) -> Dict[str, Phase]:
     return id_to_phase
 
 
-class AbstractPhase(Phase[E], ABC):
-    """
-    TODO repr
-    """
 
-    def __init__(self, phase_id: str, phase_name: Optional[str] = None, *,
-                 protection_id=None, last_protected_phase=None):
-        self._phase_id = phase_id
-        self._phase_name = phase_name
-        self._protection_id = protection_id
-        self._last_protected_phase = last_protected_phase
+class NoOpsPhase(Phase[Any], ABC):
+
+    def __init__(self, phase_id, phase_type, run_state, stop_status):
+        self._id = phase_id
+        self._type = phase_type
+        self._state = run_state
+        self._stop_status = stop_status
 
     @property
     def id(self):
-        return self._phase_id
+        return self._id
 
     @property
-    @abstractmethod
     def type(self) -> str:
-        """
-        The type of this phase. Should be defined as a constant value in each implementing class.
-        """
-        pass
+        return self._type
 
     @property
-    @abstractmethod
     def run_state(self) -> RunState:
-        """
-        The run state of this phase. Should be defined as a constant value in each implementing class.
-        """
-        pass
-
-    @property
-    def name(self):
-        return self._phase_name
-
-    @property
-    @abstractmethod
-    def stop_status(self):
-        pass
-
-    @abstractmethod
-    def run(self, env: E, ctx):
-        pass
-
-    @abstractmethod
-    def stop(self):
-        pass
-
-
-class NoOpsPhase(AbstractPhase[Any], ABC):
-
-    def __init__(self, phase_id, stop_status):
-        super().__init__(phase_id)
-        self._stop_status = stop_status
+        return self._state
 
     @property
     def stop_status(self):
@@ -94,22 +59,15 @@ class NoOpsPhase(AbstractPhase[Any], ABC):
 
 
 class InitPhase(NoOpsPhase):
+
     ID = 'Init'
     TYPE = 'INIT'
 
     def __init__(self):
-        super().__init__(InitPhase.ID, TerminationStatus.STOPPED)
-
-    @property
-    def type(self) -> str:
-        return InitPhase.TYPE
-
-    @property
-    def run_state(self) -> RunState:
-        return RunState.CREATED
+        super().__init__(InitPhase.ID, InitPhase.TYPE, RunState.CREATED, TerminationStatus.STOPPED)
 
 
-class ExecutingPhase(AbstractPhase[E], ABC):
+class ExecutingPhase(Phase[E], ABC):
     """
     Abstract base class for phases that execute some work.
     Implementations should provide concrete run() and stop() methods
@@ -118,11 +76,20 @@ class ExecutingPhase(AbstractPhase[E], ABC):
     TYPE = 'EXEC'
 
     def __init__(self, phase_id: str, phase_name: Optional[str] = None):
-        super().__init__(phase_id, phase_name)
+        self._id = phase_id
+        self._name = phase_name
+
+    @property
+    def id(self):
+        return self._id
 
     @property
     def type(self) -> str:
         return ExecutingPhase.TYPE
+
+    @property
+    def name(self) -> Optional[str]:
+        return self._name
 
     @property
     def run_state(self) -> RunState:
@@ -158,23 +125,18 @@ class TerminalPhase(NoOpsPhase):
     TYPE = 'TERMINAL'
 
     def __init__(self):
-        super().__init__(TerminalPhase.ID, TerminationStatus.NONE)
-
-    @property
-    def type(self) -> str:
-        return TerminalPhase.TYPE
-
-    @property
-    def run_state(self) -> RunState:
-        return RunState.ENDED
+        super().__init__(TerminalPhase.ID, TerminationStatus.NONE, RunState.ENDED, TerminationStatus.NONE)
 
 
-class WaitWrapperPhase(AbstractPhase[E]):
+class WaitWrapperPhase(Phase[E]):
 
     def __init__(self, wrapped_phase: Phase[E]):
-        super().__init__(wrapped_phase.id)
         self.wrapped_phase = wrapped_phase
         self._run_event = Event()
+
+    @property
+    def id(self):
+        return self.wrapped_phase.id
 
     @property
     def type(self) -> str:

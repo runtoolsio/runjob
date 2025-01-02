@@ -2,9 +2,9 @@ from threading import Event
 from typing import Optional
 
 from runtools.runcore.common import InvalidStateError
-from runtools.runcore.run import RunState, TerminationStatus, TerminateRun, control_api
+from runtools.runcore.run import RunState, TerminationStatus, TerminateRun, control_api, Phase
 from runtools.runjob.output import OutputSink
-from runtools.runjob.phaser import RunContext, AbstractPhase
+from runtools.runjob.phaser import RunContext
 from runtools.runjob.track import MonitoredEnvironment, StatusTracker
 
 
@@ -36,15 +36,19 @@ class FakeRunContext(RunContext):
         self.output.append((output, is_err))
 
 
-class TestPhase(AbstractPhase):
+class TestPhase(Phase):
 
     def __init__(self, phase_id='test_phase', *, wait=False, output_text=None, raise_exc=None):
-        super().__init__(phase_id)
+        self._id = phase_id
         self.fail = False
         self.failed_run = None
         self.exception = raise_exc
         self.wait: Optional[Event] = Event() if wait else None
         self.completed = False
+
+    @property
+    def id(self):
+        return self._id
 
     @property
     def type(self) -> str:

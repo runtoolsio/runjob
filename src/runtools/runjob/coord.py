@@ -3,16 +3,16 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 from threading import Condition, Event, Lock
-from typing import Dict
+from typing import Optional
 
 from runtools import runcore
 from runtools.runcore import paths
 from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion
 from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
 from runtools.runcore.listening import InstanceTransitionReceiver
-from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, TerminateRun, PhaseInfo, control_api
+from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, TerminateRun, control_api, Phase
 from runtools.runcore.util import lock
-from runtools.runjob.phaser import RunContext, AbstractPhase
+from runtools.runjob.phaser import RunContext
 from runtools.runjob.track import TrackedEnvironment
 
 log = logging.getLogger(__name__)
@@ -26,17 +26,22 @@ class CoordTypes(Enum):
     QUEUE = 'QUEUE'
 
 
-class ApprovalPhase(AbstractPhase[TrackedEnvironment]):
+class ApprovalPhase(Phase[TrackedEnvironment]):
     """
     Approval parameters (incl. timeout) + approval eval as separate objects
     TODO: parameters
     """
 
     def __init__(self, phase_id='approval', phase_name='Approval', *, timeout=0):
-        super().__init__(phase_id, phase_name)
+        self._id = phase_id
+        self._name = phase_name
         self._timeout = timeout
         self._event = Event()
         self._stopped = False
+
+    @property
+    def id(self):
+        return self._id
 
     @property
     def type(self) -> str:
@@ -45,6 +50,10 @@ class ApprovalPhase(AbstractPhase[TrackedEnvironment]):
     @property
     def run_state(self) -> RunState:
         return RunState.PENDING
+
+    @property
+    def name(self) -> Optional[str]:
+        return self._name
 
     def run(self, env: TrackedEnvironment, run_ctx: RunContext):
         finished = env.status_tracker.operation('Waiting for approval').finished
@@ -78,20 +87,24 @@ class ApprovalPhase(AbstractPhase[TrackedEnvironment]):
         return TerminationStatus.CANCELLED
 
 
-class NoOverlapPhase(AbstractPhase[TrackedEnvironment]):
+class MutualExclusionPhase(Phase[TrackedEnvironment]):
     """
     TODO Docs
     1. Set continue flag to be checked
     """
 
-    def __init__(self, no_overlap_id, phase_id=None, phase_name='No Overlap Check',
+    def __init__(self, exclusion_id, phase_id=None, phase_name='Mutual Exclusion Check',
                  *, until_phase=None, locker_factory=lock.default_locker_factory()):
-        if not no_overlap_id:
+        if not exclusion_id:
             raise ValueError("Parameter `no_overlap_id` cannot be empty")
+        self._id = phase_id or exclusion_id
+        self._name = phase_name
+        self._until_phase = until_phase
+        self._locker = locker_factory(paths.lock_path(f"noo-{exclusion_id}.lock", True))
 
-        super().__init__(phase_id or no_overlap_id, phase_name,
-                         protection_id=no_overlap_id, last_protected_phase=until_phase)
-        self._locker = locker_factory(paths.lock_path(f"noo-{no_overlap_id}.lock", True))
+    @property
+    def id(self):
+        return self._id
 
     @property
     def type(self) -> str:
@@ -100,6 +113,10 @@ class NoOverlapPhase(AbstractPhase[TrackedEnvironment]):
     @property
     def run_state(self) -> RunState:
         return RunState.EVALUATING
+
+    @property
+    def name(self) -> Optional[str]:
+        return self._name
 
     def run(self, env: TrackedEnvironment, run_ctx):
         finished = env.status_tracker.operation("No overlap check").finished
@@ -122,12 +139,16 @@ class NoOverlapPhase(AbstractPhase[TrackedEnvironment]):
         return TerminationStatus.CANCELLED
 
 
-class DependencyPhase(AbstractPhase[TrackedEnvironment]):
+class DependencyPhase(Phase[TrackedEnvironment]):
 
     def __init__(self, dependency_match, phase_id=None, phase_name='Active dependency check'):
-        phase_id = phase_id or str(dependency_match)
-        super().__init__(phase_id, phase_name)
+        self._id = phase_id or str(dependency_match)
+        self._name = phase_name
         self._dependency_match = dependency_match
+
+    @property
+    def id(self):
+        return self._id
 
     @property
     def type(self) -> str:
@@ -136,6 +157,10 @@ class DependencyPhase(AbstractPhase[TrackedEnvironment]):
     @property
     def run_state(self) -> RunState:
         return RunState.EVALUATING
+
+    @property
+    def name(self) -> Optional[str]:
+        return self._name
 
     @property
     def dependency_match(self):
@@ -159,17 +184,21 @@ class DependencyPhase(AbstractPhase[TrackedEnvironment]):
         return TerminationStatus.CANCELLED
 
 
-class WaitingPhase(AbstractPhase[TrackedEnvironment]):
+class WaitingPhase(Phase[TrackedEnvironment]):
     """
     """
 
     def __init__(self, phase_id, observable_conditions, timeout=0):
-        super().__init__(phase_id)
+        self._id = phase_id
         self._observable_conditions = observable_conditions
         self._timeout = timeout
         self._conditions_lock = Lock()
         self._event = Event()
         self._term_status = TerminationStatus.NONE
+
+    @property
+    def id(self):
+        return self._id
 
     @property
     def type(self) -> str:
@@ -322,17 +351,7 @@ class ExecutionGroupLimit:
     max_executions: int
 
 
-@dataclass(frozen=True)
-class ExecutionQueueInfo(PhaseInfo):
-    queued_state: QueuedState = QueuedState.NONE  # TODO Make mandatory
-
-    def serialize(self) -> Dict:
-        d = super().serialize()
-        d["queued_state"] = self.queued_state.name
-        return d
-
-
-class ExecutionQueue(AbstractPhase[TrackedEnvironment], InstanceTransitionObserver):
+class ExecutionQueue(Phase[TrackedEnvironment], InstanceTransitionObserver):
 
     def __init__(self, queue_id, max_executions, phase_id=None, phase_name=None, *,
                  until_phase=None,
@@ -343,9 +362,11 @@ class ExecutionQueue(AbstractPhase[TrackedEnvironment], InstanceTransitionObserv
         if max_executions < 1:
             raise ValueError('Max executions must be greater than zero')
 
-        super().__init__(phase_id or queue_id, phase_name, protection_id=queue_id, last_protected_phase=until_phase)
+        self._id = phase_id or queue_id
+        self._name = phase_name
         self._state = QueuedState.NONE
         self._queue_id = queue_id
+        self._until_phase = until_phase
         self._max_executions = max_executions
         self._locker = locker_factory(paths.lock_path(f"eq-{queue_id}.lock", True))
         self._state_receiver_factory = state_receiver_factory
@@ -355,6 +376,10 @@ class ExecutionQueue(AbstractPhase[TrackedEnvironment], InstanceTransitionObserv
         self._state_receiver = None
 
     @property
+    def id(self):
+        return self._id
+
+    @property
     def type(self) -> str:
         return CoordTypes.QUEUE.value
 
@@ -362,16 +387,9 @@ class ExecutionQueue(AbstractPhase[TrackedEnvironment], InstanceTransitionObserv
     def run_state(self) -> RunState:
         return RunState.IN_QUEUE
 
-    def info(self) -> ExecutionQueueInfo:
-        return ExecutionQueueInfo(
-            self._phase_id,
-            self.type,
-            self.run_state,
-            self._phase_name,
-            self._protection_id,
-            self._last_protected_phase,
-            self._state
-        )
+    @property
+    def name(self) -> Optional[str]:
+        return self._name
 
     @property
     def stop_status(self):
