@@ -7,11 +7,12 @@ from typing import Optional
 
 from runtools import runcore
 from runtools.runcore import paths
-from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion
+from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion, MetadataCriterion, negate_id
 from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
 from runtools.runcore.listening import InstanceTransitionReceiver
 from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, TerminateRun, control_api, Phase
 from runtools.runcore.util import lock
+from runtools.runjob.instance import JobEnvironment
 from runtools.runjob.phaser import RunContext
 from runtools.runjob.track import TrackedEnvironment
 
@@ -87,11 +88,13 @@ class ApprovalPhase(Phase[TrackedEnvironment]):
         return TerminationStatus.CANCELLED
 
 
-class MutualExclusionPhase(Phase[TrackedEnvironment]):
+class MutualExclusionPhase(Phase[JobEnvironment]):
     """
     TODO Docs
     1. Set continue flag to be checked
     """
+    EXCLUSION_ID = 'exclusion_id'
+    UNTIL_PHASE = 'until_phase'
 
     def __init__(self, exclusion_id, phase_id=None, phase_name='Mutual Exclusion Check',
                  *, until_phase=None, locker_factory=lock.default_locker_factory()):
@@ -99,7 +102,12 @@ class MutualExclusionPhase(Phase[TrackedEnvironment]):
             raise ValueError("Parameter `no_overlap_id` cannot be empty")
         self._id = phase_id or exclusion_id
         self._name = phase_name
+        self._exclusion_id = exclusion_id
         self._until_phase = until_phase
+        self._attrs = {
+            MutualExclusionPhase.EXCLUSION_ID: self._exclusion_id,
+            MutualExclusionPhase.UNTIL_PHASE: self._until_phase,
+        }
         self._locker = locker_factory(paths.lock_path(f"noo-{exclusion_id}.lock", True))
 
     @property
@@ -118,13 +126,27 @@ class MutualExclusionPhase(Phase[TrackedEnvironment]):
     def name(self) -> Optional[str]:
         return self._name
 
-    def run(self, env: TrackedEnvironment, run_ctx):
+    @property
+    def exclusion_id(self):
+        return self._exclusion_id
+
+    @property
+    def attributes(self):
+        return self._attrs
+
+    def run(self, env: JobEnvironment, run_ctx):
         finished = env.status_tracker.operation("No overlap check").finished
 
         with self._locker():
-            no_overlap_filter = PhaseCriterion(phase_type=CoordTypes.NO_OVERLAP, protection_id=self._protection_id)
-            c = JobRunCriteria(phase_criteria=no_overlap_filter)
+            attr_to_match = {MutualExclusionPhase.EXCLUSION_ID: self._exclusion_id}
+            c = JobRunCriteria()
+            c.metadata_criteria = MetadataCriterion(instance_id=negate_id(env.metadata.instance_id))  # Excl self
+            c.phase_criteria = PhaseCriterion(phase_type=CoordTypes.NO_OVERLAP.value, attributes=attr_to_match)
             runs, _ = runcore.get_active_runs(c)
+
+            for run in runs:
+                pass
+
             if any(r for r in runs if r.in_protected_phase(CoordTypes.NO_OVERLAP, self._protection_id)):
                 finished("Overlap found")
                 raise TerminateRun(TerminationStatus.OVERLAP)
@@ -467,7 +489,7 @@ class ExecutionQueue(Phase[TrackedEnvironment], InstanceTransitionObserver):
 
         # self._log.debug("event[dispatching] free_slots=[%d]", free_slots)
         for next_proceed in sorted_group_runs.queued:
-            signal_resp = runcore.signal_dispatch(JobRunCriteria.match_run(next_proceed), self._queue_id)
+            signal_resp = runcore.signal_dispatch(JobRunCriteria.exact_match(next_proceed), self._queue_id)
             for r in signal_resp.successful:
                 if r.dispatched:
                     # self._log.debug("event[dispatched] run=[%s]", next_proceed.metadata)
