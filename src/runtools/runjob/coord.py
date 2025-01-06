@@ -202,7 +202,7 @@ class MutualExclusionPhase(Phase[JobEnvironment]):
         return TerminationStatus.CANCELLED
 
 
-class DependencyPhase(Phase[TrackedEnvironment]):
+class DependencyPhase(Phase[JobEnvironment]):
 
     def __init__(self, dependency_match, phase_id=None, phase_name='Active dependency check'):
         self._id = phase_id or str(dependency_match)
@@ -229,12 +229,11 @@ class DependencyPhase(Phase[TrackedEnvironment]):
     def dependency_match(self):
         return self._dependency_match
 
-    def run(self, env: TrackedEnvironment, run_ctx):
+    def run(self, env: JobEnvironment, run_ctx):
         op = env.status_tracker.operation("Dependency check")
 
-        runs, _ = runcore.get_active_runs()
-        matches = [r.metadata for r in runs if self._dependency_match(r.metadata)]
-        if not matches:
+        matching_runs, _ = runcore.get_active_runs(self._dependency_match)
+        if not matching_runs:
             op.finished(f"Required dependency `{self._dependency_match}` not found")
             raise TerminateRun(TerminationStatus.UNSATISFIED)
         op.finished(f"Required dependency `{self._dependency_match}` found")
