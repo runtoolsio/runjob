@@ -126,6 +126,10 @@ class JobEnvironment(MonitoredEnvironment):
     def output_sink(self) -> OutputSink:
         return self._output
 
+    @property
+    def output(self) -> Output:
+        return self._output
+
 
 def create(job_id, phases, status_tracker=None,
            *, instance_id=None, run_id=None, tail_buffer=None,
@@ -179,7 +183,7 @@ class _JobInstance(JobInstance):
 
     @property
     def phases(self) -> List[PhaseInfo]:
-        return [phase.info() for phase in self._phaser.phases.values()]
+        return [phase.info for phase in self._phaser.phases.values()]
 
     def get_phase_control(self, phase_id: str, phase_type: str = None):
         return self._phaser.get_phase(phase_id, phase_type).control

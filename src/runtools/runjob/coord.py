@@ -3,14 +3,14 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 from threading import Condition, Event, Lock
-from typing import Optional, Tuple
+from typing import Optional
 
 from runtools import runcore
 from runtools.runcore import paths
 from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion, MetadataCriterion, negate_id
 from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
 from runtools.runcore.listening import InstanceTransitionReceiver
-from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, TerminateRun, control_api, Phase, PhaseInfo
+from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, TerminateRun, control_api, Phase
 from runtools.runcore.util import lock
 from runtools.runjob.instance import JobEnvironment
 from runtools.runjob.phaser import RunContext
@@ -183,8 +183,8 @@ class MutualExclusionPhase(Phase[JobEnvironment]):
 
         with self._locker():
             c = JobRunCriteria()
-            c.metadata_criteria = MetadataCriterion(instance_id=negate_id(env.metadata.instance_id))  # Excl self
-            c.phase_criteria = self._excl_phase_filter
+            c += MetadataCriterion(instance_id=negate_id(env.metadata.instance_id))  # Excl self
+            c += self._excl_phase_filter
             runs, _ = runcore.get_active_runs(c)
 
             for run in runs:
