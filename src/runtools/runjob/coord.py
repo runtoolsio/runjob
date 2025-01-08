@@ -12,9 +12,8 @@ from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
 from runtools.runcore.listening import InstanceTransitionReceiver
 from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, TerminateRun, control_api, Phase
 from runtools.runcore.util import lock
-from runtools.runjob.instance import JobEnvironment
-from runtools.runjob.phaser import RunContext
-from runtools.runjob.track import TrackedEnvironment
+from runtools.runjob.instance import JobInstanceContext
+from runtools.runjob.track import TrackedContext
 
 log = logging.getLogger(__name__)
 
@@ -27,7 +26,7 @@ class CoordTypes(Enum):
     QUEUE = 'QUEUE'
 
 
-class ApprovalPhase(Phase[TrackedEnvironment]):
+class ApprovalPhase(Phase[TrackedContext]):
     """
     Approval parameters (incl. timeout) + approval eval as separate objects
     TODO: parameters
@@ -56,8 +55,8 @@ class ApprovalPhase(Phase[TrackedEnvironment]):
     def name(self) -> Optional[str]:
         return self._name
 
-    def run(self, env: TrackedEnvironment, run_ctx: RunContext):
-        finished = env.status_tracker.operation('Waiting for approval').finished
+    def run(self, ctx: TrackedContext):
+        finished = ctx.status_tracker.operation('Waiting for approval').finished
         # TODO Add support for denial request (rejection)
 
         approved = self._event.wait(self._timeout or None)
@@ -88,7 +87,7 @@ class ApprovalPhase(Phase[TrackedEnvironment]):
         return TerminationStatus.CANCELLED
 
 
-class MutualExclusionPhase(Phase[JobEnvironment]):
+class MutualExclusionPhase(Phase[JobInstanceContext]):
     """
     TODO Docs
     1. Set continue flag to be checked
@@ -178,12 +177,12 @@ class MutualExclusionPhase(Phase[JobEnvironment]):
         except ValueError:
             return False
 
-    def run(self, env: JobEnvironment, run_ctx):
-        op = env.status_tracker.operation("No overlap check")
+    def run(self, ctx: JobInstanceContext):
+        op = ctx.status_tracker.operation("No overlap check")
 
         with self._locker():
             c = JobRunCriteria()
-            c += MetadataCriterion(instance_id=negate_id(env.metadata.instance_id))  # Excl self
+            c += MetadataCriterion(instance_id=negate_id(ctx.metadata.instance_id))  # Excl self
             c += self._excl_phase_filter
             runs, _ = runcore.get_active_runs(c)
 
@@ -202,7 +201,7 @@ class MutualExclusionPhase(Phase[JobEnvironment]):
         return TerminationStatus.CANCELLED
 
 
-class DependencyPhase(Phase[JobEnvironment]):
+class DependencyPhase(Phase[JobInstanceContext]):
 
     def __init__(self, dependency_match, phase_id=None, phase_name='Active dependency check'):
         self._id = phase_id or str(dependency_match)
@@ -229,8 +228,8 @@ class DependencyPhase(Phase[JobEnvironment]):
     def dependency_match(self):
         return self._dependency_match
 
-    def run(self, env: JobEnvironment, run_ctx):
-        op = env.status_tracker.operation("Dependency check")
+    def run(self, ctx):
+        op = ctx.status_tracker.operation("Dependency check")
 
         matching_runs, _ = runcore.get_active_runs(self._dependency_match)
         if not matching_runs:
@@ -246,7 +245,7 @@ class DependencyPhase(Phase[JobEnvironment]):
         return TerminationStatus.CANCELLED
 
 
-class WaitingPhase(Phase[TrackedEnvironment]):
+class WaitingPhase(Phase[TrackedContext]):
     """
     """
 
@@ -270,7 +269,7 @@ class WaitingPhase(Phase[TrackedEnvironment]):
     def run_state(self) -> RunState:
         return RunState.WAITING
 
-    def run(self, env: TrackedEnvironment, run_ctx):
+    def run(self, ctx):
         for condition in self._observable_conditions:
             condition.add_result_listener(self._result_observer)
             condition.start_evaluating()
@@ -413,7 +412,7 @@ class ExecutionGroupLimit:
     max_executions: int
 
 
-class ExecutionQueue(Phase[TrackedEnvironment], InstanceTransitionObserver):
+class ExecutionQueue(Phase[TrackedContext], InstanceTransitionObserver):
 
     def __init__(self, queue_id, max_executions, phase_id=None, phase_name=None, *,
                  until_phase=None,
@@ -465,7 +464,7 @@ class ExecutionQueue(Phase[TrackedEnvironment], InstanceTransitionObserver):
     def queue_id(self):
         return self._queue_id
 
-    def run(self, env: TrackedEnvironment, run_ctx):
+    def run(self, ctx):
         with self._wait_guard:
             if self._state == QueuedState.NONE:
                 self._state = QueuedState.IN_QUEUE

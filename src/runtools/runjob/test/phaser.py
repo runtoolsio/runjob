@@ -3,12 +3,11 @@ from typing import Optional
 
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.run import RunState, TerminationStatus, TerminateRun, control_api, Phase
-from runtools.runjob.output import OutputSink
-from runtools.runjob.phaser import RunContext
-from runtools.runjob.track import MonitoredEnvironment, StatusTracker
+from runtools.runjob.output import OutputSink, OutputContext
+from runtools.runjob.track import StatusTracker, TrackedContext
 
 
-class TestEnvironment(MonitoredEnvironment):
+class FakeContext(OutputContext, TrackedContext, OutputSink):
 
     @property
     def status_tracker(self):
@@ -16,24 +15,10 @@ class TestEnvironment(MonitoredEnvironment):
 
     @property
     def output_sink(self):
-        class TestSink(OutputSink):
-            def _process_output(self, output_line):
-                pass
+        return self
 
-        return TestSink()
-
-
-class FakeRunContext(RunContext):
-
-    def __init__(self):
-        self.output = []
-
-    @property
-    def status_tracker(self):
-        return None
-
-    def new_output(self, output, is_err=False):
-        self.output.append((output, is_err))
+    def _process_output(self, output_line):
+        pass
 
 
 class TestPhase(Phase):
@@ -72,7 +57,7 @@ class TestPhase(Phase):
         else:
             raise InvalidStateError('Wait not set')
 
-    def run(self, env, run_ctx):
+    def run(self, ctx):
         if self.wait:
             self.wait.wait(2)
         if self.exception:

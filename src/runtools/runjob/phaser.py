@@ -10,7 +10,7 @@ import sys
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.run import Phase, PhaseRun, Lifecycle, TerminationStatus, TerminationInfo, Run, \
-    TerminateRun, FailedRun, Fault, RunState, E, PhaseExecutionError
+    TerminateRun, FailedRun, Fault, RunState, C, PhaseExecutionError
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ class NoOpsPhase(Phase[Any], ABC):
     def stop_status(self):
         return self._stop_status
 
-    def run(self, env, ctx):
+    def run(self, ctx):
         """No activity on run"""
         pass
 
@@ -67,7 +67,7 @@ class InitPhase(NoOpsPhase):
         super().__init__(InitPhase.ID, InitPhase.TYPE, RunState.CREATED, TerminationStatus.STOPPED)
 
 
-class ExecutingPhase(Phase[E], ABC):
+class ExecutingPhase(Phase[C], ABC):
     """
     Abstract base class for phases that execute some work.
     Implementations should provide concrete run() and stop() methods
@@ -100,13 +100,12 @@ class ExecutingPhase(Phase[E], ABC):
         return TerminationStatus.STOPPED
 
     @abstractmethod
-    def run(self, env: E, ctx):
+    def run(self, ctx):
         """
         Execute the phase's work.
 
         Args:
-            env (E): External run environment
-            ctx (RunContext): Context object related to the given phase
+            ctx (C): Context object related to the given run
 
         Raises:
             TerminateRun: If execution is stopped or interrupted
@@ -128,9 +127,9 @@ class TerminalPhase(NoOpsPhase):
         super().__init__(TerminalPhase.ID, TerminationStatus.NONE, RunState.ENDED, TerminationStatus.NONE)
 
 
-class WaitWrapperPhase(Phase[E]):
+class WaitWrapperPhase(Phase[C]):
 
-    def __init__(self, wrapped_phase: Phase[E]):
+    def __init__(self, wrapped_phase: Phase[C]):
         self.wrapped_phase = wrapped_phase
         self._run_event = Event()
 
@@ -153,9 +152,9 @@ class WaitWrapperPhase(Phase[E]):
     def wait(self, timeout):
         self._run_event.wait(timeout)
 
-    def run(self, env, ctx):
+    def run(self, ctx):
         self._run_event.set()
-        self.wrapped_phase.run(env, ctx)
+        self.wrapped_phase.run(ctx)
 
     def stop(self):
         self.wrapped_phase.stop()
@@ -167,11 +166,11 @@ class RunContext(ABC):
 
 UNCAUGHT_PHASE_RUN_EXCEPTION = "UNCAUGHT_PHASE_RUN_EXCEPTION"
 
-class Phaser(Generic[E]):
+class Phaser(Generic[C]):
 
-    def __init__(self, phases: Iterable[Phase[E]], lifecycle=None, *, timestamp_generator=util.utc_now):
+    def __init__(self, phases: Iterable[Phase[C]], lifecycle=None, *, timestamp_generator=util.utc_now):
         self.transition_hook: Optional[Callable[[PhaseRun, PhaseRun, int], None]] = None
-        self._key_to_phase: Dict[str, Phase[E]] = unique_phases_to_dict(phases)
+        self._key_to_phase: Dict[str, Phase[C]] = unique_phases_to_dict(phases)
         self._timestamp_generator = timestamp_generator
         self._lock = Condition()
         # Guarded by the lock:
@@ -220,10 +219,7 @@ class Phaser(Generic[E]):
 
         self._execute_transition_hook()
 
-    def run(self, environment: Optional[E] = None):
-        class _RunContext(RunContext):
-            """TODO Members will be added later"""
-
+    def run(self, ctx: Optional[C] = None):
         if self._current_phase is None:
             raise InvalidStateError('Prime not executed before run')
 
@@ -243,7 +239,7 @@ class Phaser(Generic[E]):
                 self._next_phase(phase)
 
             self._execute_transition_hook()  # Hook exec without lock
-            term_info, exc = self._run_handle_errors(phase, environment, _RunContext())
+            term_info, exc = self._run_handle_errors(phase, ctx)
 
         with self._lock:
             # Set termination info and terminal phase 'atomically'
@@ -267,10 +263,10 @@ class Phaser(Generic[E]):
         self._lifecycle.add_phase_run(PhaseRun(phase.id, phase.run_state, self._timestamp_generator()))
         self._lock.notify_all()
 
-    def _run_handle_errors(self, phase: Phase[E], environment: E, run_ctx: RunContext) \
+    def _run_handle_errors(self, phase: Phase[C], ctx: Optional[C]) \
             -> Tuple[Optional[TerminationInfo], Optional[BaseException]]:
         try:
-            phase.run(environment, run_ctx)
+            phase.run(ctx)
             return None, None
         except TerminateRun as e:
             return self._term_info(e.term_status), None

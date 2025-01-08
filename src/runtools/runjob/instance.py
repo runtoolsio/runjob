@@ -53,8 +53,8 @@ from runtools.runcore.output import Output, TailNotSupportedError, Mode
 from runtools.runcore.run import PhaseRun, Outcome, RunState, Fault, PhaseInfo
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification, MultipleExceptions
 from runtools.runjob.phaser import Phaser
-from runtools.runjob.track import MonitoredEnvironment, StatusTracker
-from runtools.runjob.output import OutputSink, InMemoryTailBuffer
+from runtools.runjob.track import StatusTracker, TrackedContext
+from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer
 
 log = logging.getLogger(__name__)
 
@@ -107,7 +107,7 @@ class _JobOutput(Output, OutputSink):
         return self.tail_buffer.get_lines(mode, max_lines)
 
 
-class JobEnvironment(MonitoredEnvironment):
+class JobInstanceContext(OutputContext, TrackedContext):
 
     def __init__(self, metadata, status_tracker, output: _JobOutput):
         self._metadata = metadata
@@ -159,7 +159,7 @@ class _JobInstance(JobInstance):
         self._metadata = JobInstanceMetadata(job_id, run_id or instance_id, instance_id, parameters, user_params)
         self._phaser = phaser
         self._output = _JobOutput(self._metadata, tail_buffer, output_observer_err_hook)
-        self._environment = JobEnvironment(self._metadata, status_tracker, self._output)
+        self._environment = JobInstanceContext(self._metadata, status_tracker, self._output)
 
         self._transition_notification = (
             ObservableNotification[InstanceTransitionObserver](error_hook=transition_observer_err_hook, force_reraise=True))

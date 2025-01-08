@@ -91,7 +91,7 @@ class InMemoryTailBuffer(TailBuffer):
             return output[:max_lines]
 
 
-class OutputEnvironment(ABC):
+class OutputContext(ABC):
 
     @property
     @abstractmethod
