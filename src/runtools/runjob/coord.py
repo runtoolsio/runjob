@@ -1,4 +1,3 @@
-import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -13,6 +12,7 @@ from runtools.runcore.listening import InstanceTransitionReceiver
 from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, TerminateRun, control_api, Phase
 from runtools.runcore.util import lock
 from runtools.runjob.instance import JobInstanceContext
+from runtools.runjob.output import OutputContext
 from runtools.runjob.track import TrackedContext
 
 log = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ class CoordTypes(Enum):
     QUEUE = 'QUEUE'
 
 
-class ApprovalPhase(Phase[TrackedContext]):
+class ApprovalPhase(Phase[OutputContext]):
     """
     Approval parameters (incl. timeout) + approval eval as separate objects
     TODO: parameters
@@ -55,19 +55,20 @@ class ApprovalPhase(Phase[TrackedContext]):
     def name(self) -> Optional[str]:
         return self._name
 
-    def run(self, ctx: TrackedContext):
-        finished = ctx.status_tracker.operation('Waiting for approval').finished
+    def run(self, ctx: OutputContext):
         # TODO Add support for denial request (rejection)
+        with ctx.output_sink.forwarding_logger(self._id) as log:
+            log.debug("[waiting_for_approval]")
 
-        approved = self._event.wait(self._timeout or None)
-        if self._stopped:
-            finished('Approval cancelled')
-            return
-        if not approved:
-            finished('Approval timed out')
-            raise TerminateRun(TerminationStatus.TIMEOUT)
+            approved = self._event.wait(self._timeout or None)
+            if self._stopped:
+                log.debug("[approval_cancelled]")
+                return
+            if not approved:
+                finished('Approval timed out')
+                raise TerminateRun(TerminationStatus.TIMEOUT)
 
-        finished("Approved")
+            finished("Approved")
 
     @control_api
     def approve(self):

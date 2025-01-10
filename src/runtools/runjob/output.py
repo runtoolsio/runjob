@@ -9,14 +9,14 @@ from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSER
 
 class LogForwarding:
 
-    def __init__(self, logger, target_handlers: Iterable[logging.Handler]):
+    def __init__(self, logger: logging.Logger, target_handlers: Iterable[logging.Handler]):
         self.logger = logger
         self.target_handlers = target_handlers
 
-    def __enter__(self):
+    def __enter__(self) -> logging.Logger:
         for handler in self.target_handlers:
             self.logger.addHandler(handler)
-        return self
+        return self.logger
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         for handler in self.target_handlers:
@@ -61,7 +61,7 @@ class OutputSink(ABC):
 
         return InternalHandler(self)
 
-    def forward_logs(self, logger, format_record=True):
+    def forward_logs(self, logger, format_record=True) -> LogForwarding:
         return LogForwarding(logger, [self.forward_logs_handler(format_record)])
 
 
@@ -95,5 +95,5 @@ class OutputContext(ABC):
 
     @property
     @abstractmethod
-    def output_sink(self):
+    def output_sink(self) -> OutputSink:
         pass
