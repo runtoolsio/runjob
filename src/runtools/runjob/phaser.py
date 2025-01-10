@@ -24,6 +24,37 @@ def unique_phases_to_dict(phases) -> Dict[str, Phase]:
     return id_to_phase
 
 
+class DelegatingPhase(Phase[C]):
+    """
+    Base class for phases that delegate to a wrapped phase.
+    Subclasses can override methods to add behavior while maintaining delegation.
+    """
+
+    def __init__(self, wrapped_phase: Phase[C]):
+        self._wrapped = wrapped_phase
+
+    @property
+    def id(self):
+        return self._wrapped.id
+
+    @property
+    def type(self) -> str:
+        return self._wrapped.type
+
+    @property
+    def run_state(self) -> RunState:
+        return self._wrapped.run_state
+
+    @property
+    def stop_status(self):
+        return self._wrapped.stop_status
+
+    def run(self, ctx: Optional[C]):
+        return self._wrapped.run(ctx)
+
+    def stop(self):
+        return self._wrapped.stop()
+
 
 class NoOpsPhase(Phase[Any], ABC):
 
@@ -59,7 +90,6 @@ class NoOpsPhase(Phase[Any], ABC):
 
 
 class InitPhase(NoOpsPhase):
-
     ID = 'Init'
     TYPE = 'INIT'
 
@@ -127,37 +157,18 @@ class TerminalPhase(NoOpsPhase):
         super().__init__(TerminalPhase.ID, TerminationStatus.NONE, RunState.ENDED, TerminationStatus.NONE)
 
 
-class WaitWrapperPhase(Phase[C]):
+class WaitWrapperPhase(DelegatingPhase[C]):
 
     def __init__(self, wrapped_phase: Phase[C]):
-        self.wrapped_phase = wrapped_phase
+        super().__init__(wrapped_phase)
         self._run_event = Event()
-
-    @property
-    def id(self):
-        return self.wrapped_phase.id
-
-    @property
-    def type(self) -> str:
-        return self.wrapped_phase.type
-
-    @property
-    def run_state(self) -> RunState:
-        return self.wrapped_phase.run_state
-
-    @property
-    def stop_status(self):
-        return self.wrapped_phase.stop_status
 
     def wait(self, timeout):
         self._run_event.wait(timeout)
 
     def run(self, ctx):
         self._run_event.set()
-        self.wrapped_phase.run(ctx)
-
-    def stop(self):
-        self.wrapped_phase.stop()
+        super().run(ctx)
 
 
 class RunContext(ABC):
@@ -165,6 +176,7 @@ class RunContext(ABC):
 
 
 UNCAUGHT_PHASE_RUN_EXCEPTION = "UNCAUGHT_PHASE_RUN_EXCEPTION"
+
 
 class Phaser(Generic[C]):
 

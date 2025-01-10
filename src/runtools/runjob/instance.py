@@ -52,11 +52,11 @@ from runtools.runcore import util
 from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserver,
                                   InstanceOutputObserver, JobInstanceMetadata, JobFaults)
 from runtools.runcore.output import Output, TailNotSupportedError, Mode
-from runtools.runcore.run import PhaseRun, Outcome, RunState, Fault, PhaseInfo
+from runtools.runcore.run import PhaseRun, Outcome, RunState, Fault, PhaseInfo, Phase, C
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification, MultipleExceptions
-from runtools.runjob.phaser import Phaser
-from runtools.runjob.track import StatusTracker, TrackedContext
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer
+from runtools.runjob.phaser import Phaser, DelegatingPhase
+from runtools.runjob.track import StatusTracker, OutputToStatusTransformer
 
 log = logging.getLogger(__name__)
 
@@ -129,12 +129,12 @@ class _JobInstanceLogFilter(logging.Filter):
         return self.instance_id == metadata.instance_id
 
 
-class JobInstanceContext(OutputContext, TrackedContext):
+class JobInstanceContext(OutputContext):
 
-    def __init__(self, metadata, status_tracker, output: _JobOutput):
+    def __init__(self, metadata, status_tracker, output_sink: OutputSink):
         self._metadata = metadata
         self._status_tracker = status_tracker
-        self._output: _JobOutput = output
+        self._output_sink: OutputSink = output_sink
 
     @property
     def metadata(self):
@@ -146,11 +146,7 @@ class JobInstanceContext(OutputContext, TrackedContext):
 
     @property
     def output_sink(self) -> OutputSink:
-        return self._output
-
-    @property
-    def output(self) -> Output:
-        return self._output
+        return self._output_sink
 
 
 def create(job_id, phases, status_tracker=None,
@@ -193,7 +189,7 @@ class _JobInstance(JobInstance):
         self._phaser.prime()  # TODO
 
     def _log(self, event: str, msg: str = '', *params):
-        return ("event=[{}] job_run=[{}@{}] " + msg).format(
+        return ("[{}] job_run=[{}@{}] " + msg).format(
             event, self._metadata.job_id, self._metadata.run_id, *params)
 
     @property
@@ -321,3 +317,14 @@ def register_transition_observer(observer, priority=DEFAULT_OBSERVER_PRIORITY):
 def deregister_transition_observer(observer):
     global _transition_observer
     _transition_observer.remove_observer(observer)
+
+
+class OutputToStatus(DelegatingPhase[JobInstanceContext]):
+
+    def __init__(self, wrapped_phase, parsers):
+        super().__init__(wrapped_phase)
+        self._parsers = parsers
+
+    def run(self, ctx: Optional[JobInstanceContext]):
+        with ctx.output_sink.observer(OutputToStatusTransformer(ctx.status_tracker, parsers=self._parsers)):
+            return super().run(ctx)

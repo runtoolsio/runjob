@@ -70,6 +70,14 @@ class OutputSink(ABC):
         return LogHandlerContext(loggers, [handler])
 
 
+class OutputContext(ABC):
+
+    @property
+    @abstractmethod
+    def output_sink(self) -> OutputSink:
+        pass
+
+
 class InMemoryTailBuffer(TailBuffer):
 
     def __init__(self, max_capacity: int = 0):
@@ -94,11 +102,3 @@ class InMemoryTailBuffer(TailBuffer):
 
         if mode == Mode.HEAD:
             return output[:max_lines]
-
-
-class OutputContext(ABC):
-
-    @property
-    @abstractmethod
-    def output_sink(self) -> OutputSink:
-        pass

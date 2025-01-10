@@ -14,7 +14,6 @@ from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, Terminat
 from runtools.runcore.util import lock
 from runtools.runjob.instance import JobInstanceContext
 from runtools.runjob.output import OutputContext
-from runtools.runjob.track import TrackedContext
 
 log = logging.getLogger(__name__)
 
@@ -246,7 +245,7 @@ class DependencyPhase(Phase[JobInstanceContext]):
         return TerminationStatus.CANCELLED
 
 
-class WaitingPhase(Phase[TrackedContext]):
+class WaitingPhase(Phase[OutputContext]):
     """
     """
 
@@ -413,7 +412,7 @@ class ExecutionGroupLimit:
     max_executions: int
 
 
-class ExecutionQueue(Phase[TrackedContext], InstanceTransitionObserver):
+class ExecutionQueue(Phase[OutputContext], InstanceTransitionObserver):
 
     def __init__(self, queue_id, max_executions, phase_id=None, phase_name=None, *,
                  until_phase=None,

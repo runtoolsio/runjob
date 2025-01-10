@@ -1,5 +1,4 @@
 import re
-from abc import ABC, abstractmethod
 from datetime import datetime, UTC
 from enum import Enum
 from typing import Set, Optional, List
@@ -7,7 +6,6 @@ from typing import Set, Optional, List
 from runtools.runcore import util
 from runtools.runcore.status import Event, Operation, Status
 from runtools.runcore.util import convert_if_number
-from runtools.runjob.output import OutputContext
 
 
 class Fields(Enum):
@@ -207,11 +205,3 @@ class StatusTracker:
     def to_status(self) -> Status:
         return Status(self._last_event, [op.to_operation() for op in self._operations],
                       self._warnings, self._result)
-
-
-class TrackedContext(ABC):
-
-    @property
-    @abstractmethod
-    def status_tracker(self) -> StatusTracker:
-        pass
