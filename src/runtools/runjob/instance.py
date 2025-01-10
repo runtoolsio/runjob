@@ -43,6 +43,8 @@ State lock
 
 """
 import logging
+from contextlib import contextmanager
+from contextvars import ContextVar
 from threading import Thread
 from typing import Callable, Tuple, Any, Optional, List
 
@@ -68,17 +70,22 @@ OutputObserverErrorHook = Callable[[InstanceOutputObserver, Tuple[Any, ...], Exc
 global_transition_observer_error_hook: Optional[TransitionObserverErrorHook] = None
 global_output_observer_error_hook: Optional[OutputObserverErrorHook] = None
 
+
 def _global_transition_observer_error_hook(observer, args, exc):
     if global_transition_observer_error_hook:
         global_transition_observer_error_hook(observer, args, exc)
+
 
 def _global_output_observer_error_hook(observer, args, exc):
     if global_output_observer_error_hook:
         global_output_observer_error_hook(observer, args, exc)
 
 
-_transition_observer = ObservableNotification[InstanceTransitionObserver](error_hook=_global_transition_observer_error_hook)
+_transition_observer = ObservableNotification[InstanceTransitionObserver](
+    error_hook=_global_transition_observer_error_hook)
 _output_observers = ObservableNotification[InstanceOutputObserver](error_hook=_global_output_observer_error_hook)
+
+current_job_instance: ContextVar[Optional[JobInstanceMetadata]] = ContextVar('current_job_instance', default=None)
 
 
 class _JobOutput(Output, OutputSink):
@@ -87,7 +94,7 @@ class _JobOutput(Output, OutputSink):
         super().__init__()
         self.metadata = metadata
         self.tail_buffer = tail_buffer
-        self.output_notification =(
+        self.output_notification = (
             ObservableNotification[InstanceOutputObserver](error_hook=output_observer_err_hook, force_reraise=True))
         self.output_observer_faults: List[Fault] = []
 
@@ -105,6 +112,21 @@ class _JobOutput(Output, OutputSink):
             raise TailNotSupportedError
 
         return self.tail_buffer.get_lines(mode, max_lines)
+
+
+class _JobInstanceLogFilter(logging.Filter):
+    """Filter that only allows logs from the current job instance"""
+
+    def __init__(self, instance_id):
+        super().__init__()
+        self.instance_id = instance_id
+
+    def filter(self, record):
+        metadata = current_job_instance.get()
+        if metadata is None:
+            return False
+
+        return self.instance_id == metadata.instance_id
 
 
 class JobInstanceContext(OutputContext, TrackedContext):
@@ -133,8 +155,8 @@ class JobInstanceContext(OutputContext, TrackedContext):
 
 def create(job_id, phases, status_tracker=None,
            *, instance_id=None, run_id=None, tail_buffer=None,
-           transition_observer_error_hook: TransitionObserverErrorHook=_global_transition_observer_error_hook,
-           output_observer_error_hook: OutputObserverErrorHook=_global_output_observer_error_hook,
+           transition_observer_error_hook: TransitionObserverErrorHook = _global_transition_observer_error_hook,
+           output_observer_error_hook: OutputObserverErrorHook = _global_output_observer_error_hook,
            **user_params) -> JobInstance:
     if not job_id:
         raise ValueError("Job ID is mandatory")
@@ -159,10 +181,11 @@ class _JobInstance(JobInstance):
         self._metadata = JobInstanceMetadata(job_id, run_id or instance_id, instance_id, parameters, user_params)
         self._phaser = phaser
         self._output = _JobOutput(self._metadata, tail_buffer, output_observer_err_hook)
-        self._environment = JobInstanceContext(self._metadata, status_tracker, self._output)
+        self._ctx = JobInstanceContext(self._metadata, status_tracker, self._output)
 
         self._transition_notification = (
-            ObservableNotification[InstanceTransitionObserver](error_hook=transition_observer_err_hook, force_reraise=True))
+            ObservableNotification[InstanceTransitionObserver](error_hook=transition_observer_err_hook,
+                                                               force_reraise=True))
 
         self._transition_observer_faults: List[Fault] = []
         # TODO Move the below out of constructor?
@@ -179,7 +202,7 @@ class _JobInstance(JobInstance):
 
     @property
     def status_tracker(self):
-        return self._environment.status_tracker
+        return self._ctx.status_tracker
 
     @property
     def phases(self) -> List[PhaseInfo]:
@@ -190,19 +213,30 @@ class _JobInstance(JobInstance):
 
     @property
     def output(self):
-        return self._environment.output_sink
+        return self._ctx.output_sink
 
     def snapshot(self) -> JobRun:
-        status = self._environment.status_tracker.to_status() if self.status_tracker else None
+        status = self._ctx.status_tracker.to_status() if self.status_tracker else None
         faults = JobFaults(tuple(self._transition_observer_faults), tuple(self._output.output_observer_faults))
         return JobRun(self.metadata, self._phaser.snapshot(), faults, status)
+
+    @contextmanager
+    def _job_instance_context(self):
+        token = current_job_instance.set(self.metadata)
+        try:
+            yield
+        finally:
+            current_job_instance.reset(token)
 
     def run(self):
         self._transition_notification.add_observer(_transition_observer.observer_proxy)
         self._output.output_notification.add_observer(_output_observers.observer_proxy)
 
         try:
-            self._phaser.run(self._environment)
+            with self._job_instance_context():
+                with self._output.capture_logs_from(logging.getLogger(),
+                                                    log_filter=_JobInstanceLogFilter(self.instance_id)):
+                    self._phaser.run(self._ctx)
         finally:
             self._transition_notification.remove_observer(_transition_observer.observer_proxy)
             self._output.output_notification.remove_observer(_output_observers.observer_proxy)

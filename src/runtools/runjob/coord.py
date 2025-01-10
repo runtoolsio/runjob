@@ -1,3 +1,4 @@
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -57,18 +58,17 @@ class ApprovalPhase(Phase[OutputContext]):
 
     def run(self, ctx: OutputContext):
         # TODO Add support for denial request (rejection)
-        with ctx.output_sink.forwarding_logger(self._id) as log:
-            log.debug("[waiting_for_approval]")
+        log.debug("[waiting_for_approval]")
 
-            approved = self._event.wait(self._timeout or None)
-            if self._stopped:
-                log.debug("[approval_cancelled]")
-                return
-            if not approved:
-                finished('Approval timed out')
-                raise TerminateRun(TerminationStatus.TIMEOUT)
+        approved = self._event.wait(self._timeout or None)
+        if self._stopped:
+            log.debug("[approval_cancelled]")
+            return
+        if not approved:
+            log.debug('[approval_timeout]')
+            raise TerminateRun(TerminationStatus.TIMEOUT)
 
-            finished("Approved")
+        log.debug("[approved]")
 
     @control_api
     def approve(self):

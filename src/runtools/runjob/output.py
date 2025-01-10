@@ -7,20 +7,21 @@ from runtools.runcore.output import OutputLine, OutputObserver, TailBuffer, Mode
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY, ObserverContext
 
 
-class LogForwarding:
+class LogHandlerContext:
 
-    def __init__(self, logger: logging.Logger, target_handlers: Iterable[logging.Handler]):
-        self.logger = logger
-        self.target_handlers = target_handlers
+    def __init__(self, loggers: Iterable[logging.Logger], temp_handlers: Iterable[logging.Handler]):
+        self.loggers = loggers
+        self.temp_handlers = temp_handlers
 
-    def __enter__(self) -> logging.Logger:
-        for handler in self.target_handlers:
-            self.logger.addHandler(handler)
-        return self.logger
+    def __enter__(self):
+        for logger in self.loggers:
+            for handler in self.temp_handlers:
+                logger.addHandler(handler)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        for handler in self.target_handlers:
-            self.logger.removeHandler(handler)
+        for logger in self.loggers:
+            for handler in self.temp_handlers:
+                logger.removeHandler(handler)
 
 
 class OutputSink(ABC):
@@ -43,7 +44,7 @@ class OutputSink(ABC):
     def observer(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY) -> ObserverContext[OutputObserver]:
         return self._output_notification.observer(observer, priority)
 
-    def forward_logs_handler(self, format_record=True):
+    def capturing_log_handler(self, log_filter: Optional[logging.Filter] = None, *, format_record=True):
         """
         Creates and returns a logging.Handler instance that forwards log records to this sink.
         TODO source
@@ -59,10 +60,14 @@ class OutputSink(ABC):
                 is_error = record.levelno >= logging.ERROR
                 self.sink.new_output(OutputLine(output, is_error))
 
-        return InternalHandler(self)
+        handler = InternalHandler(self)
+        if log_filter:
+            handler.addFilter(log_filter)
+        return handler
 
-    def forward_logs(self, logger, format_record=True) -> LogForwarding:
-        return LogForwarding(logger, [self.forward_logs_handler(format_record)])
+    def capture_logs_from(self, *loggers, log_filter=None, format_record=True) -> LogHandlerContext:
+        handler = self.capturing_log_handler(log_filter=log_filter, format_record=format_record)
+        return LogHandlerContext(loggers, [handler])
 
 
 class InMemoryTailBuffer(TailBuffer):
