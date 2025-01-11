@@ -31,29 +31,29 @@ class DelegatingPhase(Phase[C]):
     """
 
     def __init__(self, wrapped_phase: Phase[C]):
-        self._wrapped = wrapped_phase
+        self.wrapped = wrapped_phase
 
     @property
     def id(self):
-        return self._wrapped.id
+        return self.wrapped.id
 
     @property
     def type(self) -> str:
-        return self._wrapped.type
+        return self.wrapped.type
 
     @property
     def run_state(self) -> RunState:
-        return self._wrapped.run_state
+        return self.wrapped.run_state
 
     @property
     def stop_status(self):
-        return self._wrapped.stop_status
+        return self.wrapped.stop_status
 
     def run(self, ctx: Optional[C]):
-        return self._wrapped.run(ctx)
+        return self.wrapped.run(ctx)
 
     def stop(self):
-        return self._wrapped.stop()
+        return self.wrapped.stop()
 
 
 class NoOpsPhase(Phase[Any], ABC):

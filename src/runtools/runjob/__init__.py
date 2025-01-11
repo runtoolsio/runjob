@@ -7,7 +7,7 @@ IMPLEMENTATION NOTE:
     additional packages.
 """
 from threading import Thread
-from typing import List
+from typing import List, Optional
 
 from runtools.runcore import util, InvalidConfiguration
 from runtools.runcore.job import JobInstance
@@ -15,7 +15,7 @@ from runtools.runcore.util import lock
 from runtools.runcore.util.socket import SocketClient
 from runtools.runjob import instance
 from runtools.runjob.featurize import FeaturedContextBuilder
-from runtools.runjob.instance import _JobInstance
+from runtools.runjob.instance import _JobInstance, JobInstanceHook
 
 __version__ = "0.11.0"
 
@@ -46,11 +46,15 @@ def configure(**kwargs):
     _persistence = tuple(dbs)
 
 
-def job_instance(job_id, phases, output=None, task_tracker=None, *, run_id=None, instance_id=None, **user_params) \
+def job_instance(job_id, phases, output=None, task_tracker=None, *, run_id=None, instance_id=None,
+                 pre_run_hook: Optional[JobInstanceHook] = None,
+                 post_run_hook: Optional[JobInstanceHook] = None,
+                 **user_params) \
         -> _JobInstance:
     instance_id = instance_id or util.unique_timestamp_hex()
     with FeaturedContextBuilder().standard_features(plugins=_plugins).build() as ctx:
         inst = instance.create(job_id, phases, task_tracker, instance_id=instance_id, tail_buffer=output, run_id=run_id,
+                               pre_run_hook=pre_run_hook, post_run_hook=post_run_hook,
                                **user_params)
         return ctx.add(inst)
 

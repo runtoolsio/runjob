@@ -39,7 +39,7 @@ def test_run_with_approval(sut_approve):
     assert snapshot.lifecycle.current_phase_id == APPROVAL
     assert snapshot.lifecycle.run_state == RunState.PENDING
 
-    wait_wrapper.wrapped_phase.wait.set()
+    wait_wrapper.wrapped.wait.set()
     run_thread.join(1)
     assert (sut_approve.snapshot().lifecycle.phase_ids == [INIT, APPROVAL, EXEC, TERM])
 

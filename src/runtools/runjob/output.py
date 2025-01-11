@@ -41,8 +41,14 @@ class OutputSink(ABC):
         self._process_output(output_line)
         self._output_notification.observer_proxy.new_output(output_line)
 
-    def observer(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY) -> ObserverContext[OutputObserver]:
-        return self._output_notification.observer(observer, priority)
+    def add_observer(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY) -> None:
+        self._output_notification.add_observer(observer, priority)
+
+    def remove_observer(self, observer) -> None:
+        self._output_notification.remove_observer(observer)
+
+    def observer_context(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY) -> ObserverContext[OutputObserver]:
+        return self._output_notification.observer_context(observer, priority)
 
     def capturing_log_handler(self, log_filter: Optional[logging.Filter] = None, *, format_record=True):
         """

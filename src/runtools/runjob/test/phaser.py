@@ -4,14 +4,9 @@ from typing import Optional
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.run import RunState, TerminationStatus, TerminateRun, control_api, Phase
 from runtools.runjob.output import OutputSink, OutputContext
-from runtools.runjob.track import StatusTracker, TrackedContext
 
 
-class FakeContext(OutputContext, TrackedContext, OutputSink):
-
-    @property
-    def status_tracker(self):
-        return StatusTracker()
+class FakeContext(OutputContext, OutputSink):
 
     @property
     def output_sink(self):
