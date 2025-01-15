@@ -46,12 +46,12 @@ import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
 from threading import Thread
-from typing import Callable, Tuple, Any, Optional, List
+from typing import Callable, Tuple, Optional, List
 
 from runtools.runcore import util
 from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserver,
                                   InstanceOutputObserver, JobInstanceMetadata, JobFaults)
-from runtools.runcore.output import Output, TailNotSupportedError, Mode
+from runtools.runcore.output import Output, TailNotSupportedError, Mode, OutputLine
 from runtools.runcore.run import PhaseRun, Outcome, RunState, Fault, PhaseInfo
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification, MultipleExceptions
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer
@@ -63,9 +63,8 @@ log = logging.getLogger(__name__)
 TRANSITION_OBSERVER_ERROR = "TRANSITION_OBSERVER_ERROR"
 OUTPUT_OBSERVER_ERROR = "OUTPUT_OBSERVER_ERROR"
 
-# TODO `Any` to actual types
-TransitionObserverErrorHandler = Callable[[InstanceTransitionObserver, Tuple[Any, ...], Exception], None]
-OutputObserverErrorHandler = Callable[[InstanceOutputObserver, Tuple[Any, ...], Exception], None]
+TransitionObserverErrorHandler = Callable[[InstanceTransitionObserver, Tuple[JobRun, PhaseRun, PhaseRun, int], Exception], None]
+OutputObserverErrorHandler = Callable[[InstanceOutputObserver, Tuple[JobInstanceMetadata, OutputLine], Exception], None]
 
 global_transition_observer_error_hook: Optional[TransitionObserverErrorHandler] = None
 global_output_observer_error_hook: Optional[OutputObserverErrorHandler] = None
