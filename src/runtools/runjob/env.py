@@ -6,9 +6,9 @@ from typing import Dict, Optional
 from runtools.runcore import JobRun, SortCriteria
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.env import Environment
-from runtools.runcore.job import JobInstance, JobInstanceMetadata
-from runtools.runcore.output import OutputLine
+from runtools.runcore.job import JobInstance, InstanceTransitionObserver, InstanceOutputObserver
 from runtools.runcore.run import PhaseRun, RunState
+from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 from runtools.runjob import instance, JobInstanceHook
 
 
@@ -69,6 +69,9 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
         self._managed_instances: Dict[str, _ManagedInstance] = {}
         self._opened = False
         self._closing = False
+
+        self._transition_notification = ObservableNotification[InstanceTransitionObserver]()
+        self._output_notification = ObservableNotification[InstanceOutputObserver]()
 
     def __enter__(self):
         """
@@ -139,12 +142,10 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
         with self._lock:
             return list(managed.instance for managed in self._managed_instances.values())
 
-    def _new_instance_phase(self, job_run: JobRun, previous_phase: PhaseRun, new_phase: PhaseRun, ordinal: int):
+    def _new_instance_phase(self, job_run: JobRun, _: PhaseRun, new_phase: PhaseRun, __: int):
+        # TODO Consider using post_run_hook for instances created by this container
         if new_phase.run_state == RunState.ENDED:
             self._detach_instance(job_run.metadata.instance_id, self._transient)
-
-    def _new_instance_output(self, instance_meta: JobInstanceMetadata, output_line: OutputLine):
-        pass
 
     def add_instance(self, job_instance):
         """
@@ -172,7 +173,8 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
             self._managed_instances[job_instance.instance_id] = managed_instance
 
         job_instance.add_observer_transition(self._new_instance_phase, RunnableEnvironmentBase.OBSERVERS_PRIORITY)
-        job_instance.add_observer_output(self._new_instance_output, RunnableEnvironmentBase.OBSERVERS_PRIORITY)
+        job_instance.add_observer_transition(self._transition_notification.observer_proxy, RunnableEnvironmentBase.OBSERVERS_PRIORITY - 1)
+        job_instance.add_observer_output(self._output_notification.observer_proxy, RunnableEnvironmentBase.OBSERVERS_PRIORITY - 1)
 
         for feature in self._features:
             feature.on_instance_added(job_instance)
@@ -183,7 +185,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
         #                                       plugin_module_prefix=EXT_PLUGIN_MODULE_PREFIX)
 
         # IMPORTANT:
-        #   1. Add observer first and only then check for the termination to prevent release miss by the race condition
+        #   1. Add observer first and only then check for the termination to prevent termination miss by the race condition
         #   2. Priority should be set to be the lowest from all observers, however the current implementation
         #      will work regardless of the priority as the removal of the observers doesn't affect
         #      iteration/notification (`Notification` class)
@@ -230,13 +232,44 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
                 feature.on_instance_removed(job_instance)
 
         if detach:
-            job_instance.remove_observer_output(self._new_instance_output)
+            job_instance.remove_observer_output(self._output_notification.observer_proxy)
+            job_instance.remove_observer_transition(self._transition_notification.observer_proxy)
             job_instance.remove_observer_transition(self._new_instance_phase)
             with self._detached_condition:
                 managed_instance.detached = True
                 self._detached_condition.notify()
 
         return job_instance
+
+    def add_observer_transition(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
+        """
+        Add an observer for job instance transitions in this environment.
+        The observer will be notified of all transitions for all instances.
+
+        Args:
+            observer: The transition observer to add
+            priority: Priority level for the observer (lower numbers = higher priority)
+        """
+        self._transition_notification.add_observer(observer, priority)
+
+    def remove_observer_transition(self, observer):
+        """Remove a previously registered transition observer."""
+        self._transition_notification.remove_observer(observer)
+
+    def add_observer_output(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
+        """
+        Add an observer for job instance outputs in this environment.
+        The observer will be notified of all outputs from all instances.
+
+        Args:
+            observer: The output observer to add
+            priority: Priority level for the observer (lower numbers = higher priority)
+        """
+        self._output_notification.add_observer(observer, priority)
+
+    def remove_observer_output(self, observer):
+        """Remove a previously registered output observer."""
+        self._output_notification.remove_observer(observer)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
@@ -253,7 +286,11 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
         for feature in self._features:
             feature.on_close()
 
+
 class IsolatedEnvironment(RunnableEnvironmentBase):
+
+    def __init__(self, *features, transient=True):
+        super().__init__(*features, transient=transient)
 
     def get_instances(self, run_match):
         return [i for i in self.instances if run_match(i)]
