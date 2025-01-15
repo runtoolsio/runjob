@@ -63,26 +63,10 @@ log = logging.getLogger(__name__)
 TRANSITION_OBSERVER_ERROR = "TRANSITION_OBSERVER_ERROR"
 OUTPUT_OBSERVER_ERROR = "OUTPUT_OBSERVER_ERROR"
 
-TransitionObserverErrorHandler = Callable[[InstanceTransitionObserver, Tuple[JobRun, PhaseRun, PhaseRun, int], Exception], None]
-OutputObserverErrorHandler = Callable[[InstanceOutputObserver, Tuple[JobInstanceMetadata, OutputLine], Exception], None]
-
-global_transition_observer_error_hook: Optional[TransitionObserverErrorHandler] = None
-global_output_observer_error_hook: Optional[OutputObserverErrorHandler] = None
-
-
-def _global_transition_observer_error_handler(observer, args, exc):
-    if global_transition_observer_error_hook:
-        global_transition_observer_error_hook(observer, args, exc)
-
-
-def _global_output_observer_error_handler(observer, args, exc):
-    if global_output_observer_error_hook:
-        global_output_observer_error_hook(observer, args, exc)
-
-
-_transition_observer = ObservableNotification[InstanceTransitionObserver](
-    error_hook=_global_transition_observer_error_handler)
-_output_observers = ObservableNotification[InstanceOutputObserver](error_hook=_global_output_observer_error_handler)
+TransitionObserverErrorHandler = Callable[
+    [InstanceTransitionObserver, Tuple[JobRun, PhaseRun, PhaseRun, int], Exception], None]
+OutputObserverErrorHandler = Callable[
+    [InstanceOutputObserver, Tuple[JobInstanceMetadata, OutputLine], Exception], None]
 
 current_job_instance: ContextVar[Optional[JobInstanceMetadata]] = ContextVar('current_job_instance', default=None)
 
@@ -153,10 +137,12 @@ JobInstanceHook = Callable[[JobInstanceContext], None]
 
 def create(job_id, phases, status_tracker=None,
            *, instance_id=None, run_id=None, tail_buffer=None,
+           transition_observers = (),
+           output_observers = (),
            pre_run_hook: Optional[JobInstanceHook] = None,
            post_run_hook: Optional[JobInstanceHook] = None,
-           transition_observer_error_handler: TransitionObserverErrorHandler = _global_transition_observer_error_handler,
-           output_observer_error_handler: OutputObserverErrorHandler = _global_output_observer_error_handler,
+           transition_observer_error_handler: Optional[TransitionObserverErrorHandler] = None,
+           output_observer_error_handler: Optional[OutputObserverErrorHandler] = None,
            **user_params) -> JobInstance:
     if not job_id:
         raise ValueError("Job ID is mandatory")
@@ -170,6 +156,10 @@ def create(job_id, phases, status_tracker=None,
                         pre_run_hook, post_run_hook,
                         transition_observer_error_handler, output_observer_error_handler,
                         user_params)
+    for o in transition_observers:
+        inst.add_observer_transition(o)
+    for o in output_observers:
+        inst.add_observer_output(o)
     return inst
 
 
@@ -233,9 +223,6 @@ class _JobInstance(JobInstance):
             current_job_instance.reset(token)
 
     def run(self):
-        self._transition_notification.add_observer(_transition_observer.observer_proxy)
-        self._output.output_notification.add_observer(_output_observers.observer_proxy)
-
         with self._job_instance_context():
             with self._output.capture_logs_from(logging.getLogger(),
                                                 log_filter=_JobInstanceLogFilter(self.instance_id)):
@@ -244,8 +231,6 @@ class _JobInstance(JobInstance):
                     self._phaser.run(self._ctx)
                 finally:
                     self._exec_post_run_hook()
-                    self._transition_notification.remove_observer(_transition_observer.observer_proxy)
-                    self._output.output_notification.remove_observer(_output_observers.observer_proxy)
 
     def _exec_pre_run_hook(self):
         if self._pre_run_hook:
@@ -332,16 +317,6 @@ class _JobInstance(JobInstance):
 
     def remove_observer_output(self, observer):
         self._output.output_notification.remove_observer(observer)
-
-
-def register_transition_observer(observer, priority=DEFAULT_OBSERVER_PRIORITY):
-    global _transition_observer
-    _transition_observer.add_observer(observer, priority)
-
-
-def deregister_transition_observer(observer):
-    global _transition_observer
-    _transition_observer.remove_observer(observer)
 
 
 class OutputToStatus(DelegatingPhase[JobInstanceContext]):
