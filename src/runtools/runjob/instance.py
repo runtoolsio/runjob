@@ -325,6 +325,7 @@ class _JobInstance(JobInstance):
             self._transition_notification.observer_proxy.new_instance_phase(snapshot, old_phase, new_phase, ordinal)
         except MultipleExceptions as me:
             for e in me:
+                log.error("[transition_observer_error]", exc_info=e)
                 self._transition_observer_faults.append(Fault.from_exception(TRANSITION_OBSERVER_ERROR, e))
 
     def add_observer_output(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):

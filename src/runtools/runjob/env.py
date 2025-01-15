@@ -136,12 +136,12 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
         Returns:
             A list of all job instances currently managed by this container.
         """
-        with self._ctx_lock:
+        with self._lock:
             return list(managed.instance for managed in self._managed_instances.values())
 
     def _new_instance_phase(self, job_run: JobRun, previous_phase: PhaseRun, new_phase: PhaseRun, ordinal: int):
         if new_phase.run_state == RunState.ENDED:
-            self._release_instance(job_run.metadata.instance_id, self._transient)
+            self._detach_instance(job_run.metadata.instance_id, self._transient)
 
     def _new_instance_output(self, instance_meta: JobInstanceMetadata, output_line: OutputLine):
         pass
