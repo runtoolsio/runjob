@@ -28,11 +28,11 @@ class Feature(ABC):
         pass
 
     @abstractmethod
-    def on_instance_added(self):
+    def on_instance_added(self, job_instance):
         pass
 
     @abstractmethod
-    def on_instance_removed(self):
+    def on_instance_removed(self, job_instance):
         pass
 
 
@@ -290,7 +290,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
 class IsolatedEnvironment(RunnableEnvironmentBase):
 
     def __init__(self, *features, transient=True):
-        super().__init__(*features, transient=transient)
+        super().__init__(features, transient=transient)
 
     def get_instances(self, run_match):
         return [i for i in self.instances if run_match(i)]
