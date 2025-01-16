@@ -7,7 +7,7 @@ from typing import Dict, Optional
 from runtools.runcore import JobRun, SortCriteria, plugins
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.db.sqlite import SQLite
-from runtools.runcore.env import Environment
+from runtools.runcore.environment import Environment, EnvironmentBase
 from runtools.runcore.job import JobInstance, InstanceTransitionObserver, InstanceOutputObserver
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import PhaseRun, RunState
@@ -23,18 +23,33 @@ def _create_plugins(names):
 
 class RunnableEnvironment(Environment, ABC):
 
-    def __init__(self, persistence):
-        self._persistence = persistence
-
     @abstractmethod
     def create_instance(self, **kwargs):
         pass
 
-    def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._persistence.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+    @abstractmethod
+    def add_instance(self, job_instance):
+        """
+        Add a job instance to the environment.
 
-    def read_history_stats(self, run_match=None):
-        return self._persistence.read_history_stats(run_match)
+        Args:
+            job_instance (JobInstance): The job instance to be added.
+
+        Returns:
+            JobInstance: The added job instance.
+        """
+
+    @abstractmethod
+    def remove_instance(self, job_instance_id) -> Optional[JobInstance]:
+        """
+        Remove a job instance from the context using its ID.
+
+        Args:
+            job_instance_id (JobRunId): The ID of the job instance to remove.
+
+        Returns:
+            Optional[JobInstance]: The removed job instance if found, otherwise None.
+        """
 
 
 class Feature(ABC):
@@ -61,7 +76,7 @@ class _ManagedInstance:
     detached: bool = False
 
 
-class RunnableEnvironmentBase(RunnableEnvironment, ABC):
+class RunnableEnvironmentBase(RunnableEnvironment, EnvironmentBase, ABC):
     """
     Implementation details
     ----------------------
