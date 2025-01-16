@@ -180,7 +180,6 @@ class _JobInstance(JobInstance):
         self._transition_notification = (
             ObservableNotification[InstanceTransitionObserver](error_hook=transition_observer_err_hook,
                                                                force_reraise=True))
-
         self._transition_observer_faults: List[Fault] = []
         # TODO Move the below out of constructor?
         self._phaser.transition_hook = self._transition_hook

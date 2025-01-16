@@ -2,13 +2,13 @@ import sqlite3
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from threading import Lock, Condition
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 from runtools.runcore import JobRun, SortCriteria, plugins
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.db.sqlite import SQLite
 from runtools.runcore.environment import Environment, EnvironmentBase
-from runtools.runcore.job import JobInstance, InstanceTransitionObserver, InstanceOutputObserver
+from runtools.runcore.job import JobInstance, InstanceTransitionObserver, InstanceOutputObserver, JobStats
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import PhaseRun, RunState
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
@@ -344,11 +344,14 @@ class _IsolatedEnvironment(RunnableEnvironmentBase):
     def __init__(self, persistence, features, transient=True):
         super().__init__(persistence, features, transient=transient)
 
-    def get_instances(self, run_match):
+    def get_active_runs(self, run_match) -> List[JobRun]:
+        return [i.snapshot() for i in self.get_instances(run_match)]
+
+    def get_instances(self, run_match) -> List[JobInstance]:
         return [i for i in self.instances if run_match(i)]
 
-    def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+    def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False) -> List[JobRun]:
         pass
 
-    def read_history_stats(self, run_match=None):
+    def read_history_stats(self, run_match=None) -> List[JobStats]:
         pass
