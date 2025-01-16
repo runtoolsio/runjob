@@ -1,22 +1,40 @@
+import sqlite3
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from threading import Lock, Condition
 from typing import Dict, Optional
 
-from runtools.runcore import JobRun, SortCriteria
+from runtools.runcore import JobRun, SortCriteria, plugins
 from runtools.runcore.common import InvalidStateError
+from runtools.runcore.db.sqlite import SQLite
 from runtools.runcore.env import Environment
 from runtools.runcore.job import JobInstance, InstanceTransitionObserver, InstanceOutputObserver
+from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import PhaseRun, RunState
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 from runtools.runjob import instance, JobInstanceHook
 
 
+def _create_plugins(names):
+    plugins.load_modules(names)
+    fetched_plugins = Plugin.fetch_plugins(names)
+    # TODO complete
+
+
 class RunnableEnvironment(Environment, ABC):
+
+    def __init__(self, persistence):
+        self._persistence = persistence
 
     @abstractmethod
     def create_instance(self, **kwargs):
         pass
+
+    def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._persistence.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+
+    def read_history_stats(self, run_match=None):
+        return self._persistence.read_history_stats(run_match)
 
 
 class Feature(ABC):
@@ -60,7 +78,8 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
     """
     OBSERVERS_PRIORITY = 1000
 
-    def __init__(self, features=(), transient=True):
+    def __init__(self, persistence, features=(), transient=True):
+        super().__init__(persistence)
         self._features = features
         self._transient = transient
         self._lock = Lock()
@@ -173,8 +192,10 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
             self._managed_instances[job_instance.instance_id] = managed_instance
 
         job_instance.add_observer_transition(self._new_instance_phase, RunnableEnvironmentBase.OBSERVERS_PRIORITY)
-        job_instance.add_observer_transition(self._transition_notification.observer_proxy, RunnableEnvironmentBase.OBSERVERS_PRIORITY - 1)
-        job_instance.add_observer_output(self._output_notification.observer_proxy, RunnableEnvironmentBase.OBSERVERS_PRIORITY - 1)
+        job_instance.add_observer_transition(self._transition_notification.observer_proxy,
+                                             RunnableEnvironmentBase.OBSERVERS_PRIORITY - 1)
+        job_instance.add_observer_output(self._output_notification.observer_proxy,
+                                         RunnableEnvironmentBase.OBSERVERS_PRIORITY - 1)
 
         for feature in self._features:
             feature.on_instance_added(job_instance)
@@ -286,11 +307,27 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
         for feature in self._features:
             feature.on_close()
 
+        self._persistence.close()
 
-class IsolatedEnvironment(RunnableEnvironmentBase):
 
-    def __init__(self, *features, transient=True):
-        super().__init__(features, transient=transient)
+def isolated(persistence=None, *, features=None, transient=True) -> RunnableEnvironment:
+    if not persistence:
+        persistence = SQLite(sqlite3.connect(':memory:'))
+
+    if features is None:
+        features = ()
+    elif not isinstance(features, (list, tuple, set)):
+        features = (features,)
+    else:
+        features = tuple(features)
+
+    return _IsolatedEnvironment(persistence, features, transient)
+
+
+class _IsolatedEnvironment(RunnableEnvironmentBase):
+
+    def __init__(self, persistence, features, transient=True):
+        super().__init__(persistence, features, transient=transient)
 
     def get_instances(self, run_match):
         return [i for i in self.instances if run_match(i)]

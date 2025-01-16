@@ -5,8 +5,8 @@ import pytest
 
 from runtools.runcore.job import JobInstance
 from runtools.runcore.run import RunState
-from runtools.runjob import instance
-from runtools.runjob.env import Feature, IsolatedEnvironment
+from runtools.runjob import instance, environment
+from runtools.runjob.environment import Feature
 from runtools.runjob.test.phaser import TestPhase
 
 
@@ -40,27 +40,27 @@ def feature():
 
 @pytest.fixture
 def env(feature):
-    with IsolatedEnvironment(feature, transient=True) as env:
+    with environment.isolated(features=feature, transient=True) as env:
         yield env
 
 
 def test_environment_lifecycle(feature):
     """Test basic environment lifecycle - open, add instance, close"""
-    with IsolatedEnvironment(feature, transient=True) as env:
+    with environment.isolated(features=feature, transient=True) as e:
         assert feature.opened
 
-        inst = env.create_instance("test_job", [(TestPhase())])
-        inst2 = env.add_instance(instance.create('test_job_2', [TestPhase()]))
+        inst = e.create_instance("test_job", [(TestPhase())])
+        inst2 = e.add_instance(instance.create('test_job_2', [TestPhase()]))
 
         assert feature.added_instances[0] == inst
         assert feature.added_instances[1] == inst2
-        assert inst in env.instances
-        assert inst2 in env.instances
+        assert inst in e.instances
+        assert inst2 in e.instances
 
         inst.run()
         inst2.run()
 
-        assert not env.instances
+        assert not e.instances
         assert feature.removed_instances[0] == inst
         assert feature.removed_instances[1] == inst2
         assert not feature.closed
