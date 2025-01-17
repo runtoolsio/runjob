@@ -3,15 +3,16 @@ from dataclasses import dataclass
 from threading import Lock, Condition
 from typing import Dict, Optional, List
 
-from runtools.runcore import JobRun, plugins, SortCriteria
+from runtools.runcore import JobRun, plugins
 from runtools.runcore.common import InvalidStateError
-from runtools.runcore.db import sqlite
-from runtools.runcore.environment import Environment, LocalEnvironment
-from runtools.runcore.job import JobInstance, InstanceTransitionObserver, InstanceOutputObserver
+from runtools.runcore.db import sqlite, PersistingObserver
+from runtools.runcore.environment import Environment, LocalEnvironment, JobInstanceObservable, PersistingEnvironment
+from runtools.runcore.job import JobInstance
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import PhaseRun, RunState
-from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 from runtools.runjob import instance, JobInstanceHook
+from runtools.runjob.api import APIServer
+from runtools.runjob.events import TransitionDispatcher, OutputDispatcher
 
 
 def _create_plugins(names):
@@ -92,8 +93,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
     """
     OBSERVERS_PRIORITY = 1000
 
-    def __init__(self, persistence, features=(), transient=True):
-        self._persistence = persistence
+    def __init__(self, features=(), transient=True):
         self._features = features
         self._transient = transient
         self._lock = Lock()
@@ -102,9 +102,6 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
         self._managed_instances: Dict[str, _ManagedInstance] = {}
         self._opened = False
         self._closing = False
-
-        self._transition_notification = ObservableNotification[InstanceTransitionObserver]()
-        self._output_notification = ObservableNotification[InstanceOutputObserver]()
 
     def open(self):
         """
@@ -115,7 +112,6 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
                 raise InvalidStateError("Environment has been already opened")
             self._opened = True
 
-        self._persistence.open()
         for feature in self._features:
             feature.on_open()
 
@@ -273,42 +269,6 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
     def _on_removed(self, job_instance):
         pass
 
-    def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._persistence.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
-
-    def read_history_stats(self, run_match=None):
-        return self._persistence.read_history_stats(run_match)
-
-    def add_observer_transition(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
-        """
-        Add an observer for job instance transitions in this environment.
-        The observer will be notified of all transitions for all instances.
-
-        Args:
-            observer: The transition observer to add
-            priority: Priority level for the observer (lower numbers = higher priority)
-        """
-        self._transition_notification.add_observer(observer, priority)
-
-    def remove_observer_transition(self, observer):
-        """Remove a previously registered transition observer."""
-        self._transition_notification.remove_observer(observer)
-
-    def add_observer_output(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
-        """
-        Add an observer for job instance outputs in this environment.
-        The observer will be notified of all outputs from all instances.
-
-        Args:
-            observer: The output observer to add
-            priority: Priority level for the observer (lower numbers = higher priority)
-        """
-        self._output_notification.add_observer(observer, priority)
-
-    def remove_observer_output(self, observer):
-        """Remove a previously registered output observer."""
-        self._output_notification.remove_observer(observer)
-
     def close(self):
         with self._detached_condition:
             if self._closing:
@@ -322,10 +282,8 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
             # TODO Catch exc
             feature.on_close()
 
-        self._persistence.close()
 
-
-def isolated(persistence=None, *, features=None, transient=True) -> RunnableEnvironment:
+def isolated(persistence=None, *, features=None, transient=True):
     if not persistence:
         persistence = sqlite.create(':memory:')
 
@@ -339,12 +297,20 @@ def isolated(persistence=None, *, features=None, transient=True) -> RunnableEnvi
     return _IsolatedEnvironment(persistence, features, transient)
 
 
-class _IsolatedEnvironment(RunnableEnvironmentBase):
+class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, RunnableEnvironmentBase):
 
     def __init__(self, persistence, features, transient=True):
-        super().__init__(persistence, features, transient=transient)
+        JobInstanceObservable.__init__(self)
+        RunnableEnvironmentBase.__init__(self, features, transient=transient)
+        PersistingEnvironment.__init__(self, persistence)
+        self._persisting_observer = PersistingObserver(persistence)
+
+    def open(self):
+        RunnableEnvironmentBase.open(self)  # Always first
+        PersistingEnvironment.open(self)
 
     def _on_added(self, job_instance):
+        job_instance.add_observer_transition(self._persisting_observer)
         job_instance.add_observer_transition(self._transition_notification.observer_proxy,
                                              RunnableEnvironmentBase.OBSERVERS_PRIORITY - 1)
         job_instance.add_observer_output(self._output_notification.observer_proxy,
@@ -353,6 +319,7 @@ class _IsolatedEnvironment(RunnableEnvironmentBase):
     def _on_removed(self, job_instance):
         job_instance.remove_observer_output(self._output_notification.observer_proxy)
         job_instance.remove_observer_transition(self._transition_notification.observer_proxy)
+        job_instance.remove_observer_transition(self._persisting_observer)
 
     def get_active_runs(self, run_match) -> List[JobRun]:
         return [i.snapshot() for i in self.get_instances(run_match)]
@@ -360,8 +327,46 @@ class _IsolatedEnvironment(RunnableEnvironmentBase):
     def get_instances(self, run_match) -> List[JobInstance]:
         return [i for i in self.instances if run_match(i)]
 
+    def close(self):
+        RunnableEnvironmentBase.close(self)  # Always execute first as the method is waiting until it can be closed
+        PersistingEnvironment.close(self)
+
+def local():
+    return _RunnableLocalEnvironment(sqlite.create(':memory:'))
+
 
 class _RunnableLocalEnvironment(LocalEnvironment, RunnableEnvironmentBase):
 
-    def __init__(self, persistence):
-        super().__init__(persistence)
+    def __init__(self, persistence, features=(), transient=True):
+        RunnableEnvironmentBase.__init__(self, features, transient=transient)
+        LocalEnvironment.__init__(self, persistence)
+        self._api = APIServer()
+        self._transition_dispatcher = TransitionDispatcher()
+        self._output_dispatcher = OutputDispatcher()
+        self._persisting_observer = PersistingObserver(persistence)
+
+    def open(self):
+        RunnableEnvironmentBase.open(self)
+        LocalEnvironment.open(self)
+
+        self._api.start()
+
+    def _on_added(self, job_instance):
+        job_instance.add_observer_transition(self._persisting_observer)
+        self._api.register_instance(job_instance)
+        job_instance.add_observer_transition(self._transition_dispatcher)
+        job_instance.add_observer_output(self._output_dispatcher)
+
+    def _on_removed(self, job_instance):
+        job_instance.remove_observer_output(self._output_dispatcher)
+        job_instance.remove_observer_transition(self._transition_dispatcher)
+        self._api.unregister_instance(job_instance)
+        job_instance.remove_observer_transition(self._persisting_observer)
+
+    def close(self):
+        RunnableEnvironmentBase.close(self)  # Always execute first as the method is waiting until it can be closed
+        LocalEnvironment.close(self)
+
+        self._api.close()
+        self._output_dispatcher.close()
+        self._transition_dispatcher.close()
