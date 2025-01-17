@@ -3,10 +3,10 @@ from dataclasses import dataclass
 from threading import Lock, Condition
 from typing import Dict, Optional, List
 
-from runtools.runcore import JobRun, plugins
+from runtools.runcore import JobRun, plugins, SortCriteria
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.db import sqlite
-from runtools.runcore.environment import Environment, EnvironmentBase, LocalEnvironment
+from runtools.runcore.environment import Environment, LocalEnvironment
 from runtools.runcore.job import JobInstance, InstanceTransitionObserver, InstanceOutputObserver
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import PhaseRun, RunState
@@ -23,7 +23,7 @@ def _create_plugins(names):
 class RunnableEnvironment(Environment, ABC):
 
     @abstractmethod
-    def create_instance(self, **kwargs):
+    def create_instance(self, *args, **kwargs):
         pass
 
     @abstractmethod
@@ -75,7 +75,7 @@ class _ManagedInstance:
     detached: bool = False
 
 
-class RunnableEnvironmentBase(RunnableEnvironment, EnvironmentBase, ABC):
+class RunnableEnvironmentBase(RunnableEnvironment, ABC):
     """
     Implementation details
     ----------------------
@@ -93,7 +93,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, EnvironmentBase, ABC):
     OBSERVERS_PRIORITY = 1000
 
     def __init__(self, persistence, features=(), transient=True):
-        super().__init__(persistence)
+        self._persistence = persistence
         self._features = features
         self._transient = transient
         self._lock = Lock()
@@ -114,7 +114,8 @@ class RunnableEnvironmentBase(RunnableEnvironment, EnvironmentBase, ABC):
             if self._opened:
                 raise InvalidStateError("Environment has been already opened")
             self._opened = True
-        super().open()
+
+        self._persistence.open()
         for feature in self._features:
             feature.on_open()
 
@@ -272,6 +273,12 @@ class RunnableEnvironmentBase(RunnableEnvironment, EnvironmentBase, ABC):
     def _on_removed(self, job_instance):
         pass
 
+    def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._persistence.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+
+    def read_history_stats(self, run_match=None):
+        return self._persistence.read_history_stats(run_match)
+
     def add_observer_transition(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
         """
         Add an observer for job instance transitions in this environment.
@@ -315,7 +322,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, EnvironmentBase, ABC):
             # TODO Catch exc
             feature.on_close()
 
-        super().close()
+        self._persistence.close()
 
 
 def isolated(persistence=None, *, features=None, transient=True) -> RunnableEnvironment:
