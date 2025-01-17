@@ -1,4 +1,3 @@
-import sqlite3
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from threading import Lock, Condition
@@ -6,8 +5,8 @@ from typing import Dict, Optional, List
 
 from runtools.runcore import JobRun, plugins
 from runtools.runcore.common import InvalidStateError
-from runtools.runcore.db.sqlite import SQLite
-from runtools.runcore.environment import Environment, EnvironmentBase
+from runtools.runcore.db import sqlite
+from runtools.runcore.environment import Environment, EnvironmentBase, LocalEnvironment
 from runtools.runcore.job import JobInstance, InstanceTransitionObserver, InstanceOutputObserver
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import PhaseRun, RunState
@@ -107,13 +106,6 @@ class RunnableEnvironmentBase(RunnableEnvironment, EnvironmentBase, ABC):
         self._transition_notification = ObservableNotification[InstanceTransitionObserver]()
         self._output_notification = ObservableNotification[InstanceOutputObserver]()
 
-    def __enter__(self):
-        """
-        Open the environment container and execute open hooks of all added features.
-        """
-        self.open()
-        return self
-
     def open(self):
         """
         Open the environment container and execute open hooks of all added features.
@@ -122,6 +114,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, EnvironmentBase, ABC):
             if self._opened:
                 raise InvalidStateError("Environment has been already opened")
             self._opened = True
+        super().open()
         for feature in self._features:
             feature.on_open()
 
@@ -309,9 +302,6 @@ class RunnableEnvironmentBase(RunnableEnvironment, EnvironmentBase, ABC):
         """Remove a previously registered output observer."""
         self._output_notification.remove_observer(observer)
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
     def close(self):
         with self._detached_condition:
             if self._closing:
@@ -322,14 +312,15 @@ class RunnableEnvironmentBase(RunnableEnvironment, EnvironmentBase, ABC):
                 self._detached_condition.wait()
 
         for feature in self._features:
+            # TODO Catch exc
             feature.on_close()
 
-        self._persistence.close()
+        super().close()
 
 
 def isolated(persistence=None, *, features=None, transient=True) -> RunnableEnvironment:
     if not persistence:
-        persistence = SQLite(sqlite3.connect(':memory:'))
+        persistence = sqlite.create(':memory:')
 
     if features is None:
         features = ()
@@ -361,3 +352,9 @@ class _IsolatedEnvironment(RunnableEnvironmentBase):
 
     def get_instances(self, run_match) -> List[JobInstance]:
         return [i for i in self.instances if run_match(i)]
+
+
+class _RunnableLocalEnvironment(LocalEnvironment, RunnableEnvironmentBase):
+
+    def __init__(self, persistence):
+        super().__init__(persistence)
