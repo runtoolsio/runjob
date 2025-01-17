@@ -4,11 +4,11 @@ from dataclasses import dataclass
 from threading import Lock, Condition
 from typing import Dict, Optional, List
 
-from runtools.runcore import JobRun, SortCriteria, plugins
+from runtools.runcore import JobRun, plugins
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.db.sqlite import SQLite
 from runtools.runcore.environment import Environment, EnvironmentBase
-from runtools.runcore.job import JobInstance, InstanceTransitionObserver, InstanceOutputObserver, JobStats
+from runtools.runcore.job import JobInstance, InstanceTransitionObserver, InstanceOutputObserver
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import PhaseRun, RunState
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
@@ -207,11 +207,8 @@ class RunnableEnvironmentBase(RunnableEnvironment, EnvironmentBase, ABC):
             self._managed_instances[job_instance.instance_id] = managed_instance
 
         job_instance.add_observer_transition(self._new_instance_phase, RunnableEnvironmentBase.OBSERVERS_PRIORITY)
-        job_instance.add_observer_transition(self._transition_notification.observer_proxy,
-                                             RunnableEnvironmentBase.OBSERVERS_PRIORITY - 1)
-        job_instance.add_observer_output(self._output_notification.observer_proxy,
-                                         RunnableEnvironmentBase.OBSERVERS_PRIORITY - 1)
 
+        self._on_added(job_instance)
         for feature in self._features:
             feature.on_instance_added(job_instance)
 
@@ -230,6 +227,9 @@ class RunnableEnvironmentBase(RunnableEnvironment, EnvironmentBase, ABC):
             self._detach_instance(job_instance.metadata.instance_id, self._transient)
 
         return job_instance
+
+    def _on_added(self, job_instance):
+        pass
 
     def remove_instance(self, job_instance_id) -> Optional[JobInstance]:
         """
@@ -264,18 +264,20 @@ class RunnableEnvironmentBase(RunnableEnvironment, EnvironmentBase, ABC):
         job_instance = managed_instance.instance
 
         if removed:
+            self._on_removed(job_instance)
             for feature in self._features:
                 feature.on_instance_removed(job_instance)
 
         if detach:
-            job_instance.remove_observer_output(self._output_notification.observer_proxy)
-            job_instance.remove_observer_transition(self._transition_notification.observer_proxy)
             job_instance.remove_observer_transition(self._new_instance_phase)
             with self._detached_condition:
                 managed_instance.detached = True
                 self._detached_condition.notify()
 
         return job_instance
+
+    def _on_removed(self, job_instance):
+        pass
 
     def add_observer_transition(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY):
         """
@@ -344,14 +346,18 @@ class _IsolatedEnvironment(RunnableEnvironmentBase):
     def __init__(self, persistence, features, transient=True):
         super().__init__(persistence, features, transient=transient)
 
+    def _on_added(self, job_instance):
+        job_instance.add_observer_transition(self._transition_notification.observer_proxy,
+                                             RunnableEnvironmentBase.OBSERVERS_PRIORITY - 1)
+        job_instance.add_observer_output(self._output_notification.observer_proxy,
+                                         RunnableEnvironmentBase.OBSERVERS_PRIORITY - 1)
+
+    def _on_removed(self, job_instance):
+        job_instance.remove_observer_output(self._output_notification.observer_proxy)
+        job_instance.remove_observer_transition(self._transition_notification.observer_proxy)
+
     def get_active_runs(self, run_match) -> List[JobRun]:
         return [i.snapshot() for i in self.get_instances(run_match)]
 
     def get_instances(self, run_match) -> List[JobInstance]:
         return [i for i in self.instances if run_match(i)]
-
-    def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False) -> List[JobRun]:
-        pass
-
-    def read_history_stats(self, run_match=None) -> List[JobStats]:
-        pass
