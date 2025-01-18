@@ -53,7 +53,8 @@ from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserve
                                   InstanceOutputObserver, JobInstanceMetadata, JobFaults)
 from runtools.runcore.output import Output, TailNotSupportedError, Mode, OutputLine
 from runtools.runcore.run import PhaseRun, Outcome, RunState, Fault, PhaseInfo
-from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification, MultipleExceptions
+from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
+from runtools.runcore.util.err import MultipleExceptions
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer
 from runtools.runjob.phaser import Phaser, DelegatingPhase
 from runtools.runjob.track import StatusTracker, OutputToStatusTransformer

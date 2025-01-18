@@ -11,6 +11,7 @@ from runtools.runcore.job import JobInstance, JobInstanceObservable
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import PhaseRun, RunState
 from runtools.runcore.util import ensure_tuple_copy
+from runtools.runcore.util.err import run_isolated_collect_exceptions
 from runtools.runjob import instance, JobInstanceHook
 from runtools.runjob.api import APIServer
 from runtools.runjob.events import TransitionDispatcher, OutputDispatcher
@@ -279,9 +280,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
             while not all((i.detached for i in self._managed_instances.values())):
                 self._detached_condition.wait()
 
-        for feature in self._features:
-            # TODO Catch exc
-            feature.on_close()
+        run_isolated_collect_exceptions(*(feature.on_close for feature in self._features))
 
 
 def isolated(persistence=None, *, features=None, transient=True):
@@ -320,8 +319,10 @@ class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, Runnabl
         return [i for i in self.instances if run_match(i)]
 
     def close(self):
-        RunnableEnvironmentBase.close(self)  # Always execute first as the method is waiting until it can be closed
-        PersistingEnvironment.close(self)
+        run_isolated_collect_exceptions(
+            lambda: RunnableEnvironmentBase.close(self),  # Always execute first as the method is waiting until it can be closed
+            lambda: PersistingEnvironment.close(self)
+        )
 
 def local(persistence=None, *, features=None, transient=True):
     persistence = persistence or sqlite.create(':memory:')
@@ -361,9 +362,10 @@ class RunnableLocalEnvironment(LocalEnvironment, RunnableEnvironmentBase):
         job_instance.remove_observer_transition(self._persisting_observer)
 
     def close(self):
-        RunnableEnvironmentBase.close(self)  # Always execute first as the method is waiting until it can be closed
-        LocalEnvironment.close(self)
-
-        self._api.close()
-        self._output_dispatcher.close()
-        self._transition_dispatcher.close()
+        run_isolated_collect_exceptions(
+            lambda: RunnableEnvironmentBase.close(self),  # Always execute first as the method is waiting until it can be closed
+            lambda: LocalEnvironment.close(self),
+            self._api.close,
+            self._output_dispatcher.close,
+            self._transition_dispatcher.close
+        )
