@@ -55,7 +55,6 @@ from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserve
                                   InstanceOutputObserver, JobInstanceMetadata, JobFaults)
 from runtools.runcore.output import Output, TailNotSupportedError, Mode, OutputLine
 from runtools.runcore.run import PhaseRun, Outcome, RunState, Fault, PhaseInfo
-from runtools.runcore.util.err import MultipleExceptions
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer
 from runtools.runjob.phaser import Phaser, DelegatingPhase
@@ -104,9 +103,9 @@ class _JobOutput(Output, OutputSink):
             if self.tail_buffer:
                 self.tail_buffer.add_line(output_line)
             self.output_notification.observer_proxy.new_instance_output(self.metadata, output_line)
-        except MultipleExceptions as me:
-            for e in me:
-                log.error("[output_observer_error]", exc_info=e)
+        except ExceptionGroup as eg:
+            log.error("[output_observer_error]", exc_info=eg)
+            for e in eg.exceptions:
                 self.output_observer_faults.append(Fault.from_exception(OUTPUT_OBSERVER_ERROR, e))
         finally:
             _thread_local.processing_output = False
@@ -377,9 +376,9 @@ class _JobInstance(JobInstance):
 
         try:
             self._transition_notification.observer_proxy.new_instance_phase(snapshot, old_phase, new_phase, ordinal)
-        except MultipleExceptions as me:
-            for e in me:
-                log.error("[transition_observer_error]", exc_info=e)
+        except ExceptionGroup as eg:
+            log.error("[transition_observer_error]", exc_info=eg)
+            for e in eg.exceptions:
                 self._transition_observer_faults.append(Fault.from_exception(TRANSITION_OBSERVER_ERROR, e))
 
     def add_observer_output(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):

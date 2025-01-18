@@ -280,7 +280,9 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
             while not all((i.detached for i in self._managed_instances.values())):
                 self._detached_condition.wait()
 
-        run_isolated_collect_exceptions(*(feature.on_close for feature in self._features))
+        run_isolated_collect_exceptions(
+            "Errors on environment features closing",
+            *(feature.on_close for feature in self._features))
 
 
 def isolated(persistence=None, *, features=None, transient=True):
@@ -320,6 +322,7 @@ class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, Runnabl
 
     def close(self):
         run_isolated_collect_exceptions(
+            "Errors during closing isolated environment",
             lambda: RunnableEnvironmentBase.close(self),  # Always execute first as the method is waiting until it can be closed
             lambda: PersistingEnvironment.close(self)
         )
@@ -363,6 +366,7 @@ class RunnableLocalEnvironment(_LocalEnvironment, RunnableEnvironmentBase):
 
     def close(self):
         run_isolated_collect_exceptions(
+            "Errors during closing runnable local environment",
             lambda: RunnableEnvironmentBase.close(self),  # Always execute first as the method is waiting until it can be closed
             lambda: _LocalEnvironment.close(self),
             self._api.close,
