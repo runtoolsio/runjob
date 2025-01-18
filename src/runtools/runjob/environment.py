@@ -272,17 +272,27 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
         pass
 
     def close(self):
+        interrupt_received = False
         with self._detached_condition:
             if self._closing:
                 return
 
             self._closing = True
             while not all((i.detached for i in self._managed_instances.values())):
-                self._detached_condition.wait()
+                try:
+                    self._detached_condition.wait()
+                except KeyboardInterrupt:
+                    interrupt_received = True
+                    break
 
         run_isolated_collect_exceptions(
             "Errors on environment features closing",
-            *(feature.on_close for feature in self._features))
+            *(feature.on_close for feature in self._features),
+            suppress=interrupt_received
+        )
+
+        if interrupt_received:
+            raise KeyboardInterrupt
 
 
 def isolated(persistence=None, *, features=None, transient=True):
