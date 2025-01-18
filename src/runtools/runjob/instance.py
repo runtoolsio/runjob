@@ -43,9 +43,11 @@ State lock
 
 """
 import logging
+from collections import deque
 from contextlib import contextmanager
 from contextvars import ContextVar
 from threading import local, Thread
+from time import monotonic
 from typing import Callable, Tuple, Optional, List
 
 from runtools.runcore import util
@@ -83,7 +85,10 @@ class _JobOutput(Output, OutputSink):
         self.output_notification = (
             ObservableNotification[InstanceOutputObserver](error_hook=output_observer_err_hook, force_reraise=True))
         self.output_observer_faults: List[Fault] = []
+
         self._notifying_observers = False
+        self._recent_outputs = deque(maxlen=100)
+        self._dedup_window = 0.5  # 500ms window
 
     def _process_output(self, output_line):
         # Check if we're already processing output in this thread to prevent PARTIALLY the recursion cycle
@@ -91,7 +96,11 @@ class _JobOutput(Output, OutputSink):
             return
 
         _thread_local.processing_output = True
+
         try:
+            if self._deduplicate(output_line.text):
+                return
+
             if self.tail_buffer:
                 self.tail_buffer.add_line(output_line)
             self.output_notification.observer_proxy.new_instance_output(self.metadata, output_line)
@@ -101,6 +110,32 @@ class _JobOutput(Output, OutputSink):
                 self.output_observer_faults.append(Fault.from_exception(OUTPUT_OBSERVER_ERROR, e))
         finally:
             _thread_local.processing_output = False
+
+    def _deduplicate(self, output_line: str) -> bool:
+        """
+        Check if the output line is a duplicate within the dedup window.
+        Also cleans up old entries from the buffer.
+
+        Args:
+            output_line: The text to check for duplicates
+
+        Returns:
+            True if the line is a duplicate, False otherwise
+        """
+        now = monotonic()
+
+        # Clean old entries outside the window
+        while self._recent_outputs and (now - self._recent_outputs[0][0]) > self._dedup_window:
+            self._recent_outputs.popleft()
+
+        # Check for duplicates
+        for _, text in self._recent_outputs:
+            if text == output_line:
+                return True
+
+        # Not a duplicate, add to recent outputs
+        self._recent_outputs.append((now, output_line))
+        return False
 
     def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
         if not self.tail_buffer:
