@@ -6,7 +6,7 @@ from typing import Dict, Optional, List
 from runtools.runcore import JobRun, plugins
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.db import sqlite, PersistingObserver
-from runtools.runcore.environment import Environment, _LocalEnvironment, PersistingEnvironment
+from runtools.runcore.environment import Environment, LocalEnvironment, PersistingEnvironment
 from runtools.runcore.job import JobInstance, JobInstanceObservable
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import PhaseRun, RunState
@@ -324,11 +324,11 @@ class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, Runnabl
         job_instance.remove_observer_transition(self._transition_notification.observer_proxy)
         job_instance.remove_observer_transition(self._persisting_observer)
 
-    def get_active_runs(self, run_match) -> List[JobRun]:
+    def get_active_runs(self, run_match=None) -> List[JobRun]:
         return [i.snapshot() for i in self.get_instances(run_match)]
 
-    def get_instances(self, run_match) -> List[JobInstance]:
-        return [i for i in self.instances if run_match(i)]
+    def get_instances(self, run_match=None) -> List[JobInstance]:
+        return [i for i in self.instances if not run_match or run_match(i)]
 
     def close(self):
         run_isolated_collect_exceptions(
@@ -346,11 +346,11 @@ def local(persistence=None, *, features=None, transient=True):
     return RunnableLocalEnvironment(persistence, api, transition_dispatcher, output_dispatcher, features, transient)
 
 
-class RunnableLocalEnvironment(_LocalEnvironment, RunnableEnvironmentBase):
+class RunnableLocalEnvironment(LocalEnvironment, RunnableEnvironmentBase):
 
     def __init__(self, persistence, api, transition_dispatcher, output_dispatcher, features, transient):
         RunnableEnvironmentBase.__init__(self, features, transient=transient)
-        _LocalEnvironment.__init__(self, persistence)
+        LocalEnvironment.__init__(self, persistence)
         self._api = api
         self._transition_dispatcher = transition_dispatcher
         self._output_dispatcher = output_dispatcher
@@ -358,7 +358,7 @@ class RunnableLocalEnvironment(_LocalEnvironment, RunnableEnvironmentBase):
 
     def open(self):
         RunnableEnvironmentBase.open(self)  # Execute first for opened only once check
-        _LocalEnvironment.open(self)
+        LocalEnvironment.open(self)
 
         self._api.start()
 
@@ -378,7 +378,7 @@ class RunnableLocalEnvironment(_LocalEnvironment, RunnableEnvironmentBase):
         run_isolated_collect_exceptions(
             "Errors during closing runnable local environment",
             lambda: RunnableEnvironmentBase.close(self),  # Always execute first as the method is waiting until it can be closed
-            lambda: _LocalEnvironment.close(self),
+            lambda: LocalEnvironment.close(self),
             self._api.close,
             self._output_dispatcher.close,
             self._transition_dispatcher.close
