@@ -10,6 +10,7 @@ from runtools.runcore.environment import Environment, LocalEnvironment, Persisti
 from runtools.runcore.job import JobInstance, JobInstanceObservable
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import PhaseRun, RunState
+from runtools.runcore.util import ensure_tuple_copy
 from runtools.runjob import instance, JobInstanceHook
 from runtools.runjob.api import APIServer
 from runtools.runjob.events import TransitionDispatcher, OutputDispatcher
@@ -284,17 +285,8 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
 
 
 def isolated(persistence=None, *, features=None, transient=True):
-    if not persistence:
-        persistence = sqlite.create(':memory:')
-
-    if features is None:
-        features = ()
-    elif not isinstance(features, (list, tuple, set)):
-        features = (features,)
-    else:
-        features = tuple(features)
-
-    return _IsolatedEnvironment(persistence, features, transient)
+    persistence = persistence or sqlite.create(':memory:')
+    return _IsolatedEnvironment(persistence, ensure_tuple_copy(features), transient)
 
 
 class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, RunnableEnvironmentBase):
@@ -331,22 +323,27 @@ class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, Runnabl
         RunnableEnvironmentBase.close(self)  # Always execute first as the method is waiting until it can be closed
         PersistingEnvironment.close(self)
 
-def local():
-    return _RunnableLocalEnvironment(sqlite.create(':memory:'))
+def local(persistence=None, *, features=None, transient=True):
+    persistence = persistence or sqlite.create(':memory:')
+    api = APIServer()
+    transition_dispatcher = TransitionDispatcher()
+    output_dispatcher = OutputDispatcher()
+    features = ensure_tuple_copy(features)
+    return RunnableLocalEnvironment(persistence, api, transition_dispatcher, output_dispatcher, features, transient)
 
 
-class _RunnableLocalEnvironment(LocalEnvironment, RunnableEnvironmentBase):
+class RunnableLocalEnvironment(LocalEnvironment, RunnableEnvironmentBase):
 
-    def __init__(self, persistence, features=(), transient=True):
+    def __init__(self, persistence, api, transition_dispatcher, output_dispatcher, features, transient):
         RunnableEnvironmentBase.__init__(self, features, transient=transient)
         LocalEnvironment.__init__(self, persistence)
-        self._api = APIServer()
-        self._transition_dispatcher = TransitionDispatcher()
-        self._output_dispatcher = OutputDispatcher()
+        self._api = api
+        self._transition_dispatcher = transition_dispatcher
+        self._output_dispatcher = output_dispatcher
         self._persisting_observer = PersistingObserver(persistence)
 
     def open(self):
-        RunnableEnvironmentBase.open(self)
+        RunnableEnvironmentBase.open(self)  # Execute first for opened only once check
         LocalEnvironment.open(self)
 
         self._api.start()
