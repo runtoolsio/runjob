@@ -45,7 +45,7 @@ State lock
 import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
-from threading import Thread
+from threading import local, Thread
 from typing import Callable, Tuple, Optional, List
 
 from runtools.runcore import util
@@ -53,8 +53,8 @@ from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserve
                                   InstanceOutputObserver, JobInstanceMetadata, JobFaults)
 from runtools.runcore.output import Output, TailNotSupportedError, Mode, OutputLine
 from runtools.runcore.run import PhaseRun, Outcome, RunState, Fault, PhaseInfo
-from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 from runtools.runcore.util.err import MultipleExceptions
+from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer
 from runtools.runjob.phaser import Phaser, DelegatingPhase
 from runtools.runjob.track import StatusTracker, OutputToStatusTransformer
@@ -71,6 +71,8 @@ OutputObserverErrorHandler = Callable[
 
 current_job_instance: ContextVar[Optional[JobInstanceMetadata]] = ContextVar('current_job_instance', default=None)
 
+_thread_local = local()
+
 
 class _JobOutput(Output, OutputSink):
 
@@ -81,16 +83,24 @@ class _JobOutput(Output, OutputSink):
         self.output_notification = (
             ObservableNotification[InstanceOutputObserver](error_hook=output_observer_err_hook, force_reraise=True))
         self.output_observer_faults: List[Fault] = []
+        self._notifying_observers = False
 
     def _process_output(self, output_line):
-        if self.tail_buffer:
-            self.tail_buffer.add_line(output_line)
+        # Check if we're already processing output in this thread to prevent PARTIALLY the recursion cycle
+        if getattr(_thread_local, 'processing_output', False):
+            return
+
+        _thread_local.processing_output = True
         try:
+            if self.tail_buffer:
+                self.tail_buffer.add_line(output_line)
             self.output_notification.observer_proxy.new_instance_output(self.metadata, output_line)
         except MultipleExceptions as me:
             for e in me:
                 log.error("[output_observer_error]", exc_info=e)
                 self.output_observer_faults.append(Fault.from_exception(OUTPUT_OBSERVER_ERROR, e))
+        finally:
+            _thread_local.processing_output = False
 
     def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
         if not self.tail_buffer:
@@ -139,8 +149,8 @@ JobInstanceHook = Callable[[JobInstanceContext], None]
 
 def create(job_id, phases, status_tracker=None,
            *, instance_id=None, run_id=None, tail_buffer=None,
-           transition_observers = (),
-           output_observers = (),
+           transition_observers=(),
+           output_observers=(),
            pre_run_hook: Optional[JobInstanceHook] = None,
            post_run_hook: Optional[JobInstanceHook] = None,
            transition_observer_error_handler: Optional[TransitionObserverErrorHandler] = None,
