@@ -6,7 +6,7 @@ from typing import Dict, Optional, List
 from runtools.runcore import JobRun, plugins
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.db import sqlite, PersistingObserver
-from runtools.runcore.environment import Environment, LocalEnvironment, PersistingEnvironment
+from runtools.runcore.environment import Environment, _LocalEnvironment, PersistingEnvironment
 from runtools.runcore.job import JobInstance, JobInstanceObservable
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import PhaseRun, RunState
@@ -333,11 +333,11 @@ def local(persistence=None, *, features=None, transient=True):
     return RunnableLocalEnvironment(persistence, api, transition_dispatcher, output_dispatcher, features, transient)
 
 
-class RunnableLocalEnvironment(LocalEnvironment, RunnableEnvironmentBase):
+class RunnableLocalEnvironment(_LocalEnvironment, RunnableEnvironmentBase):
 
     def __init__(self, persistence, api, transition_dispatcher, output_dispatcher, features, transient):
         RunnableEnvironmentBase.__init__(self, features, transient=transient)
-        LocalEnvironment.__init__(self, persistence)
+        _LocalEnvironment.__init__(self, persistence)
         self._api = api
         self._transition_dispatcher = transition_dispatcher
         self._output_dispatcher = output_dispatcher
@@ -345,7 +345,7 @@ class RunnableLocalEnvironment(LocalEnvironment, RunnableEnvironmentBase):
 
     def open(self):
         RunnableEnvironmentBase.open(self)  # Execute first for opened only once check
-        LocalEnvironment.open(self)
+        _LocalEnvironment.open(self)
 
         self._api.start()
 
@@ -364,7 +364,7 @@ class RunnableLocalEnvironment(LocalEnvironment, RunnableEnvironmentBase):
     def close(self):
         run_isolated_collect_exceptions(
             lambda: RunnableEnvironmentBase.close(self),  # Always execute first as the method is waiting until it can be closed
-            lambda: LocalEnvironment.close(self),
+            lambda: _LocalEnvironment.close(self),
             self._api.close,
             self._output_dispatcher.close,
             self._transition_dispatcher.close

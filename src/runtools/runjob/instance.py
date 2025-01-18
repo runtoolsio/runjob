@@ -89,6 +89,7 @@ class _JobOutput(Output, OutputSink):
             self.output_notification.observer_proxy.new_instance_output(self.metadata, output_line)
         except MultipleExceptions as me:
             for e in me:
+                log.error("[output_observer_error]", exc_info=e)
                 self.output_observer_faults.append(Fault.from_exception(OUTPUT_OBSERVER_ERROR, e))
 
     def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
@@ -145,6 +146,30 @@ def create(job_id, phases, status_tracker=None,
            transition_observer_error_handler: Optional[TransitionObserverErrorHandler] = None,
            output_observer_error_handler: Optional[OutputObserverErrorHandler] = None,
            **user_params) -> JobInstance:
+    """
+
+    :param job_id:
+    :param phases:
+    :param status_tracker:
+    :param instance_id:
+    :param run_id:
+    :param tail_buffer:
+    :param transition_observers:
+    :param output_observers:
+    :param pre_run_hook:
+    :param post_run_hook:
+    :param transition_observer_error_handler:
+    :param output_observer_error_handler:
+    :param user_params:
+
+    Example of pre_run_hook:
+        ```
+        def output_to_status_setup_hook(ctx: JobInstanceContext):
+            parsers = [IndexParser({'event': 0})]
+            ctx.output_sink.add_observer(OutputToStatusTransformer(ctx.status_tracker, parsers=parsers))
+        ```
+    :return:
+    """
     if not job_id:
         raise ValueError("Job ID is mandatory")
 
