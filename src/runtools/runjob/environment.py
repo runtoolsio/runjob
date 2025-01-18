@@ -6,8 +6,8 @@ from typing import Dict, Optional, List
 from runtools.runcore import JobRun, plugins
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.db import sqlite, PersistingObserver
-from runtools.runcore.environment import Environment, LocalEnvironment, JobInstanceObservable, PersistingEnvironment
-from runtools.runcore.job import JobInstance
+from runtools.runcore.environment import Environment, LocalEnvironment, PersistingEnvironment
+from runtools.runcore.job import JobInstance, JobInstanceObservable
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import PhaseRun, RunState
 from runtools.runjob import instance, JobInstanceHook
