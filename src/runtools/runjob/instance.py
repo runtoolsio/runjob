@@ -49,6 +49,7 @@ from threading import local, Thread
 from typing import Callable, Tuple, Optional, List
 
 from runtools.runcore import util
+from runtools.runcore.environment import Environment
 from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserver,
                                   InstanceOutputObserver, JobInstanceMetadata, JobFaults)
 from runtools.runcore.output import Output, TailNotSupportedError, Mode, OutputLine
@@ -126,17 +127,22 @@ class _JobInstanceLogFilter(logging.Filter):
 
 class JobInstanceContext(OutputContext):
 
-    def __init__(self, metadata, status_tracker, output_sink: OutputSink):
+    def __init__(self, metadata, environment, status_tracker, output_sink):
         self._metadata = metadata
+        self._environment = environment
         self._status_tracker = status_tracker
-        self._output_sink: OutputSink = output_sink
+        self._output_sink = output_sink
 
     @property
-    def metadata(self):
+    def environment(self) -> Optional[Environment]:
+        return self._environment
+
+    @property
+    def metadata(self) -> JobInstanceMetadata:
         return self._metadata
 
     @property
-    def status_tracker(self):
+    def status_tracker(self) -> StatusTracker:
         return self._status_tracker
 
     @property
@@ -147,8 +153,8 @@ class JobInstanceContext(OutputContext):
 JobInstanceHook = Callable[[JobInstanceContext], None]
 
 
-def create(job_id, phases, status_tracker=None,
-           *, instance_id=None, run_id=None, tail_buffer=None,
+def create(job_id, phases, environment=None,
+           *, instance_id=None, run_id=None, tail_buffer=None, status_tracker=None,
            transition_observers=(),
            output_observers=(),
            pre_run_hook: Optional[JobInstanceHook] = None,
@@ -157,20 +163,6 @@ def create(job_id, phases, status_tracker=None,
            output_observer_error_handler: Optional[OutputObserverErrorHandler] = None,
            **user_params) -> JobInstance:
     """
-
-    :param job_id:
-    :param phases:
-    :param status_tracker:
-    :param instance_id:
-    :param run_id:
-    :param tail_buffer:
-    :param transition_observers:
-    :param output_observers:
-    :param pre_run_hook:
-    :param post_run_hook:
-    :param transition_observer_error_handler:
-    :param output_observer_error_handler:
-    :param user_params:
 
     Example of pre_run_hook:
         ```
@@ -188,7 +180,7 @@ def create(job_id, phases, status_tracker=None,
     phaser = Phaser(phases)
     tail_buffer = tail_buffer or InMemoryTailBuffer(max_capacity=10)
     status_tracker = status_tracker or StatusTracker()
-    inst = _JobInstance(job_id, instance_id, run_id, phaser, tail_buffer, status_tracker,
+    inst = _JobInstance(job_id, instance_id, run_id, phaser, environment, tail_buffer, status_tracker,
                         pre_run_hook, post_run_hook,
                         transition_observer_error_handler, output_observer_error_handler,
                         user_params)
@@ -201,7 +193,7 @@ def create(job_id, phases, status_tracker=None,
 
 class _JobInstance(JobInstance):
 
-    def __init__(self, job_id, instance_id, run_id, phaser, tail_buffer, status_tracker,
+    def __init__(self, job_id, instance_id, run_id, phaser, env, tail_buffer, status_tracker,
                  pre_run_hook, post_run_hook,
                  transition_observer_err_hook, output_observer_err_hook,
                  user_params):
@@ -209,7 +201,7 @@ class _JobInstance(JobInstance):
         self._metadata = JobInstanceMetadata(job_id, run_id or instance_id, instance_id, parameters, user_params)
         self._phaser = phaser
         self._output = _JobOutput(self._metadata, tail_buffer, output_observer_err_hook)
-        self._ctx = JobInstanceContext(self._metadata, status_tracker, self._output)
+        self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output)
         self._pre_run_hook = pre_run_hook
         self._post_run_hook = post_run_hook
 

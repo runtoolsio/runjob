@@ -29,30 +29,6 @@ class RunnableEnvironment(Environment, ABC):
     def create_instance(self, *args, **kwargs):
         pass
 
-    @abstractmethod
-    def add_instance(self, job_instance):
-        """
-        Add a job instance to the environment.
-
-        Args:
-            job_instance (JobInstance): The job instance to be added.
-
-        Returns:
-            JobInstance: The added job instance.
-        """
-
-    @abstractmethod
-    def remove_instance(self, job_instance_id) -> Optional[JobInstance]:
-        """
-        Remove a job instance from the context using its ID.
-
-        Args:
-            job_instance_id (JobRunId): The ID of the job instance to remove.
-
-        Returns:
-            Optional[JobInstance]: The removed job instance if found, otherwise None.
-        """
-
 
 class Feature(ABC):
 
@@ -146,6 +122,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
         inst = instance.create(
             job_id=job_id,
             phases=phases,
+            environment=self,
             status_tracker=status_tracker,
             instance_id=instance_id,
             run_id=run_id,
@@ -154,7 +131,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
             post_run_hook=post_run_hook,
             **(user_params or {})
         )
-        return self.add_instance(inst)
+        return self._add_instance(inst)
 
     @property
     def instances(self):
@@ -173,7 +150,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
         if new_phase.run_state == RunState.ENDED:
             self._detach_instance(job_run.metadata.instance_id, self._transient)
 
-    def add_instance(self, job_instance):
+    def _add_instance(self, job_instance):
         """
         Add a job instance to the environment.
 
@@ -223,7 +200,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
     def _on_added(self, job_instance):
         pass
 
-    def remove_instance(self, job_instance_id) -> Optional[JobInstance]:
+    def _remove_instance(self, job_instance_id) -> Optional[JobInstance]:
         """
         Remove a job instance from the context using its ID.
 
@@ -333,9 +310,11 @@ class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, Runnabl
     def close(self):
         run_isolated_collect_exceptions(
             "Errors during closing isolated environment",
-            lambda: RunnableEnvironmentBase.close(self),  # Always execute first as the method is waiting until it can be closed
+            lambda: RunnableEnvironmentBase.close(self),
+            # Always execute first as the method is waiting until it can be closed
             lambda: PersistingEnvironment.close(self)
         )
+
 
 def local(persistence=None, *, features=None, transient=True):
     persistence = persistence or sqlite.create(':memory:')
@@ -377,7 +356,8 @@ class RunnableLocalEnvironment(LocalEnvironment, RunnableEnvironmentBase):
     def close(self):
         run_isolated_collect_exceptions(
             "Errors during closing runnable local environment",
-            lambda: RunnableEnvironmentBase.close(self),  # Always execute first as the method is waiting until it can be closed
+            lambda: RunnableEnvironmentBase.close(self),
+            # Always execute first as the method is waiting until it can be closed
             lambda: LocalEnvironment.close(self),
             self._api.close,
             self._output_dispatcher.close,
