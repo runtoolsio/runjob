@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 from threading import Condition, Event, Lock
-from typing import Optional
+from typing import Optional, Any
 
 from runtools import runcore
 from runtools.runcore import paths
@@ -26,7 +26,7 @@ class CoordTypes(Enum):
     QUEUE = 'QUEUE'
 
 
-class ApprovalPhase(Phase[OutputContext]):
+class ApprovalPhase(Phase[Any]):
     """
     Approval parameters (incl. timeout) + approval eval as separate objects
     TODO: parameters
@@ -95,8 +95,7 @@ class MutualExclusionPhase(Phase[JobInstanceContext]):
     EXCLUSION_ID = 'exclusion_id'
     UNTIL_PHASE = 'until_phase'
 
-    def __init__(self, exclusion_id, phase_id=None, phase_name='Mutual Exclusion Check',
-                 *, until_phase=None, locker_factory=lock.default_locker_factory()):
+    def __init__(self, exclusion_id, phase_id=None, phase_name='Mutual Exclusion Check', *, until_phase=None):
         if not exclusion_id:
             raise ValueError("Parameter `no_overlap_id` cannot be empty")
         self._id = phase_id or exclusion_id
@@ -109,7 +108,6 @@ class MutualExclusionPhase(Phase[JobInstanceContext]):
         }
         attr_to_match = {MutualExclusionPhase.EXCLUSION_ID: self._exclusion_id}
         self._excl_phase_filter = PhaseCriterion(phase_type=CoordTypes.NO_OVERLAP.value, attributes=attr_to_match)
-        self._locker = locker_factory(paths.lock_path(f"noo-{exclusion_id}.lock", True))
 
     @property
     def id(self):
@@ -180,7 +178,7 @@ class MutualExclusionPhase(Phase[JobInstanceContext]):
     def run(self, ctx: JobInstanceContext):
         op = ctx.status_tracker.operation("No overlap check")
 
-        with self._locker():
+        with ctx.environment.locker(f"mutex-{self.exclusion_id}")():
             c = JobRunCriteria()
             c += MetadataCriterion(instance_id=negate_id(ctx.metadata.instance_id))  # Excl self
             c += self._excl_phase_filter

@@ -49,7 +49,6 @@ from threading import local, Thread
 from typing import Callable, Tuple, Optional, List
 
 from runtools.runcore import util
-from runtools.runcore.environment import Environment
 from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserver,
                                   InstanceOutputObserver, JobInstanceMetadata, JobFaults)
 from runtools.runcore.output import Output, TailNotSupportedError, Mode, OutputLine
@@ -134,12 +133,12 @@ class JobInstanceContext(OutputContext):
         self._output_sink = output_sink
 
     @property
-    def environment(self) -> Optional[Environment]:
-        return self._environment
-
-    @property
     def metadata(self) -> JobInstanceMetadata:
         return self._metadata
+
+    @property
+    def environment(self):
+        return self._environment
 
     @property
     def status_tracker(self) -> StatusTracker:

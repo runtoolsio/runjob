@@ -3,14 +3,14 @@ from dataclasses import dataclass
 from threading import Lock, Condition
 from typing import Dict, Optional, List
 
-from runtools.runcore import JobRun, plugins
+from runtools.runcore import JobRun, plugins, paths
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.db import sqlite, PersistingObserver
 from runtools.runcore.environment import Environment, LocalEnvironment, PersistingEnvironment
 from runtools.runcore.job import JobInstance, JobInstanceObservable
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import PhaseRun, RunState
-from runtools.runcore.util import ensure_tuple_copy
+from runtools.runcore.util import ensure_tuple_copy, lock
 from runtools.runcore.util.err import run_isolated_collect_exceptions
 from runtools.runjob import instance, JobInstanceHook
 from runtools.runjob.api import APIServer
@@ -28,6 +28,10 @@ class RunnableEnvironment(Environment, ABC):
     @abstractmethod
     def create_instance(self, *args, **kwargs):
         pass
+
+    @abstractmethod
+    def locker(self, lock_id):
+        """TODO to separate type"""
 
 
 class Feature(ABC):
@@ -307,6 +311,10 @@ class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, Runnabl
     def get_instances(self, run_match=None) -> List[JobInstance]:
         return [i for i in self.instances if not run_match or run_match(i)]
 
+    def locker(self, lock_id):
+        # TODO Implement
+        pass
+
     def close(self):
         run_isolated_collect_exceptions(
             "Errors during closing isolated environment",
@@ -352,6 +360,10 @@ class RunnableLocalEnvironment(LocalEnvironment, RunnableEnvironmentBase):
         job_instance.remove_observer_transition(self._transition_dispatcher)
         self._api.unregister_instance(job_instance)
         job_instance.remove_observer_transition(self._persisting_observer)
+
+    def locker(self, lock_id):
+        # TODO to separate type
+        return lock.default_locker_factory()(paths.lock_path(f"{lock_id}.lock", True))
 
     def close(self):
         run_isolated_collect_exceptions(
