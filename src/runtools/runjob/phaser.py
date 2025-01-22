@@ -90,7 +90,7 @@ class NoOpsPhase(Phase[Any], ABC):
 
 
 class InitPhase(NoOpsPhase):
-    ID = 'Init'
+    ID = 'init'
     TYPE = 'INIT'
 
     def __init__(self):
@@ -150,7 +150,7 @@ class ExecutingPhase(Phase[C], ABC):
 
 
 class TerminalPhase(NoOpsPhase):
-    ID = 'term'
+    ID = 'terminal'
     TYPE = 'TERMINAL'
 
     def __init__(self):
