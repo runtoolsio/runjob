@@ -178,7 +178,7 @@ class MutualExclusionPhase(Phase[JobInstanceContext]):
     def run(self, ctx: JobInstanceContext):
         op = ctx.status_tracker.operation("No overlap check")
 
-        with ctx.environment.locker(f"mutex-{self.exclusion_id}")():
+        with ctx.environment.lock(f"mutex-{self.exclusion_id}"):
             c = JobRunCriteria()
             c += MetadataCriterion(instance_id=negate_id(ctx.metadata.instance_id))  # Excl self
             c += self._excl_phase_filter
@@ -414,7 +414,7 @@ class ExecutionQueue(Phase[OutputContext], InstanceTransitionObserver):
 
     def __init__(self, queue_id, max_executions, phase_id=None, phase_name=None, *,
                  until_phase=None,
-                 locker_factory=lock.default_locker_factory(),
+                 locker_factory=lock.default_file_lock_factory(),
                  state_receiver_factory=InstanceTransitionReceiver):
         if not queue_id:
             raise ValueError('Queue ID must be specified')

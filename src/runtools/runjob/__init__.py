@@ -78,7 +78,7 @@ def execute_in_new_thread(job_id, job_execution, no_overlap=False, depends_on=No
     Thread(target=execute, args=(job_id, job_execution, no_overlap, depends_on, pending_group)).start()
 
 
-def run(job_id, execution, sync_=None, state_locker=lock.default_queue_locker(), *, instance_id=None,
+def run(job_id, execution, sync_=None, state_locker=lock.default_queue_lock(), *, instance_id=None,
         **user_params) -> JobInstance:
     instance = job_instance(job_id, execution, sync_, state_locker, instance_id=instance_id, user_params=user_params)
     instance.run()

@@ -30,7 +30,7 @@ class RunnableEnvironment(Environment, ABC):
         pass
 
     @abstractmethod
-    def locker(self, lock_id):
+    def lock(self, lock_id):
         """TODO to separate type"""
 
 
@@ -311,7 +311,7 @@ class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, Runnabl
     def get_instances(self, run_match=None) -> List[JobInstance]:
         return [i for i in self.instances if not run_match or run_match(i)]
 
-    def locker(self, lock_id):
+    def lock(self, lock_id):
         # TODO Implement
         pass
 
@@ -324,23 +324,26 @@ class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, Runnabl
         )
 
 
-def local(persistence=None, *, features=None, transient=True):
+def local(persistence=None, *, lock_factory=None, features=None, transient=True):
     persistence = persistence or sqlite.create(':memory:')
     api = APIServer()
     transition_dispatcher = TransitionDispatcher()
     output_dispatcher = OutputDispatcher()
+    lock_factory = lock_factory or lock.default_file_lock_factory()
     features = ensure_tuple_copy(features)
-    return RunnableLocalEnvironment(persistence, api, transition_dispatcher, output_dispatcher, features, transient)
+    return RunnableLocalEnvironment(persistence, api, transition_dispatcher, output_dispatcher, lock_factory,
+                                    features, transient)
 
 
 class RunnableLocalEnvironment(LocalEnvironment, RunnableEnvironmentBase):
 
-    def __init__(self, persistence, api, transition_dispatcher, output_dispatcher, features, transient):
+    def __init__(self, persistence, api, transition_dispatcher, output_dispatcher, lock_factory, features, transient):
         RunnableEnvironmentBase.__init__(self, features, transient=transient)
         LocalEnvironment.__init__(self, persistence)
         self._api = api
         self._transition_dispatcher = transition_dispatcher
         self._output_dispatcher = output_dispatcher
+        self._lock_factory = lock_factory
         self._persisting_observer = PersistingObserver(persistence)
 
     def open(self):
@@ -361,9 +364,9 @@ class RunnableLocalEnvironment(LocalEnvironment, RunnableEnvironmentBase):
         self._api.unregister_instance(job_instance)
         job_instance.remove_observer_transition(self._persisting_observer)
 
-    def locker(self, lock_id):
-        # TODO to separate type
-        return lock.default_locker_factory()(paths.lock_path(f"{lock_id}.lock", True))
+    def lock(self, lock_id):
+        # TODO Method to separate type
+        return self._lock_factory(paths.lock_path(f"{lock_id}.lock", True))
 
     def close(self):
         run_isolated_collect_exceptions(
