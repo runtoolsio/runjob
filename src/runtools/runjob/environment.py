@@ -276,17 +276,19 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
             raise KeyboardInterrupt
 
 
-def isolated(persistence=None, *, features=None, transient=True):
+def isolated(persistence=None, *, lock_factory=None, features=None, transient=True):
     persistence = persistence or sqlite.create(':memory:')
-    return _IsolatedEnvironment(persistence, ensure_tuple_copy(features), transient)
+    lock_factory = lock_factory or lock.default_memory_lock_factory()
+    return _IsolatedEnvironment(persistence, lock_factory, ensure_tuple_copy(features), transient)
 
 
 class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, RunnableEnvironmentBase):
 
-    def __init__(self, persistence, features, transient=True):
+    def __init__(self, persistence, lock_factory, features, transient=True):
         JobInstanceObservable.__init__(self)
         RunnableEnvironmentBase.__init__(self, features, transient=transient)
         PersistingEnvironment.__init__(self, persistence)
+        self._lock_factory = lock_factory
         self._persisting_observer = PersistingObserver(persistence)
 
     def open(self):
@@ -312,8 +314,7 @@ class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, Runnabl
         return [i for i in self.instances if not run_match or run_match(i)]
 
     def lock(self, lock_id):
-        # TODO Implement
-        pass
+        return self._lock_factory(lock_id)
 
     def close(self):
         run_isolated_collect_exceptions(
