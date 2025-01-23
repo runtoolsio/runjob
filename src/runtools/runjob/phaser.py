@@ -10,9 +10,11 @@ import sys
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.run import Phase, PhaseRun, Lifecycle, TerminationStatus, TerminationInfo, Run, \
-    TerminateRun, FailedRun, Fault, RunState, C, PhaseExecutionError
+    TerminateRun, FailedRun, Fault, RunState, C
 
 log = logging.getLogger(__name__)
+
+UNCAUGHT_PHASE_RUN_EXCEPTION = "UNCAUGHT_PHASE_RUN_EXCEPTION"
 
 
 def unique_phases_to_dict(phases) -> Dict[str, Phase]:
@@ -175,7 +177,11 @@ class RunContext(ABC):
     """Members to be added later"""
 
 
-UNCAUGHT_PHASE_RUN_EXCEPTION = "UNCAUGHT_PHASE_RUN_EXCEPTION"
+class PhaseExecutionError(Exception):
+
+    def __init__(self, phase_id):
+        super().__init__(f"Phase '{phase_id}' execution failed")
+        self.phase_id = phase_id
 
 
 class Phaser(Generic[C]):

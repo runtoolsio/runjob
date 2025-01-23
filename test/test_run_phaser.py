@@ -3,9 +3,9 @@ from threading import Thread
 import pytest
 
 from runtools.runcore.common import InvalidStateError
-from runtools.runcore.run import TerminationStatus, RunState, FailedRun, Fault, PhaseExecutionError
+from runtools.runcore.run import TerminationStatus, RunState, FailedRun, Fault
 from runtools.runjob import phaser
-from runtools.runjob.phaser import Phaser, InitPhase, TerminalPhase, WaitWrapperPhase
+from runtools.runjob.phaser import Phaser, InitPhase, TerminalPhase, WaitWrapperPhase, PhaseExecutionError
 from runtools.runjob.test.phaser import TestPhase
 
 INIT = InitPhase.ID
