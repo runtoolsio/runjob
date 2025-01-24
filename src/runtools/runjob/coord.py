@@ -176,8 +176,7 @@ class MutualExclusionPhase(Phase[JobInstanceContext]):
             return False
 
     def run(self, ctx: JobInstanceContext):
-        op = ctx.status_tracker.operation("No overlap check")
-
+        log.debug("[mutex_check_started]")
         with ctx.environment.lock(f"mutex-{self.exclusion_id}"):
             c = JobRunCriteria()
             c += MetadataCriterion(instance_id=negate_id(ctx.metadata.instance_id))  # Excl self
@@ -186,10 +185,8 @@ class MutualExclusionPhase(Phase[JobInstanceContext]):
 
             for run in runs:
                 if self._is_in_exclusion_phase(run):
-                    op.finished(f"Overlap found: {run.metadata}")
+                    log.debug(f"[overlap_found]: {run.metadata}")
                     raise TerminateRun(TerminationStatus.OVERLAP)
-
-        op.finished("No overlap found")
 
     def stop(self):
         pass
@@ -227,13 +224,13 @@ class DependencyPhase(Phase[JobInstanceContext]):
         return self._dependency_match
 
     def run(self, ctx):
-        op = ctx.status_tracker.operation("Dependency check")
+        log.debug(f"[active_dependency_search] dependency=[{self._dependency_match}]")
 
-        matching_runs, _ = runcore.get_active_runs(self._dependency_match)
+        matching_runs = [r for r in runcore.get_active_runs(self._dependency_match).successful if r.instance_id != ctx.metadata.instance_id]
         if not matching_runs:
-            op.finished(f"Required dependency `{self._dependency_match}` not found")
+            log.debug(f"[active_dependency_not_found] dependency=[{self._dependency_match}]")
             raise TerminateRun(TerminationStatus.UNSATISFIED)
-        op.finished(f"Required dependency `{self._dependency_match}` found")
+        log.debug(f"[active_dependency_found] instances={[r.instance_id for r in matching_runs]}")
 
     def stop(self):
         pass
