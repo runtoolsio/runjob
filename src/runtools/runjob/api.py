@@ -156,7 +156,7 @@ def _is_valid_request_id(request_id: Any) -> bool:
     return request_id is None or isinstance(request_id, (str, int, float))
 
 def _is_valid_params(params: Any) -> bool:
-    return 'params' is None or isinstance(params, (dict, list))
+    return params is None or isinstance(params, (dict, list))
 
 
 def _success_response(request_id: str, result: Any) -> str:
