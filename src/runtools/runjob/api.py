@@ -56,8 +56,10 @@ class JsonRpcMethod(ABC):
     def requires_run_match_param(self) -> bool:
         return False
 
-    def validate_params(self, params: Dict[str, Any]):
-        """Validate parameters, raise JsonRpcError if invalid"""
+    @property
+    def mandatory_params(self):
+        """Return required parameters, to raise JsonRpcError if missing"""
+        return []
 
 
 class InstancesGetMethod(JsonRpcMethod):
@@ -95,6 +97,15 @@ class InstancesApproveMethod(JsonRpcMethod):
     def requires_run_match_param(self) -> bool:
         return True
 
+class InstancesPhaseControl(JsonRpcMethod):
+
+    @property
+    def method_name(self) -> str:
+        return "instances.control"
+
+    def execute(self, job_instance, params: Dict[str, Any]) -> Dict[str, Any]:
+        pass
+
 
 class InstancesStopMethod(JsonRpcMethod):
 
@@ -119,13 +130,15 @@ class InstancesTailMethod(JsonRpcMethod):
 
 class InstancesDispatchMethod(JsonRpcMethod):
 
+    MANDATORY_PARAMS = ("queue_id",)
+
     @property
     def method_name(self):
         return "instances.dispatch"
 
-    def validate_params(self, params):
-        if "queue_id" not in params:
-            raise JsonRpcError(ErrorCode.INVALID_PARAMS, "Missing required parameter: queue_id")
+    @property
+    def mandatory_params(self):
+        return InstancesDispatchMethod.MANDATORY_PARAMS
 
     def execute(self, job_instance, params):
         dispatched = False
@@ -220,8 +233,11 @@ class APIServer(SocketServer, JobInstanceManager):
         if not method:
             return _error_response(request_id, ErrorCode.METHOD_NOT_FOUND, f"Method not found: {method_name}")
 
+        for p in method.mandatory_params:
+            if p not in params:
+                return _error_response(request_id, ErrorCode.INVALID_PARAMS, f"Missing required parameter: {p}")
+
         try:
-            method.validate_params(params)
             job_instances = self._matching_instances(params, method.requires_run_match_param())
             result = []
             for job_instance in job_instances:
