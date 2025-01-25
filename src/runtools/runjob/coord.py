@@ -146,13 +146,14 @@ class MutualExclusionPhase(Phase[JobInstanceContext]):
         """
         exclusion_phase = job_run.find_phase(self._excl_phase_filter)
         if not exclusion_phase:
+            log.warning("[mutex_phase_not_found]")
             return False
 
         until_phase_id = exclusion_phase.attributes.get(MutualExclusionPhase.UNTIL_PHASE)
         if not until_phase_id:
             next_phase = job_run.phase_after(exclusion_phase)
             if not next_phase:
-                # TODO event to tracker
+                log.warning("[exclusive_phase_not_found]")
                 return False
             until_phase_id = next_phase.phase_id
 
@@ -162,7 +163,7 @@ class MutualExclusionPhase(Phase[JobInstanceContext]):
 
         until_phase = job_run.find_phase(PhaseCriterion(phase_id=until_phase_id))
         if not until_phase:
-            # TODO event to tracker
+            log.warning(f"[last_exclusive_phase_not_found] phase=[{until_phase}]")
             return False
 
         try:
@@ -181,7 +182,7 @@ class MutualExclusionPhase(Phase[JobInstanceContext]):
             c = JobRunCriteria()
             c += MetadataCriterion(instance_id=negate_id(ctx.metadata.instance_id))  # Excl self
             c += self._excl_phase_filter
-            runs, _ = runcore.get_active_runs(c)
+            runs = ctx.environment.get_active_runs(c)
 
             for run in runs:
                 if self._is_in_exclusion_phase(run):
@@ -226,7 +227,8 @@ class DependencyPhase(Phase[JobInstanceContext]):
     def run(self, ctx):
         log.debug(f"[active_dependency_search] dependency=[{self._dependency_match}]")
 
-        matching_runs = [r for r in runcore.get_active_runs(self._dependency_match).successful if r.instance_id != ctx.metadata.instance_id]
+        matching_runs = [r for r in runcore.get_active_runs(self._dependency_match).successful if
+                         r.instance_id != ctx.metadata.instance_id]
         if not matching_runs:
             log.debug(f"[active_dependency_not_found] dependency=[{self._dependency_match}]")
             raise TerminateRun(TerminationStatus.UNSATISFIED)
@@ -408,6 +410,9 @@ class ExecutionGroupLimit:
 
 
 class ExecutionQueue(Phase[OutputContext], InstanceTransitionObserver):
+    QUEUE_ID = "queue_id"
+    MAX_EXEC = "max_exec"
+    LAST_PHASE = "last_phase"
 
     def __init__(self, queue_id, max_executions, phase_id=None, phase_name=None, *,
                  until_phase=None,
@@ -425,6 +430,12 @@ class ExecutionQueue(Phase[OutputContext], InstanceTransitionObserver):
         self._until_phase = until_phase
         self._max_executions = max_executions
         self._locker = locker_factory(paths.lock_path(f"eq-{queue_id}.lock", True))
+        attr_to_match = {
+            ExecutionQueue.QUEUE_ID: self._queue_id,
+            ExecutionQueue.MAX_EXEC: self._max_executions,
+            ExecutionQueue.LAST_PHASE: self._until_phase,
+        }
+        self._queue_phase_filter = PhaseCriterion(phase_type=CoordTypes.QUEUE.value, attributes=attr_to_match)
         self._state_receiver_factory = state_receiver_factory
         self._wait_guard = Condition()
         # vv Guarding these fields vv
@@ -505,24 +516,56 @@ class ExecutionQueue(Phase[OutputContext], InstanceTransitionObserver):
         self._state_receiver.add_observer_transition(self)
         self._state_receiver.start()
 
+    def _exec_protected_phase(self, job_run):
+        queue_phase = job_run.find_phase(self._queue_phase_filter)
+        if not queue_phase:
+            log.warning("[queue_phase_not_found]")
+            return False
+
+        until_phase_id = queue_phase.attributes.get(ExecutionQueue.LAST_PHASE)
+        if not until_phase_id:
+            next_phase = job_run.phase_after(queue_phase)
+            if not next_phase:
+                log.warning("[queue_protected_phase_not_found]")
+                return False
+            until_phase_id = next_phase.phase_id
+
+        current_phase = job_run.current_phase
+        if not current_phase:
+            return False
+
+        until_phase = job_run.find_phase(PhaseCriterion(phase_id=until_phase_id))
+        if not until_phase:
+            log.warning(f"[last_queue_protected_phase_not_found] phase=[{until_phase}]")
+            return False
+
+        try:
+            phases = job_run.phases
+            queue_idx = phases.index(queue_phase)
+            until_idx = phases.index(until_phase)
+            current_idx = phases.index(current_phase)
+
+            return queue_idx <= current_idx <= until_idx
+        except ValueError:
+            return False
+
     def _dispatch_next(self):
-        phase_filter = PhaseCriterion(phase_type=CoordTypes.QUEUE, protection_id=self._queue_id)
-        criteria = JobRunCriteria(phase_criteria=phase_filter)
+        criteria = JobRunCriteria(phase_criteria=self._queue_phase_filter)
         runs, _ = runcore.get_active_runs(criteria)
 
         # TODO Sort by phase start
         sorted_group_runs = JobRuns(sorted(runs, key=lambda job_run: job_run.lifecycle.created_at))
-        occupied = len(
-            [r for r in sorted_group_runs
-             if r.in_protected_phase(CoordTypes.QUEUE, self._queue_id)
-             or (r.current_phase_id.phase_type == CoordTypes.QUEUE and r.current_phase_id.queued_state.dequeued)])
-        free_slots = self._max_executions - occupied
+        occupied = {r for r in sorted_group_runs
+                    if r.in_protected_phase(CoordTypes.QUEUE, self._queue_id)
+                    or (r.current_phase.phase_type == CoordTypes.QUEUE.value and r.current_phase.queued_state.dequeued)}
+        free_slots = self._max_executions - len(occupied)
         if free_slots <= 0:
-            # self._log.debug("event[no_dispatch] slots=[%d] occupied=[%d]", self._max_executions, occupied)
+            log.debug("event[no_queue_dispatch] slots=[%d] occupied=[%d]", self._max_executions, len(occupied))
             return False
 
-        # self._log.debug("event[dispatching] free_slots=[%d]", free_slots)
+        log.debug("event[dispatching_from_queue] count=[%d]", free_slots)
         for next_proceed in sorted_group_runs.queued:
+            # TODO Check is this queue
             signal_resp = runcore.signal_dispatch(JobRunCriteria.exact_match(next_proceed), self._queue_id)
             for r in signal_resp.successful:
                 if r.dispatched:
