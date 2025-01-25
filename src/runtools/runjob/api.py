@@ -1,9 +1,11 @@
 import json
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from enum import IntEnum
+from itertools import zip_longest
 from json import JSONDecodeError
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 
 from runtools.runcore import paths
 from runtools.runcore.client import StopResult
@@ -35,51 +37,66 @@ def _create_socket_name():
 
 
 class JsonRpcError(Exception):
-
     def __init__(self, code: ErrorCode, message: str, data: Optional[Any] = None):
         self.code = code
         self.message = message
         self.data = data
 
 
+@dataclass
+class MethodParameter:
+    """Defines a parameter for a JSON-RPC method"""
+    name: str
+    param_type: type
+    required: bool = True
+    default: Any = None
+
+
+RUN_MATCH_PARAM = MethodParameter('run_match', dict)
+
+
 class JsonRpcMethod(ABC):
+    """Base class for JSON-RPC methods with parameter validation"""
 
     @property
     @abstractmethod
     def method_name(self) -> str:
         """JSON-RPC method name including namespace prefix"""
-
-    @abstractmethod
-    def execute(self, job_instance, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute the method and return response or raise JsonRpcError"""
-
-    def requires_run_match_param(self) -> bool:
-        return False
+        pass
 
     @property
-    def mandatory_params(self):
-        """Return required parameters, to raise JsonRpcError if missing"""
+    def parameters(self) -> List[MethodParameter]:
+        """Define the parameters this method accepts"""
         return []
+
+    @abstractmethod
+    def execute(self, *args) -> Dict[str, Any]:
+        """Execute the method with validated parameters"""
+        pass
 
 
 class InstancesGetMethod(JsonRpcMethod):
-
     @property
     def method_name(self):
         return "instances.get"
 
-    def execute(self, job_instance, params):
+    def execute(self, job_instance):
         return {"job_run": job_instance.snapshot().serialize()}
 
 
 class InstancesApproveMethod(JsonRpcMethod):
-
     @property
     def method_name(self):
         return "instances.approve"
 
-    def execute(self, job_instance, params):
-        if phase_id := params.get('phase_id'):
+    @property
+    def parameters(self):
+        return [
+            MethodParameter("phase_id", str, required=False),
+        ]
+
+    def execute(self, job_instance, phase_id):
+        if phase_id:
             try:
                 phase = job_instance.get_phase_control(phase_id)
             except KeyError:
@@ -94,56 +111,47 @@ class InstancesApproveMethod(JsonRpcMethod):
 
         return {"approved": True}
 
-    def requires_run_match_param(self) -> bool:
-        return True
-
-class InstancesPhaseControl(JsonRpcMethod):
-
-    @property
-    def method_name(self) -> str:
-        return "instances.control"
-
-    def execute(self, job_instance, params: Dict[str, Any]) -> Dict[str, Any]:
-        pass
-
 
 class InstancesStopMethod(JsonRpcMethod):
-
     @property
     def method_name(self):
         return "instances.stop"
 
-    def execute(self, job_instance, params):
+    def execute(self, job_instance):
         job_instance.stop()
         return {"stop_result": StopResult.STOP_INITIATED.name}
 
 
 class InstancesTailMethod(JsonRpcMethod):
-
     @property
     def method_name(self):
         return "instances.get_tail"
 
-    def execute(self, job_instance, params):
+    @property
+    def parameters(self):
+        return [
+            MethodParameter("max_lines", int, required=False, default=100)
+        ]
+
+    def execute(self, job_instance, max_lines):
         return {"tail": [line.serialize() for line in job_instance.output.tail()]}
 
 
 class InstancesDispatchMethod(JsonRpcMethod):
-
-    MANDATORY_PARAMS = ("queue_id",)
-
     @property
     def method_name(self):
         return "instances.dispatch"
 
     @property
-    def mandatory_params(self):
-        return InstancesDispatchMethod.MANDATORY_PARAMS
+    def parameters(self):
+        return [
+            MethodParameter("queue_id", str, required=True),
+        ]
 
-    def execute(self, job_instance, params):
+    def execute(self, job_instance, queue_id):
         dispatched = False
         for phase in job_instance.phases.values():
-            if phase.type == CoordTypes.QUEUE.value and phase.queue_id == params['queue_id']:
+            if phase.type == CoordTypes.QUEUE.value and phase.queue_id == queue_id:
                 dispatched = phase.signal_dispatch()
                 break
 
@@ -151,9 +159,6 @@ class InstancesDispatchMethod(JsonRpcMethod):
             return {"dispatched": False}
 
         return {"dispatched": True}
-
-    def requires_run_match_param(self) -> bool:
-        return True
 
 
 DEFAULT_METHODS = (
@@ -167,6 +172,7 @@ DEFAULT_METHODS = (
 
 def _is_valid_request_id(request_id: Any) -> bool:
     return request_id is None or isinstance(request_id, (str, int, float))
+
 
 def _is_valid_params(params: Any) -> bool:
     return params is None or isinstance(params, (dict, list))
@@ -197,8 +203,54 @@ def _error_response(request_id: Any, code: ErrorCode, message: str, data: Any = 
     return json.dumps(response)
 
 
-class APIServer(SocketServer, JobInstanceManager):
+def validate_params(parameters, arguments: Union[List, Dict[str, Any]]) -> List[Any]:
+    """
+    Validate and transform input parameters according to method specification.
+    Supports both positional (list) and named (dict) parameters.
 
+    Args:
+        parameters: The parameters of the method for which the arguments were provided
+        arguments: Input parameters as either list (positional) or dict (named)
+
+    Returns:
+        List of validated parameters in the order defined by method.parameters
+
+    Raises:
+        JsonRpcError: If parameters are invalid
+    """
+    name_to_param = {p.name: p for p in parameters}
+    validated_args = []
+
+    # Convert named arguments to positional
+    if isinstance(arguments, dict):
+        if unknown_params := (set(arguments.keys()) - {'run_match'}) - set(name_to_param.keys()):
+            raise JsonRpcError(ErrorCode.INVALID_PARAMS, f"Unknown parameters: {', '.join(unknown_params)}")
+
+        arguments = [arguments.get(param.name) for param in parameters]
+
+    for param, value in zip_longest(parameters, arguments):
+        if param is None:
+            raise JsonRpcError(
+                ErrorCode.INVALID_PARAMS,
+                f"Too many parameters. Expected {len(parameters)}, got {len(arguments)}"
+            )
+
+        if value is None:
+            if param.required and param.default is None:
+                raise JsonRpcError(ErrorCode.INVALID_PARAMS, f"Missing required parameter: {param.name}")
+            validated_args.append(param.default)
+        elif not isinstance(value, param.param_type):
+            raise JsonRpcError(
+                ErrorCode.INVALID_PARAMS,
+                f"Parameter {param.name} must be of type {param.param_type.__name__}"
+            )
+        else:
+            validated_args.append(value)
+
+    return validated_args
+
+
+class APIServer(SocketServer, JobInstanceManager):
     def __init__(self, methods=DEFAULT_METHODS):
         super().__init__(lambda: paths.socket_path(_create_socket_name(), create=True), allow_ping=True)
         self._methods = {method.method_name: method for method in methods}
@@ -222,26 +274,24 @@ class APIServer(SocketServer, JobInstanceManager):
 
         request_id = req_data.get('id')
         if not _is_valid_request_id(request_id):
-            return _error_response(req_data.get('id'), ErrorCode.INVALID_REQUEST, "Invalid request ID")
+            return _error_response(request_id, ErrorCode.INVALID_REQUEST, "Invalid request ID")
 
         params = req_data.get('params', {})
         if not _is_valid_params(params):
-            return _error_response(req_data.get('id'), ErrorCode.INVALID_REQUEST, "Invalid parameters")
+            return _error_response(request_id, ErrorCode.INVALID_REQUEST, "Invalid parameters")
 
         method_name = req_data['method']
         method = self._methods.get(method_name)
         if not method:
             return _error_response(request_id, ErrorCode.METHOD_NOT_FOUND, f"Method not found: {method_name}")
 
-        for p in method.mandatory_params:
-            if p not in params:
-                return _error_response(request_id, ErrorCode.INVALID_PARAMS, f"Missing required parameter: {p}")
-
         try:
-            job_instances = self._matching_instances(params, method.requires_run_match_param())
+            validated_args = validate_params([RUN_MATCH_PARAM] + method.parameters, params)
+            job_instances = self._matching_instances(validated_args[0])
+
             result = []
             for job_instance in job_instances:
-                exec_result = method.execute(job_instance, params)
+                exec_result = method.execute(job_instance, *validated_args[1:])
                 exec_result['instance_metadata'] = job_instance.metadata.serialize()
                 result.append(exec_result)
 
@@ -253,13 +303,7 @@ class APIServer(SocketServer, JobInstanceManager):
             log.error("event=[json_rpc_handler_error]", exc_info=True)
             return _error_response(request_id, ErrorCode.INTERNAL_ERROR, f"Internal error: {str(e)}")
 
-    def _matching_instances(self, params: Dict[str, Any], match_required: bool) -> List:
-        run_match = params.get('run_match')
-        if not run_match:
-            if match_required:
-                raise JsonRpcError(ErrorCode.INVALID_PARAMS, "Missing required parameter: `run_match`")
-            return self._job_instances
-
+    def _matching_instances(self, run_match: Dict) -> List:
         try:
             matching_criteria = JobRunCriteria.deserialize(run_match)
         except ValueError as e:

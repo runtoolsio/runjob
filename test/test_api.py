@@ -11,7 +11,6 @@ from runtools.runjob.api import APIServer, ErrorCode
 EXEC = 'EXEC'
 APPROVAL = 'APPROVAL'
 
-
 @pytest.fixture(autouse=True)
 def job_instances():
     server = APIServer()
