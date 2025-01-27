@@ -1,8 +1,8 @@
 import pytest
 
 import runtools.runcore
-from runtools.runcore.client import APIClient, ApprovalResult
-from runtools.runcore.criteria import parse_criteria, JobRunCriteria
+from runtools.runcore.client import APIClient
+from runtools.runcore.criteria import parse_criteria
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import RunState, TerminationStatus
 from runtools.runcore.test.job import FakeJobInstanceBuilder
@@ -58,16 +58,11 @@ def test_instances_api():
     assert not any([resp.errors, resp_j1.errors, resp_j2.errors])
 
 
-def test_approve_pending_instance(job_instances):
-    instances, errors = runtools.runcore.approve_pending_instances(JobRunCriteria.all(), APPROVAL)
-
-    assert not errors
-    assert instances[0].instance_metadata.job_id == 'j1'
-    assert instances[0].release_result == ApprovalResult.NOT_APPLICABLE
-    assert instances[1].instance_metadata.job_id == 'j2'
-    assert instances[1].release_result == ApprovalResult.APPROVED
-
+def test_phase_op_approve(job_instances, server):
     _, j2 = job_instances
+    with APIClient() as c:
+        c.exec_phase_op(server.server_id, j2.instance_id, APPROVAL, 'approve')
+
     assert j2.get_phase(APPROVAL).approved
 
 

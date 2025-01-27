@@ -9,7 +9,6 @@ from typing import Optional, Dict, Any, List, Union
 from itertools import zip_longest
 
 from runtools.runcore import paths
-from runtools.runcore.client import StopResult
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.job import JobInstanceManager, JobInstance
 from runtools.runcore.run import util
@@ -130,7 +129,7 @@ class InstancesTailMethod(JsonRpcMethod):
         return [line.serialize() for line in job_instance.output.tail(max_lines=max_lines)]
 
 
-class PhaseControlMethod(JsonRpcMethod):
+class PhaseOperationMethod(JsonRpcMethod):
 
     @property
     def type(self) -> JsonRpcMethodType:
@@ -138,7 +137,7 @@ class PhaseControlMethod(JsonRpcMethod):
 
     @property
     def method_name(self) -> str:
-        return "exec_phase_control"
+        return "exec_phase_op"
 
     @property
     def parameters(self):
@@ -171,7 +170,7 @@ DEFAULT_METHODS = (
     InstancesGetMethod(),
     InstancesStopMethod(),
     InstancesTailMethod(),
-    PhaseControlMethod()
+    PhaseOperationMethod()
 )
 
 
