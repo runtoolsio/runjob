@@ -81,15 +81,18 @@ def test_stop(job_instances, server):
     assert not j2.snapshot().termination
 
 
-def test_tail(job_instances):
+def test_tail(job_instances, server):
     j1, j2 = job_instances
-    j1.output.add_line(OutputLine('Meditate, do not delay, lest you later regret it.', False, 'EXEC'))
+    j1.output.add_line(OutputLine('Meditate, do not delay, lest you later regret it.', False, 'EXEC1'))
+    j2.output.add_line(OutputLine('Escape...', True, 'EXEC2'))
+    j2.output.add_line(OutputLine('...samsara!', True, 'EXEC2'))
 
-    instances, errors = runtools.runcore.get_tail()
-    assert not errors
+    with APIClient() as c:
+        output_lines = c.get_output_tail(server.server_id, j1.instance_id)
+        assert output_lines == [OutputLine('Meditate, do not delay, lest you later regret it.', False, 'EXEC1')]
 
-    assert instances[0].instance_metadata.job_id == 'j1'
-    assert instances[0].output == [OutputLine('Meditate, do not delay, lest you later regret it.', False, 'EXEC')]
+        output_lines = c.get_output_tail(server.server_id, j2.instance_id)
+        assert output_lines == [OutputLine('Escape...', True, 'EXEC2'), OutputLine('...samsara!', True, 'EXEC2')]
 
-    assert instances[1].instance_metadata.job_id == 'j2'
-    assert not instances[1].output
+        output_lines = c.get_output_tail(server.server_id, j2.instance_id, max_lines=1)
+        assert output_lines == [OutputLine('Escape...', True, 'EXEC2')]

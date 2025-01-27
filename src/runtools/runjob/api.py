@@ -110,7 +110,6 @@ class InstancesStopMethod(JsonRpcMethod):
 
     def execute(self, job_instance):
         job_instance.stop()
-        return {"stop_result": StopResult.STOP_INITIATED.name}
 
 
 class InstancesTailMethod(JsonRpcMethod):
@@ -128,7 +127,7 @@ class InstancesTailMethod(JsonRpcMethod):
         return [INSTANCE_ID_PARAM, MethodParameter("max_lines", int, required=False, default=100)]
 
     def execute(self, job_instance, max_lines):
-        return {"tail": [line.serialize() for line in job_instance.output.tail()]}
+        return [line.serialize() for line in job_instance.output.tail(max_lines=max_lines)]
 
 
 class PhaseControlMethod(JsonRpcMethod):
@@ -376,10 +375,10 @@ class APIServer(SocketServer, JobInstanceManager):
                     job_instance = self._job_instances[validated_args[0]]
                 except KeyError:
                     return _error_response(request_id, ErrorCode.INSTANCE_NOT_FOUND, f"Instance not found: {validated_args[0]}")
-                exec_result = method.execute(job_instance, *validated_args[1:])
+                exec_retval = method.execute(job_instance, *validated_args[1:])
             elif method.type == JsonRpcMethodType.COLLECTION:
                 job_instances = self._matching_instances(validated_args[0])
-                exec_result = method.execute(job_instances, *validated_args[1:])
+                exec_retval = method.execute(job_instances, *validated_args[1:])
             else:
                 raise AssertionError("Missing implementation for method type: " + str(method.type))
         except JsonRpcError as e:
@@ -388,7 +387,7 @@ class APIServer(SocketServer, JobInstanceManager):
             log.error("event=[json_rpc_handler_error]", exc_info=True)
             return _error_response(request_id, ErrorCode.METHOD_EXECUTION_ERROR, f"Internal error: {str(e)}")
 
-        return _success_response(request_id, exec_result)
+        return _success_response(request_id, {"retval": exec_retval})
 
     def _matching_instances(self, run_match: Dict) -> List:
         try:
