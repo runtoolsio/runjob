@@ -70,7 +70,7 @@ def test_stop(job_instances, server):
     j1, j2 = job_instances
 
     with APIClient() as c:
-        c.stop_instances(server.server_id, j1.instance_id)
+        c.stop_instance(server.server_id, j1.instance_id)
 
     assert j1.snapshot().termination.status == TerminationStatus.STOPPED
     assert not j2.snapshot().termination
