@@ -2,7 +2,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum, IntEnum, auto
+from enum import Enum, auto
 from json import JSONDecodeError
 from typing import Optional, Dict, Any, List, Union
 
@@ -13,32 +13,12 @@ from runtools.runcore.client import StopResult
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.job import JobInstanceManager, JobInstance
 from runtools.runcore.run import util
+from runtools.runcore.util.json import ErrorCode
 from runtools.runcore.util.socket import SocketServer
 
 log = logging.getLogger(__name__)
 
 API_FILE_EXTENSION = '.api'
-
-
-class ErrorCode(IntEnum):
-    # Standard JSON-RPC 2.0 errors
-    ## Client
-    PARSE_ERROR = -32700
-    INVALID_REQUEST = -32600
-    METHOD_NOT_FOUND = -32601
-    INVALID_PARAMS = -32602
-    ## Server
-    INTERNAL_ERROR = -32603
-
-    # Custom error codes
-    ## Client
-    PHASE_OP_NOT_FOUND = 1
-    PHASE_OP_INVALID_ARGS = 2
-    ## Server
-    METHOD_EXECUTION_ERROR = 100
-    ## Signals
-    INSTANCE_NOT_FOUND = 200
-    PHASE_NOT_FOUND = 201
 
 
 def _create_socket_name():
@@ -218,7 +198,7 @@ def _error_response(request_id: Any, code: ErrorCode, message: str, data: Any = 
     response = {
         "jsonrpc": "2.0",
         "error": {
-            "code": code,
+            "code": code.int_code,
             "message": message
         }
     }
@@ -395,7 +375,7 @@ class APIServer(SocketServer, JobInstanceManager):
                 try:
                     job_instance = self._job_instances[validated_args[0]]
                 except KeyError:
-                    return _error_response(request_id, ErrorCode.METHOD_NOT_FOUND, f"Method not found: {method_name}")
+                    return _error_response(request_id, ErrorCode.INSTANCE_NOT_FOUND, f"Instance not found: {validated_args[0]}")
                 exec_result = method.execute(job_instance, *validated_args[1:])
             elif method.type == JsonRpcMethodType.COLLECTION:
                 job_instances = self._matching_instances(validated_args[0])
