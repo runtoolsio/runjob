@@ -40,7 +40,7 @@ def server(job_instances):
 
 def test_error_not_found():
     with APIClient() as c:
-        _, errors = c.send_request('/no-such-api')
+        _, errors = c.broadcast_method('/no-such-api')
     assert errors[0].response_error.code == ErrorCode.METHOD_NOT_FOUND
 
 
