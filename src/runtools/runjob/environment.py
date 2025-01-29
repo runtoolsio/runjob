@@ -13,7 +13,7 @@ from runtools.runcore.run import PhaseRun, RunState
 from runtools.runcore.util import ensure_tuple_copy, lock
 from runtools.runcore.util.err import run_isolated_collect_exceptions
 from runtools.runjob import instance, JobInstanceHook
-from runtools.runjob.api import APIServer
+from runtools.runjob.api import RemoteCallServer
 from runtools.runjob.events import TransitionDispatcher, OutputDispatcher
 
 
@@ -327,7 +327,7 @@ class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, Runnabl
 
 def local(persistence=None, *, lock_factory=None, features=None, transient=True):
     persistence = persistence or sqlite.create(':memory:')
-    api = APIServer()
+    api = RemoteCallServer()
     transition_dispatcher = TransitionDispatcher()
     output_dispatcher = OutputDispatcher()
     lock_factory = lock_factory or lock.default_file_lock_factory()

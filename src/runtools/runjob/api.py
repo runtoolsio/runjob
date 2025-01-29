@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 from json import JSONDecodeError
-from typing import Optional, Dict, Any, List, Union
+from typing import Dict, Any, List, Union
 
 from itertools import zip_longest
 
@@ -12,23 +12,16 @@ from runtools.runcore import paths
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.job import JobInstanceManager, JobInstance
 from runtools.runcore.run import util
-from runtools.runcore.util.json import ErrorCode
+from runtools.runcore.util.json import ErrorCode, JsonRpcError
 from runtools.runcore.util.socket import SocketServer
 
 log = logging.getLogger(__name__)
 
-API_FILE_EXTENSION = '.api'
+RPC_FILE_EXTENSION = '.rpc'
 
 
 def _create_socket_name():
-    return util.unique_timestamp_hex() + API_FILE_EXTENSION
-
-
-class JsonRpcError(Exception):
-    def __init__(self, code: ErrorCode, message: str, data: Optional[Any] = None):
-        self.code = code
-        self.message = message
-        self.data = data
+    return util.unique_timestamp_hex() + RPC_FILE_EXTENSION
 
 
 @dataclass
@@ -254,7 +247,7 @@ def validate_params(parameters, arguments: Union[List, Dict[str, Any]]) -> List[
     return validated_args
 
 
-class APIServer(SocketServer, JobInstanceManager):
+class RemoteCallServer(SocketServer, JobInstanceManager):
     """
     JSON-RPC 2.0 API Server that handles requests for job instances.
 
@@ -373,7 +366,8 @@ class APIServer(SocketServer, JobInstanceManager):
                 try:
                     job_instance = self._job_instances[validated_args[0]]
                 except KeyError:
-                    return _error_response(request_id, ErrorCode.INSTANCE_NOT_FOUND, f"Instance not found: {validated_args[0]}")
+                    return _error_response(request_id, ErrorCode.TARGET_NOT_FOUND,
+                                           f"Instance not found: {validated_args[0]}")
                 exec_retval = method.execute(job_instance, *validated_args[1:])
             elif method.type == JsonRpcMethodType.COLLECTION:
                 job_instances = self._matching_instances(validated_args[0])

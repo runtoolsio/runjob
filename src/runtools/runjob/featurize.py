@@ -22,7 +22,7 @@ from runtools.runcore.job import JobRun, InstanceTransitionObserver, InstanceOut
     JobInstance
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import RunState
-from runtools.runjob.api import APIServer
+from runtools.runjob.api import RemoteCallServer
 from runtools.runjob.events import TransitionDispatcher, OutputDispatcher
 
 log = logging.getLogger(__name__)
@@ -158,7 +158,7 @@ class FeaturedContextBuilder:
         return self
 
     def api_server(self):
-        self.add_instance_manager(APIServer, lambda api: api.start(), lambda api: api.close())
+        self.add_instance_manager(RemoteCallServer, lambda api: api.start(), lambda api: api.close())
         return self
 
     def transition_dispatcher(self):

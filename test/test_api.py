@@ -1,13 +1,13 @@
 import pytest
 
 import runtools.runcore
-from runtools.runcore.client import APIClient
+from runtools.runcore.client import RemoteCallClient
 from runtools.runcore.criteria import parse_criteria
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import RunState, TerminationStatus
 from runtools.runcore.test.job import FakeJobInstanceBuilder
 from runtools.runcore.util.json import ErrorCode
-from runtools.runjob.api import APIServer
+from runtools.runjob.api import RemoteCallServer
 
 EXEC = 'EXEC'
 APPROVAL = 'APPROVAL'
@@ -23,7 +23,7 @@ def job_instances():
 @pytest.fixture(autouse=True)
 def server(job_instances):
     j1, j2 = job_instances
-    server = APIServer()
+    server = RemoteCallServer()
 
     server.register_instance(j1)
     j1.next_phase()
@@ -39,7 +39,7 @@ def server(job_instances):
 
 
 def test_error_not_found():
-    with APIClient() as c:
+    with RemoteCallClient() as c:
         _, errors = c.broadcast_method('/no-such-api')
     assert errors[0].response_error.code == ErrorCode.METHOD_NOT_FOUND
 
@@ -60,8 +60,8 @@ def test_instances_api():
 
 def test_phase_op_approve(job_instances, server):
     _, j2 = job_instances
-    with APIClient() as c:
-        c.exec_phase_op(server.server_id, j2.instance_id, APPROVAL, 'approve')
+    with RemoteCallClient() as c:
+        c.exec_phase_op(server.server_address, j2.instance_id, APPROVAL, 'approve')
 
     assert j2.get_phase(APPROVAL).approved
 
@@ -69,8 +69,8 @@ def test_phase_op_approve(job_instances, server):
 def test_stop(job_instances, server):
     j1, j2 = job_instances
 
-    with APIClient() as c:
-        c.stop_instance(server.server_id, j1.instance_id)
+    with RemoteCallClient() as c:
+        c.stop_instance(server.server_address, j1.instance_id)
 
     assert j1.snapshot().termination.status == TerminationStatus.STOPPED
     assert not j2.snapshot().termination
@@ -82,12 +82,12 @@ def test_tail(job_instances, server):
     j2.output.add_line(OutputLine('Escape...', True, 'EXEC2'))
     j2.output.add_line(OutputLine('...samsara!', True, 'EXEC2'))
 
-    with APIClient() as c:
-        output_lines = c.get_output_tail(server.server_id, j1.instance_id)
+    with RemoteCallClient() as c:
+        output_lines = c.get_output_tail(server.server_address, j1.instance_id)
         assert output_lines == [OutputLine('Meditate, do not delay, lest you later regret it.', False, 'EXEC1')]
 
-        output_lines = c.get_output_tail(server.server_id, j2.instance_id)
+        output_lines = c.get_output_tail(server.server_address, j2.instance_id)
         assert output_lines == [OutputLine('Escape...', True, 'EXEC2'), OutputLine('...samsara!', True, 'EXEC2')]
 
-        output_lines = c.get_output_tail(server.server_id, j2.instance_id, max_lines=1)
+        output_lines = c.get_output_tail(server.server_address, j2.instance_id, max_lines=1)
         assert output_lines == [OutputLine('Escape...', True, 'EXEC2')]
