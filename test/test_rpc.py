@@ -39,10 +39,16 @@ def server(job_instances):
         server.close()
 
 
-def test_target_not_found():
+def test_server_not_found():
     with pytest.raises(TargetNotFoundError):
         with RemoteCallClient() as c:
             c.call_method('no-server', 'no-method')
+
+
+def test_instance_not_found(server):
+    with pytest.raises(TargetNotFoundError):
+        with RemoteCallClient() as c:
+            c.stop_instance(server.address, 'java-fx')
 
 
 def test_active_runs(server):
@@ -60,14 +66,6 @@ def test_active_runs(server):
     assert not results[0].error
 
 
-def test_phase_op_approve(job_instances, server):
-    _, j2 = job_instances
-    with RemoteCallClient() as c:
-        c.exec_phase_op(server.address, j2.instance_id, APPROVAL, 'approve')
-
-    assert j2.get_phase(APPROVAL).approved
-
-
 def test_stop(job_instances, server):
     j1, j2 = job_instances
 
@@ -76,6 +74,14 @@ def test_stop(job_instances, server):
 
     assert j1.snapshot().termination.status == TerminationStatus.STOPPED
     assert not j2.snapshot().termination
+
+
+def test_phase_op_approve(job_instances, server):
+    _, j2 = job_instances
+    with RemoteCallClient() as c:
+        c.exec_phase_op(server.address, j2.instance_id, APPROVAL, 'approve')
+
+    assert j2.get_phase(APPROVAL).approved
 
 
 def test_tail(job_instances, server):
