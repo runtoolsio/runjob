@@ -13,7 +13,7 @@ from runtools.runcore.run import PhaseRun, RunState
 from runtools.runcore.util import ensure_tuple_copy, lock
 from runtools.runcore.util.err import run_isolated_collect_exceptions
 from runtools.runjob import instance, JobInstanceHook
-from runtools.runjob.api import RemoteCallServer
+from runtools.runjob.server import RemoteCallServer
 from runtools.runjob.events import TransitionDispatcher, OutputDispatcher
 
 

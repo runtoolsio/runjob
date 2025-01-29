@@ -68,7 +68,7 @@ class JsonRpcMethod(ABC):
         pass
 
 
-class InstancesGetMethod(JsonRpcMethod):
+class GetActiveRunsMethod(JsonRpcMethod):
 
     @property
     def type(self) -> JsonRpcMethodType:
@@ -76,17 +76,17 @@ class InstancesGetMethod(JsonRpcMethod):
 
     @property
     def method_name(self):
-        return "get_instances"
+        return "get_active_runs"
 
     @property
     def parameters(self):
         return [RUN_MATCH_PARAM]
 
-    def execute(self, job_instance):
-        return {"job_run": job_instance.snapshot().serialize()}
+    def execute(self, job_instances):
+        return [i.snapshot().serialize() for i in job_instances]
 
 
-class InstancesStopMethod(JsonRpcMethod):
+class StopInstanceMethod(JsonRpcMethod):
 
     @property
     def type(self) -> JsonRpcMethodType:
@@ -104,7 +104,7 @@ class InstancesStopMethod(JsonRpcMethod):
         job_instance.stop()
 
 
-class InstancesTailMethod(JsonRpcMethod):
+class GetOutputTailMethod(JsonRpcMethod):
 
     @property
     def type(self) -> JsonRpcMethodType:
@@ -122,7 +122,7 @@ class InstancesTailMethod(JsonRpcMethod):
         return [line.serialize() for line in job_instance.output.tail(max_lines=max_lines)]
 
 
-class PhaseOperationMethod(JsonRpcMethod):
+class ExecPhaseOpMethod(JsonRpcMethod):
 
     @property
     def type(self) -> JsonRpcMethodType:
@@ -160,10 +160,10 @@ class PhaseOperationMethod(JsonRpcMethod):
 
 
 DEFAULT_METHODS = (
-    InstancesGetMethod(),
-    InstancesStopMethod(),
-    InstancesTailMethod(),
-    PhaseOperationMethod()
+    GetActiveRunsMethod(),
+    StopInstanceMethod(),
+    GetOutputTailMethod(),
+    ExecPhaseOpMethod()
 )
 
 
@@ -251,81 +251,26 @@ class RemoteCallServer(SocketServer, JobInstanceManager):
     """
     JSON-RPC 2.0 API Server that handles requests for job instances.
 
-    All methods require a run_match parameter which is used to identify target job instances.
-    The run_match parameter follows JobRunCriteria serialization format.
+    Each instance method requires an instance_id parameter, while collection methods use
+    run_match parameter to identify target job instances. The run_match follows
+    JobRunCriteria serialization format.
 
     Examples:
-    // Request
-    {
-        "jsonrpc": "2.0",
-        "id": "1",
-        "method": "get_instances",
-        "params": {
-            "run_match": {
-                "metadata_criteria": [{
-                    "job_id": "job123",
-                    "strategy": "exact"
-                }]
-            }
-        }
-    }
-    // Response
-    {
-        "jsonrpc": "2.0",
-        "id": "1",
-        "result": {
-            "job_run": {
-                "job_id": "job123",
-                "run_id": "run456",
-                "instance_id": "inst789",
-                "status": "running",
-                "phases": [...]
-            }
-        }
-    }
+        # Collection method - get_active_runs (example using dict params)
+        --> {"jsonrpc": "2.0", "id": 1, "method": "get_active_runs", "params": {"run_match": {...}}}
+        <-- {"jsonrpc": "2.0", "id": 1, "result": {"retval": [{"job_id": "job123", ...}]}}
 
-    // Request
-    {
-        "jsonrpc": "2.0",
-        "id": "2",
-        "method": "get_output_tail",
-        "params": {
-            "instance_id": "inst789",
-            "max_lines": 2
-        }
-    }
-    // Response
-    {
-        "jsonrpc": "2.0",
-        "id": "2",
-        "result": {
-            "tail": [
-                {"text": "Processing started", "is_error": false, "source": "phase_x"},
-                {"text": "Step 1 complete", "is_error": false, "source": "phase_y"}
-            ]
-        }
-    }
+        # Instance method - get_output_tail (example using list params)
+        --> {"jsonrpc": "2.0", "id": 2, "method": "get_output_tail", "params": ["inst789", 2]}
+        <-- {"jsonrpc": "2.0", "id": 2,
+             "result": {"retval": [
+               {"text": "Processing started", "is_error": false},
+               {"text": "Step 1 complete", "is_error": false}
+             ]}}
 
-    Error response examples:
-    {
-        "jsonrpc": "2.0",
-        "id": "3",
-        "error": {
-            "code": 0,
-            "message": "Instance not found: inst999"
-        }
-    }
-
-    {
-        "jsonrpc": "2.0",
-        "id": "4",
-        "error": {
-            "code": -32600,
-            "message": "Invalid JSON-RPC 2.0 request"
-        }
-    }
+        # Error response
+        <-- {"jsonrpc": "2.0", "id": 3, "error": {"code": -32001, "message": "Instance not found: inst999"}}
     """
-
     def __init__(self, methods=DEFAULT_METHODS):
         super().__init__(lambda: paths.socket_path(_create_socket_name(), create=True), allow_ping=True)
         self._methods = {method.method_name: method for method in methods}
@@ -388,4 +333,4 @@ class RemoteCallServer(SocketServer, JobInstanceManager):
         except ValueError as e:
             raise JsonRpcError(ErrorCode.INVALID_PARAMS, f"Invalid run match criteria: {e}")
 
-        return [job_instance for job_instance in self._job_instances if matching_criteria.matches(job_instance)]
+        return [job_instance for job_instance in self._job_instances.values() if matching_criteria.matches(job_instance)]

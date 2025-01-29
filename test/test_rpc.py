@@ -1,13 +1,14 @@
+from typing import List
+
 import pytest
 
-import runtools.runcore
-from runtools.runcore.client import RemoteCallClient
-from runtools.runcore.criteria import parse_criteria
+from runtools.runcore import JobRun
+from runtools.runcore.client import RemoteCallClient, TargetNotFoundError, RemoteCallResult
+from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import RunState, TerminationStatus
 from runtools.runcore.test.job import FakeJobInstanceBuilder
-from runtools.runcore.util.json import ErrorCode
-from runtools.runjob.api import RemoteCallServer
+from runtools.runjob.server import RemoteCallServer
 
 EXEC = 'EXEC'
 APPROVAL = 'APPROVAL'
@@ -38,30 +39,31 @@ def server(job_instances):
         server.close()
 
 
-def test_error_not_found():
+def test_target_not_found():
+    with pytest.raises(TargetNotFoundError):
+        with RemoteCallClient() as c:
+            c.call_method('no-server', 'no-method')
+
+
+def test_active_runs(server):
     with RemoteCallClient() as c:
-        _, errors = c.broadcast_method('/no-such-api')
-    assert errors[0].response_error.code == ErrorCode.METHOD_NOT_FOUND
+        j1_run = c.get_active_runs(server.address, JobRunCriteria.job_match('j1'))[0]
+        j2_run = c.get_active_runs(server.address, JobRunCriteria.job_match('j2'))[0]
+        results: List[RemoteCallResult[List[JobRun]]] = c.collect_active_runs(JobRunCriteria.all())
 
+    assert j1_run.lifecycle.run_state == RunState.EXECUTING
+    assert j2_run.lifecycle.run_state == RunState.PENDING
 
-def test_instances_api():
-    resp = runtools.runcore.get_active_runs()
-    instances = {inst.job_id: inst for inst in resp.successful}
-    assert instances['j1'].lifecycle.run_state == RunState.EXECUTING
-    assert instances['j2'].lifecycle.run_state == RunState.PENDING
-
-    resp_j1 = runtools.runcore.get_active_runs(parse_criteria('j1'))
-    resp_j2 = runtools.runcore.get_active_runs(parse_criteria('j2'))
-    assert resp_j1.successful[0].job_id == 'j1'
-    assert resp_j2.successful[0].job_id == 'j2'
-
-    assert not any([resp.errors, resp_j1.errors, resp_j2.errors])
+    assert len(results) == 1
+    assert results[0].server_address == server.address
+    assert len(results[0].retval) == 2
+    assert not results[0].error
 
 
 def test_phase_op_approve(job_instances, server):
     _, j2 = job_instances
     with RemoteCallClient() as c:
-        c.exec_phase_op(server.server_address, j2.instance_id, APPROVAL, 'approve')
+        c.exec_phase_op(server.address, j2.instance_id, APPROVAL, 'approve')
 
     assert j2.get_phase(APPROVAL).approved
 
@@ -70,7 +72,7 @@ def test_stop(job_instances, server):
     j1, j2 = job_instances
 
     with RemoteCallClient() as c:
-        c.stop_instance(server.server_address, j1.instance_id)
+        c.stop_instance(server.address, j1.instance_id)
 
     assert j1.snapshot().termination.status == TerminationStatus.STOPPED
     assert not j2.snapshot().termination
@@ -83,11 +85,11 @@ def test_tail(job_instances, server):
     j2.output.add_line(OutputLine('...samsara!', True, 'EXEC2'))
 
     with RemoteCallClient() as c:
-        output_lines = c.get_output_tail(server.server_address, j1.instance_id)
+        output_lines = c.get_output_tail(server.address, j1.instance_id)
         assert output_lines == [OutputLine('Meditate, do not delay, lest you later regret it.', False, 'EXEC1')]
 
-        output_lines = c.get_output_tail(server.server_address, j2.instance_id)
+        output_lines = c.get_output_tail(server.address, j2.instance_id)
         assert output_lines == [OutputLine('Escape...', True, 'EXEC2'), OutputLine('...samsara!', True, 'EXEC2')]
 
-        output_lines = c.get_output_tail(server.server_address, j2.instance_id, max_lines=1)
+        output_lines = c.get_output_tail(server.address, j2.instance_id, max_lines=1)
         assert output_lines == [OutputLine('Escape...', True, 'EXEC2')]

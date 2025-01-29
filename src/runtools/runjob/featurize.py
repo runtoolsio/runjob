@@ -22,7 +22,7 @@ from runtools.runcore.job import JobRun, InstanceTransitionObserver, InstanceOut
     JobInstance
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import RunState
-from runtools.runjob.api import RemoteCallServer
+from runtools.runjob.server import RemoteCallServer
 from runtools.runjob.events import TransitionDispatcher, OutputDispatcher
 
 log = logging.getLogger(__name__)
