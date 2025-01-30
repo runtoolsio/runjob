@@ -322,12 +322,9 @@ class _JobInstance(JobInstance):
             if termination.status.is_outcome(Outcome.NON_SUCCESS):
                 log.warning(self._log('run_incomplete', "termination_status=[{}]", termination.status.name))
 
-            if termination.error:
-                log.error(self._log('unexpected_error', "error_type=[{}] reason=[{}]",
-                                    termination.error.category, termination.error.reason))
-            elif termination.failure:
+            if termination.fault:
                 log.warning(self._log('run_failed', "error_type=[{}] reason=[{}]",
-                                      termination.failure.category, termination.failure.reason))
+                                      termination.fault.category, termination.fault.reason))
 
             log.info(self._log('run_terminated', "termination_status=[{}]", termination.status.name))
 

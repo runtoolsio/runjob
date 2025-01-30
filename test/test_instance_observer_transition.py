@@ -34,7 +34,7 @@ def test_raise_exc(observer: TestTransitionObserver):
         instance.create('j1', [TestPhase(raise_exc=Exception)], transition_observers=[observer]).run()
 
     assert observer.run_states == [RunState.EXECUTING, RunState.ENDED]
-    assert observer.job_runs[-1].termination.error.category == phaser.UNCAUGHT_PHASE_RUN_EXCEPTION
+    assert observer.job_runs[-1].termination.error.category == phaser.UNCAUGHT_PHASE_EXEC_EXCEPTION
 
 
 def test_raise_exec_exc(observer: TestTransitionObserver):
@@ -45,7 +45,7 @@ def test_raise_exec_exc(observer: TestTransitionObserver):
      .run())
 
     assert observer.run_states == [RunState.EXECUTING, RunState.ENDED]
-    assert observer.job_runs[-1].termination.failure.category == 'test_type'
+    assert observer.job_runs[-1].termination.fault.category == 'test_type'
 
 
 def test_observer_raises_exception():

@@ -5,7 +5,7 @@ import pytest
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.run import TerminationStatus, RunState, FailedRun, Fault
 from runtools.runjob import phaser
-from runtools.runjob.phaser import Phaser, InitPhase, TerminalPhase, WaitWrapperPhase, PhaseExecutionError
+from runtools.runjob.phaser import Phaser, InitPhase, TerminalPhase, WaitWrapperPhase, PhaseCompletionError
 from runtools.runjob.test.phaser import TestPhase
 
 INIT = InitPhase.ID
@@ -137,7 +137,7 @@ def test_failed_run_exception(sut):
     assert snapshot.termination.status == TerminationStatus.FAILED
     assert (snapshot.lifecycle.phase_ids == [INIT, EXEC1, TERM])
 
-    assert snapshot.termination.failure == failed_run.fault
+    assert snapshot.termination.fault == failed_run.fault
 
 
 def test_exception(sut):
@@ -145,7 +145,7 @@ def test_exception(sut):
     sut.get_phase(EXEC1).exception = exc
     sut.prime()
 
-    with pytest.raises(PhaseExecutionError) as exc_info:
+    with pytest.raises(PhaseCompletionError) as exc_info:
         sut.run()
 
     assert exc_info.value.phase_id == EXEC1
@@ -155,7 +155,7 @@ def test_exception(sut):
     assert snapshot.termination.status == TerminationStatus.ERROR
     assert (snapshot.lifecycle.phase_ids == [INIT, EXEC1, TERM])
 
-    assert snapshot.termination.error.category == phaser.UNCAUGHT_PHASE_RUN_EXCEPTION
+    assert snapshot.termination.error.category == phaser.UNCAUGHT_PHASE_EXEC_EXCEPTION
     assert snapshot.termination.error.reason == 'InvalidStateError: reason'
 
 

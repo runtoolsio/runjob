@@ -2,19 +2,174 @@ import logging
 import traceback
 from abc import ABC, abstractmethod
 from copy import copy
+from datetime import datetime
 from threading import Condition, Event
-from typing import Any, Dict, Iterable, Optional, Callable, Tuple, Generic
+from typing import Any, Dict, Iterable, Optional, Callable, Tuple, Generic, List
 
 import sys
 
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.run import Phase, PhaseRun, Lifecycle, TerminationStatus, TerminationInfo, Run, \
-    TerminateRun, FailedRun, Fault, RunState, C
+    TerminateRun, FailedRun, Fault, RunState, C, PhaseInfo, PhaseControl
+from runtools.runcore.util import utc_now
 
 log = logging.getLogger(__name__)
 
-UNCAUGHT_PHASE_RUN_EXCEPTION = "UNCAUGHT_PHASE_RUN_EXCEPTION"
+UNCAUGHT_PHASE_EXEC_EXCEPTION = "UNCAUGHT_PHASE_RUN_EXCEPTION"
+
+
+class PhaseV2(ABC, Generic[C]):
+
+    @property
+    @abstractmethod
+    def id(self):
+        pass
+
+    @property
+    @abstractmethod
+    def type(self) -> str:
+        """
+        The type of this phase. Should be defined as a constant value in each implementing class.
+        """
+        pass
+
+    @property
+    @abstractmethod
+    def run_state(self) -> RunState:
+        """
+        The run state of this phase. Should be defined as a constant value in each implementing class.
+        """
+        pass
+
+    @property
+    def name(self) -> Optional[str]:
+        return None
+
+    @property
+    def attributes(self):
+        return {}
+
+    @property
+    def info(self) -> PhaseInfo:
+        return PhaseInfo(self.id, self.type, self.run_state, self.name, self.attributes)
+
+    @property
+    def control(self):
+        return PhaseControl(self)
+
+    @abstractmethod
+    @property
+    def children(self):
+        pass
+
+    @abstractmethod
+    def run(self, ctx: Optional[C]):
+        pass
+
+    @abstractmethod
+    def stop(self):
+        pass
+
+    @abstractmethod
+    @property
+    def started_at(self):
+        pass
+
+    @abstractmethod
+    @property
+    def ended_at(self):
+        pass
+
+    @abstractmethod
+    @property
+    def termination(self):
+        pass
+
+
+class BasePhase(PhaseV2[C], ABC):
+    """Base implementation providing common functionality for V2 phases"""
+
+    def __init__(self, phase_id: str, phase_type: str, run_state: RunState, name: Optional[str] = None):
+        self._id = phase_id
+        self._type = phase_type
+        self._run_state = run_state
+        self._name = name
+        self._started_at: Optional[datetime] = None
+        self._termination: Optional[TerminationInfo] = None
+
+    @property
+    def id(self) -> str:
+        return self._id
+
+    @property
+    def type(self) -> str:
+        return self._type
+
+    @property
+    def run_state(self) -> RunState:
+        return self._run_state
+
+    @property
+    def name(self) -> Optional[str]:
+        return self._name
+
+    @property
+    def started_at(self) -> Optional[datetime]:
+        return self._started_at
+
+    @property
+    def ended_at(self) -> Optional[datetime]:
+        return self._ended_at
+
+    @property
+    def termination(self) -> Optional[TerminationInfo]:
+        return self._termination
+
+    @property
+    def children(self) -> List[PhaseV2]:
+        return []
+
+
+class ExecutionTerminated(Exception):
+
+    def __init__(self, termination_status: TerminationStatus):
+        self.termination_status = termination_status
+
+
+class ExecPhase(BasePhase):
+
+    def __init__(self, phase_id: str, phase_type: str, run_state: RunState, name: Optional[str] = None):
+        super().__init__(phase_id, phase_type, run_state, name)
+
+    @abstractmethod
+    def execute(self, ctx: Optional[C]):
+        pass
+
+    def run(self, ctx: Optional[C]):
+        self._started_at = utc_now()
+        try:
+            self.execute(ctx)
+        except ExecutionTerminated as e:
+            fault = None
+            if e.__cause__:
+                fault = Fault.from_exception("EXECUTION_TERMINATED", e.__cause__)
+            self._termination = TerminationInfo(e.termination_status, utc_now(), fault)
+            raise PhaseCompletionError from e
+        except Exception as e:
+            fault = Fault.from_exception(UNCAUGHT_PHASE_EXEC_EXCEPTION, e)
+            self._termination = TerminationInfo(TerminationStatus.FAILED, utc_now(), fault)
+            raise PhaseCompletionError from e
+        except (KeyboardInterrupt, SystemExit) as e:
+            self.stop()
+            self._termination = TerminationInfo(TerminationStatus.INTERRUPTED, utc_now())
+            raise e
+        finally:
+            if not self._termination:
+                self._termination = TerminationInfo(TerminationStatus.COMPLETED, utc_now())
+
+    def stop(self):
+        pass
 
 
 def unique_phases_to_dict(phases) -> Dict[str, Phase]:
@@ -177,10 +332,10 @@ class RunContext(ABC):
     """Members to be added later"""
 
 
-class PhaseExecutionError(Exception):
+class PhaseCompletionError(Exception):
 
     def __init__(self, phase_id):
-        super().__init__(f"Phase '{phase_id}' execution failed")
+        super().__init__(f"Phase '{phase_id}' execution did not complete successfully")
         self.phase_id = phase_id
 
 
@@ -291,8 +446,8 @@ class Phaser(Generic[C]):
         except FailedRun as e:
             return self._term_info(TerminationStatus.FAILED, failure=e.fault), None
         except Exception as e:
-            run_error = Fault.from_exception(UNCAUGHT_PHASE_RUN_EXCEPTION, e)
-            wrapped_exc = PhaseExecutionError(phase.id)
+            run_error = Fault.from_exception(UNCAUGHT_PHASE_EXEC_EXCEPTION, e)
+            wrapped_exc = PhaseCompletionError(phase.id)
             wrapped_exc.__cause__ = e
             return self._term_info(TerminationStatus.ERROR, error=run_error), wrapped_exc
         except KeyboardInterrupt as e:
