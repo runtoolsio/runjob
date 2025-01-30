@@ -13,8 +13,8 @@ from runtools.runcore.run import PhaseRun, RunState
 from runtools.runcore.util import ensure_tuple_copy, lock
 from runtools.runcore.util.err import run_isolated_collect_exceptions
 from runtools.runjob import instance, JobInstanceHook
-from runtools.runjob.server import RemoteCallServer
 from runtools.runjob.events import TransitionDispatcher, OutputDispatcher
+from runtools.runjob.server import RemoteCallServer
 
 
 def _create_plugins(names):
@@ -32,6 +32,10 @@ class RunnableEnvironment(Environment, ABC):
     @abstractmethod
     def lock(self, lock_id):
         """TODO to separate type"""
+
+    def signal_dispatch(self, instance_id, phase_id):
+        """TODO TBD"""
+        self.get_instance(instance_id).get_phase_control().signal_dispatch()
 
 
 class Feature(ABC):

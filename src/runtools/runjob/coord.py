@@ -499,6 +499,7 @@ class ExecutionQueue(Phase[OutputContext], InstanceTransitionObserver):
             self._stop_listening()
             self._wait_guard.notify_all()
 
+    @control_api
     def signal_dispatch(self):
         with self._wait_guard:
             if self._state == QueuedState.CANCELLED:
@@ -549,9 +550,9 @@ class ExecutionQueue(Phase[OutputContext], InstanceTransitionObserver):
         except ValueError:
             return False
 
-    def _dispatch_next(self):
+    def _dispatch_next(self, env):
         criteria = JobRunCriteria(phase_criteria=self._queue_phase_filter)
-        runs, _ = runcore.get_active_runs(criteria)
+        runs = env.get_active_runs(criteria)
 
         # TODO Sort by phase start
         sorted_group_runs = JobRuns(sorted(runs, key=lambda job_run: job_run.lifecycle.created_at))
@@ -566,7 +567,7 @@ class ExecutionQueue(Phase[OutputContext], InstanceTransitionObserver):
         log.debug("event[dispatching_from_queue] count=[%d]", free_slots)
         for next_proceed in sorted_group_runs.queued:
             # TODO Check is this queue
-            signal_resp = runcore.signal_dispatch(JobRunCriteria.exact_match(next_proceed), self._queue_id)
+            signal_resp = env.signal_dispatch(next_proceed.instance_id, self._queue_id)
             for r in signal_resp.successful:
                 if r.dispatched:
                     # self._log.debug("event[dispatched] run=[%s]", next_proceed.metadata)
