@@ -3,20 +3,29 @@ import traceback
 from abc import ABC, abstractmethod
 from copy import copy
 from datetime import datetime
-from threading import Condition, Event
+from threading import Condition, Event, Lock
 from typing import Any, Dict, Iterable, Optional, Callable, Tuple, Generic, List
 
 import sys
 
 from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
+from runtools.runcore.job import Stage
 from runtools.runcore.run import Phase, PhaseRun, Lifecycle, TerminationStatus, TerminationInfo, Run, \
-    TerminateRun, FailedRun, Fault, RunState, C, PhaseInfo, PhaseControl
+    TerminateRun, FailedRun, Fault, RunState, C, PhaseControl, PhaseDetail, PhaseObserver, PhaseUpdateEvent
 from runtools.runcore.util import utc_now
+from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
 log = logging.getLogger(__name__)
 
 UNCAUGHT_PHASE_EXEC_EXCEPTION = "UNCAUGHT_PHASE_RUN_EXCEPTION"
+
+
+class PhaseCompletionError(Exception):
+
+    def __init__(self, phase_id):
+        super().__init__(f"Phase '{phase_id}' execution did not complete successfully")
+        self.phase_id = phase_id
 
 
 class PhaseV2(ABC, Generic[C]):
@@ -50,9 +59,20 @@ class PhaseV2(ABC, Generic[C]):
     def attributes(self):
         return {}
 
+    @abstractmethod
     @property
-    def info(self) -> PhaseInfo:
-        return PhaseInfo(self.id, self.type, self.run_state, self.name, self.attributes)
+    def stage(self):
+        pass
+
+    @abstractmethod
+    def detail(self):
+        """
+        Creates a view of the current phase state.
+
+        Returns:
+            PhaseView: An immutable view of the phase's current state
+        """
+        pass
 
     @property
     def control(self):
@@ -78,13 +98,22 @@ class PhaseV2(ABC, Generic[C]):
 
     @abstractmethod
     @property
-    def ended_at(self):
+    def termination(self):
         pass
 
     @abstractmethod
-    @property
-    def termination(self):
+    def add_phase_observer(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         pass
+
+    @abstractmethod
+    def remove_phase_observer(self, observer):
+        pass
+
+
+class ExecutionTerminated(Exception):
+
+    def __init__(self, termination_status: TerminationStatus):
+        self.termination_status = termination_status
 
 
 class BasePhase(PhaseV2[C], ABC):
@@ -97,6 +126,7 @@ class BasePhase(PhaseV2[C], ABC):
         self._name = name
         self._started_at: Optional[datetime] = None
         self._termination: Optional[TerminationInfo] = None
+        self._notification = ObservableNotification[PhaseObserver]()
 
     @property
     def id(self) -> str:
@@ -115,12 +145,16 @@ class BasePhase(PhaseV2[C], ABC):
         return self._name
 
     @property
-    def started_at(self) -> Optional[datetime]:
-        return self._started_at
+    def stage(self):
+        if self._termination:
+            return Stage.ENDED
+        if self._started_at:
+            return Stage.RUNNING
+        return Stage.CREATED
 
     @property
-    def ended_at(self) -> Optional[datetime]:
-        return self._ended_at
+    def started_at(self) -> Optional[datetime]:
+        return self._started_at
 
     @property
     def termination(self) -> Optional[TerminationInfo]:
@@ -130,26 +164,34 @@ class BasePhase(PhaseV2[C], ABC):
     def children(self) -> List[PhaseV2]:
         return []
 
+    def detail(self) -> PhaseDetail:
+        """
+        Creates a view of the current phase state.
 
-class ExecutionTerminated(Exception):
-
-    def __init__(self, termination_status: TerminationStatus):
-        self.termination_status = termination_status
-
-
-class ExecPhase(BasePhase):
-
-    def __init__(self, phase_id: str, phase_type: str, run_state: RunState, name: Optional[str] = None):
-        super().__init__(phase_id, phase_type, run_state, name)
+        Returns:
+            PhaseView: An immutable view of the phase's current state
+        """
+        return PhaseDetail(
+            phase_id=self._id,
+            phase_type=self._type,
+            run_state=self._run_state,
+            phase_name=self._name,
+            attributes=self.attributes,
+            stage=self.stage,
+            started_at=self._started_at,
+            termination=self._termination,
+            children=[child.detail() for child in self.children] if self.children else [],
+        )
 
     @abstractmethod
-    def execute(self, ctx: Optional[C]):
+    def _run(self, ctx: Optional[C]):
         pass
 
     def run(self, ctx: Optional[C]):
         self._started_at = utc_now()
+        self._notification.observer_proxy.new_phase_update(PhaseUpdateEvent(Stage.RUNNING, self.detail()))
         try:
-            self.execute(ctx)
+            self._run(ctx)
         except ExecutionTerminated as e:
             fault = None
             if e.__cause__:
@@ -167,9 +209,61 @@ class ExecPhase(BasePhase):
         finally:
             if not self._termination:
                 self._termination = TerminationInfo(TerminationStatus.COMPLETED, utc_now())
+            self._notification.observer_proxy.new_phase_update(PhaseUpdateEvent(Stage.ENDED, self.detail()))
+
+    def add_phase_observer(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        self._notification.add_observer(observer, priority)
+
+    def remove_phase_observer(self, observer):
+        self._notification.remove_observer(observer)
+
+
+class SequentialPhase(BasePhase):
+    """
+    A phase that executes its children sequentially.
+    If any child phase fails, the execution stops and the error is propagated.
+    """
+
+    TYPE = 'SEQUENTIAL'
+
+    def __init__(self, phase_id: str, children: List[PhaseV2[C]], name: Optional[str] = None):
+        super().__init__(phase_id, SequentialPhase.TYPE, RunState.EXECUTING, name)
+        self._children = children
+        self._current_child: Optional[PhaseV2[C]] = None
+        self._stop_lock = Lock()
+        self._stopped = False
+        for c in children:
+            c.add_phase_observer(self._notification.observer_proxy)
+
+    @property
+    def children(self) -> List[PhaseV2[C]]:
+        return self._children.copy()
+
+    def _run(self, ctx: Optional[C]):
+        """
+        Execute child phases in sequence.
+        If any phase fails, execution is terminated.
+        """
+        try:
+            for child in self._children:
+                with self._stop_lock:
+                    if self._stopped:
+                        raise ExecutionTerminated(TerminationStatus.STOPPED)
+                    self._current_child = child
+                child.run(ctx)
+                if child.termination.status != TerminationStatus.COMPLETED:
+                    raise ExecutionTerminated(child.termination.status)
+        finally:
+            self._current_child = None
 
     def stop(self):
-        pass
+        """
+        Stop the current child phase if one is executing
+        """
+        with self._stop_lock:
+            self._stopped = True
+            if self._current_child:
+                self._current_child.stop()
 
 
 def unique_phases_to_dict(phases) -> Dict[str, Phase]:
@@ -330,13 +424,6 @@ class WaitWrapperPhase(DelegatingPhase[C]):
 
 class RunContext(ABC):
     """Members to be added later"""
-
-
-class PhaseCompletionError(Exception):
-
-    def __init__(self, phase_id):
-        super().__init__(f"Phase '{phase_id}' execution did not complete successfully")
-        self.phase_id = phase_id
 
 
 class Phaser(Generic[C]):
