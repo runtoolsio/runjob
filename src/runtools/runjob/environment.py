@@ -35,7 +35,7 @@ class RunnableEnvironment(Environment, ABC):
 
     def signal_dispatch(self, instance_id, phase_id):
         """TODO TBD"""
-        self.get_instance(instance_id).get_phase_control().signal_dispatch()
+        self.get_instance(instance_id).find_phase_control().signal_dispatch()
 
 
 class Feature(ABC):

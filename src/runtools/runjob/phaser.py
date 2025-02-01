@@ -12,7 +12,7 @@ from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.job import Stage
 from runtools.runcore.run import Phase, PhaseRun, Lifecycle, TerminationStatus, TerminationInfo, Run, \
-    TerminateRun, FailedRun, Fault, RunState, C, PhaseControl, PhaseDetail, PhaseObserver, PhaseUpdateEvent
+    TerminateRun, FailedRun, Fault, RunState, C, PhaseControl, PhaseDetail, PhaseUpdateObserver, PhaseUpdateEvent
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
@@ -26,6 +26,12 @@ class PhaseCompletionError(Exception):
     def __init__(self, phase_id):
         super().__init__(f"Phase '{phase_id}' execution did not complete successfully")
         self.phase_id = phase_id
+
+
+class PhaseTypeMismatchError(Exception):
+
+    def __init__(self, phase_id, expected_type, actual_type):
+        super().__init__(f"Phase '{phase_id}' has unexpected type: expected {expected_type}, got {actual_type}")
 
 
 class PhaseV2(ABC, Generic[C]):
@@ -79,6 +85,10 @@ class PhaseV2(ABC, Generic[C]):
         pass
 
     @abstractmethod
+    def find_phase_control(self, phase_id: str, phase_type: str = None) -> Optional[PhaseControl]:
+        pass
+
+    @abstractmethod
     def run(self, ctx: Optional[C]):
         pass
 
@@ -102,7 +112,7 @@ class PhaseV2(ABC, Generic[C]):
         pass
 
     @abstractmethod
-    def add_phase_observer(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, notify_last_stage=False):
+    def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY, replay_last_update=False):
         pass
 
     @abstractmethod
@@ -127,7 +137,7 @@ class BasePhase(PhaseV2[C], ABC):
         self._created_at: datetime = utc_now()
         self._started_at: Optional[datetime] = None
         self._termination: Optional[TerminationInfo] = None
-        self._notification = ObservableNotification[PhaseObserver]()
+        self._notification = ObservableNotification[PhaseUpdateObserver]()
 
     @property
     def id(self) -> str:
@@ -160,6 +170,35 @@ class BasePhase(PhaseV2[C], ABC):
     @property
     def children(self) -> List[PhaseV2]:
         return []
+
+    def find_phase_control(self, phase_id: str, phase_type: str = None) -> Optional[PhaseControl]:
+        """
+        Find phase control by phase ID, searching recursively through all children.
+
+        Args:
+            phase_id: The ID of the phase to find
+            phase_type: The type of the found phase (TODO exception)
+
+        Returns:
+            PhaseControl for the matching phase, or None if not found
+        """
+        phase = None
+        if self.id == phase_id:
+            phase = self
+        else:
+            for child in self.children:
+                if child.id == phase_id:
+                    phase = child
+                    break
+                if phase_control := child.find_phase_control(phase_id, phase_type):
+                    return phase_control
+
+        if not phase:
+            return None
+        if phase_type and phase.type != phase_type:
+            raise PhaseTypeMismatchError(phase.id, phase_type, phase.type)
+
+        return phase.control
 
     def detail(self) -> PhaseDetail:
         """
@@ -214,9 +253,9 @@ class BasePhase(PhaseV2[C], ABC):
             self._notification.observer_proxy.new_phase_update(
                 PhaseUpdateEvent(self.detail(), Stage.ENDED, self._termination.terminated_at))
 
-    def add_phase_observer(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, notify_last_stage=False):
+    def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY, replay_last_update=False):
         self._notification.add_observer(observer, priority)
-        if notify_last_stage:
+        if replay_last_update:
             detail = self.detail()
             self._notification.observer_proxy.new_phase_update(
                 PhaseUpdateEvent(detail, detail.stage, detail.last_change_at))

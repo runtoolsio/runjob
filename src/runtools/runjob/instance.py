@@ -50,15 +50,18 @@ from typing import Callable, Tuple, Optional, List
 
 from runtools.runcore import util
 from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserver,
-                                  InstanceOutputObserver, JobInstanceMetadata, JobFaults)
+                                  InstanceOutputObserver, JobInstanceMetadata, JobFaults, InstancePhaseUpdateObserver,
+                                  InstancePhaseUpdateEvent)
 from runtools.runcore.output import Output, TailNotSupportedError, Mode, OutputLine
-from runtools.runcore.run import PhaseRun, Outcome, RunState, Fault, PhaseInfo
+from runtools.runcore.run import PhaseRun, Outcome, Fault, PhaseUpdateEvent
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer
-from runtools.runjob.phaser import Phaser, DelegatingPhase
+from runtools.runjob.phaser import DelegatingPhase, SequentialPhase
 from runtools.runjob.track import StatusTracker, OutputToStatusTransformer
 
 log = logging.getLogger(__name__)
+
+ROOT_PHASE_ID = "root"
 
 TRANSITION_OBSERVER_ERROR = "TRANSITION_OBSERVER_ERROR"
 OUTPUT_OBSERVER_ERROR = "OUTPUT_OBSERVER_ERROR"
@@ -176,10 +179,10 @@ def create(job_id, phases, environment=None,
 
     instance_id = instance_id or util.unique_timestamp_hex()
     run_id = run_id or instance_id
-    phaser = Phaser(phases)
+    root_phase = SequentialPhase(ROOT_PHASE_ID, phases)
     tail_buffer = tail_buffer or InMemoryTailBuffer(max_capacity=10)
     status_tracker = status_tracker or StatusTracker()
-    inst = _JobInstance(job_id, instance_id, run_id, phaser, environment, tail_buffer, status_tracker,
+    inst = _JobInstance(job_id, instance_id, run_id, root_phase, environment, tail_buffer, status_tracker,
                         pre_run_hook, post_run_hook,
                         transition_observer_error_handler, output_observer_error_handler,
                         user_params)
@@ -187,30 +190,33 @@ def create(job_id, phases, environment=None,
         inst.add_observer_transition(o)
     for o in output_observers:
         inst.add_observer_output(o)
+
+    # noinspection PyProtectedMember
+    inst._post_created()
     return inst
 
 
 class _JobInstance(JobInstance):
 
-    def __init__(self, job_id, instance_id, run_id, phaser, env, tail_buffer, status_tracker,
+    def __init__(self, job_id, instance_id, run_id, root_phase, env, tail_buffer, status_tracker,
                  pre_run_hook, post_run_hook,
-                 transition_observer_err_hook, output_observer_err_hook,
+                 phase_update_observer_err_hook, output_observer_err_hook,
                  user_params):
         parameters = {}
         self._metadata = JobInstanceMetadata(job_id, run_id or instance_id, instance_id, parameters, user_params)
-        self._phaser = phaser
+        self._root_phase: SequentialPhase = root_phase
         self._output = _JobOutput(self._metadata, tail_buffer, output_observer_err_hook)
         self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output)
         self._pre_run_hook = pre_run_hook
         self._post_run_hook = post_run_hook
 
-        self._transition_notification = (
-            ObservableNotification[InstanceTransitionObserver](error_hook=transition_observer_err_hook,
-                                                               force_reraise=True))
+        self._phase_update_notification = (
+            ObservableNotification[InstancePhaseUpdateObserver](error_hook=phase_update_observer_err_hook,
+                                                                force_reraise=True))
         self._transition_observer_faults: List[Fault] = []
-        # TODO Move the below out of constructor?
-        self._phaser.transition_hook = self._transition_hook
-        self._phaser.prime()  # TODO
+
+    def _post_created(self):
+        self._root_phase.add_phase_observer(self._phase_update_notification, replay_last_update=True)
 
     def _log(self, event: str, msg: str = '', *params):
         return ("[{}] job_run=[{}@{}] " + msg).format(
@@ -224,12 +230,8 @@ class _JobInstance(JobInstance):
     def status_tracker(self):
         return self._ctx.status_tracker
 
-    @property
-    def phases(self) -> List[PhaseInfo]:
-        return [phase.info for phase in self._phaser.phases.values()]
-
-    def get_phase_control(self, phase_id: str, phase_type: str = None):
-        return self._phaser.get_phase(phase_id, phase_type).control
+    def find_phase_control(self, phase_id: str, phase_type: str = None):
+        return self._root_phase.find_phase_control(phase_id, phase_type)
 
     @property
     def output(self):
@@ -238,7 +240,7 @@ class _JobInstance(JobInstance):
     def snapshot(self) -> JobRun:
         status = self._ctx.status_tracker.to_status() if self.status_tracker else None
         faults = JobFaults(tuple(self._transition_observer_faults), tuple(self._output.output_observer_faults))
-        return JobRun(self.metadata, self._phaser.snapshot(), faults, status)
+        return JobRun(self.metadata, self._root_phase.detail(), faults, status)
 
     @contextmanager
     def _job_instance_context(self):
@@ -254,7 +256,7 @@ class _JobInstance(JobInstance):
                                                 log_filter=_JobInstanceLogFilter(self.instance_id)):
                 try:
                     self._exec_pre_run_hook()
-                    self._phaser.run(self._ctx)
+                    self._root_phase.run(self._ctx)
                 finally:
                     self._exec_post_run_hook()
 
@@ -289,7 +291,7 @@ class _JobInstance(JobInstance):
         Due to synchronous design there is a small window when an execution can be stopped before it is started.
         All execution implementations must cope with such scenario.
         """
-        self._phaser.stop()
+        self._root_phase.stop()
 
     def interrupted(self):
         """
@@ -297,39 +299,32 @@ class _JobInstance(JobInstance):
         Due to synchronous design there is a small window when an execution can be interrupted before it is started.
         All execution implementations must cope with such scenario.
         """
-        self._phaser.stop()  # TODO Interrupt
+        self._root_phase.stop()  # TODO Interrupt
 
-    def wait_for_transition(self, phase_name=None, run_state=RunState.NONE, *, timeout=None):
-        return self._phaser.wait_for_transition(phase_name, run_state, timeout=timeout)
-
-    def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, notify_on_register=False):
-        if notify_on_register:
+    def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, notify_last_update=False):
+        if notify_last_update:
             """TODO"""
-        self._transition_notification.add_observer(observer, priority)
+        self._phase_update_notification.add_observer(observer, priority)
 
     def remove_observer_transition(self, callback):
-        self._transition_notification.remove_observer(callback)
+        self._phase_update_notification.remove_observer(callback)
 
-    def _transition_hook(self, old_phase: PhaseRun, new_phase: PhaseRun, ordinal):
-        """Executed under phaser transition lock"""
-        snapshot = self.snapshot()
-        termination = snapshot.termination
+    def _on_phase_update(self, e: PhaseUpdateEvent):
+        log.debug(self._log('instance_phase_update', "event=[{}]", e))
 
-        log.info(self._log('new_phase', "new_phase=[{}] prev_phase=[{}] run_state=[{}]",
-                           new_phase.phase_id, old_phase.phase_id, new_phase.run_state.name))
+        is_root_phase = e.phase_detail.phase_id == ROOT_PHASE_ID
+        if is_root_phase:
+            log.debug(self._log('instance_stage_update', "new_stage=[{}]", e.new_stage))
 
-        if termination:
-            if termination.status.is_outcome(Outcome.NON_SUCCESS):
-                log.warning(self._log('run_incomplete', "termination_status=[{}]", termination.status.name))
+            if term := e.phase_detail.termination:
+                if term.status.is_outcome(Outcome.NON_SUCCESS):
+                    log.warning(self._log('instance_terminated_unsuccessfully', "termination=[{}]", term))
+                else:
+                    log.debug(self._log('instance_terminated_successfully', "termination=[{}]", term))
 
-            if termination.fault:
-                log.warning(self._log('run_failed', "error_type=[{}] reason=[{}]",
-                                      termination.fault.category, termination.fault.reason))
-
-            log.info(self._log('run_terminated', "termination_status=[{}]", termination.status.name))
-
+        event = InstancePhaseUpdateEvent(self.metadata, is_root_phase, e.phase_detail, e.new_stage, e.timestamp)
         try:
-            self._transition_notification.observer_proxy.new_instance_phase(snapshot, old_phase, new_phase, ordinal)
+            self._phase_update_notification.observer_proxy.new_instance_phase_update(event)
         except ExceptionGroup as eg:
             log.error("[transition_observer_error]", exc_info=eg)
             for e in eg.exceptions:
