@@ -2,7 +2,7 @@ import logging
 import traceback
 from abc import ABC, abstractmethod
 from copy import copy
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import Condition, Event, Lock
 from typing import Any, Dict, Iterable, Optional, Callable, Tuple, Generic, List
 
@@ -112,6 +112,11 @@ class PhaseV2(ABC, Generic[C]):
         pass
 
     @abstractmethod
+    @property
+    def total_run_time(self) -> Optional[timedelta]:
+        pass
+
+    @abstractmethod
     def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY, replay_last_update=False):
         pass
 
@@ -166,6 +171,19 @@ class BasePhase(PhaseV2[C], ABC):
     @property
     def termination(self) -> Optional[TerminationInfo]:
         return self._termination
+
+    @property
+    def total_run_time(self) -> Optional[timedelta]:
+        """
+        Calculates the total runtime of the phase.
+
+        Returns:
+            Optional[timedelta]: Time between phase start and termination if both exist, otherwise None
+        """
+        if not self._started_at or not self._termination:
+            return None
+
+        return self._termination.terminated_at - self._started_at
 
     @property
     def children(self) -> List[PhaseV2]:
