@@ -60,11 +60,6 @@ class PhaseV2(ABC, Generic[C]):
         return {}
 
     @abstractmethod
-    @property
-    def stage(self):
-        pass
-
-    @abstractmethod
     def detail(self):
         """
         Creates a view of the current phase state.
@@ -93,6 +88,11 @@ class PhaseV2(ABC, Generic[C]):
 
     @abstractmethod
     @property
+    def created_at(self):
+        pass
+
+    @abstractmethod
+    @property
     def started_at(self):
         pass
 
@@ -102,7 +102,7 @@ class PhaseV2(ABC, Generic[C]):
         pass
 
     @abstractmethod
-    def add_phase_observer(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+    def add_phase_observer(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, notify_last_stage=False):
         pass
 
     @abstractmethod
@@ -124,6 +124,7 @@ class BasePhase(PhaseV2[C], ABC):
         self._type = phase_type
         self._run_state = run_state
         self._name = name
+        self._created_at: datetime = utc_now()
         self._started_at: Optional[datetime] = None
         self._termination: Optional[TerminationInfo] = None
         self._notification = ObservableNotification[PhaseObserver]()
@@ -145,12 +146,8 @@ class BasePhase(PhaseV2[C], ABC):
         return self._name
 
     @property
-    def stage(self):
-        if self._termination:
-            return Stage.ENDED
-        if self._started_at:
-            return Stage.RUNNING
-        return Stage.CREATED
+    def created_at(self) -> Optional[datetime]:
+        return self._created_at
 
     @property
     def started_at(self) -> Optional[datetime]:
@@ -177,7 +174,7 @@ class BasePhase(PhaseV2[C], ABC):
             run_state=self._run_state,
             phase_name=self._name,
             attributes=self.attributes,
-            stage=self.stage,
+            created_at=self._created_at,
             started_at=self._started_at,
             termination=self._termination,
             children=[child.detail() for child in self.children] if self.children else [],
@@ -189,30 +186,40 @@ class BasePhase(PhaseV2[C], ABC):
 
     def run(self, ctx: Optional[C]):
         self._started_at = utc_now()
-        self._notification.observer_proxy.new_phase_update(PhaseUpdateEvent(Stage.RUNNING, self.detail()))
+        self._notification.observer_proxy.new_phase_update(
+            PhaseUpdateEvent(self.detail(), Stage.RUNNING, self._started_at))
+
+        term = None
         try:
             self._run(ctx)
         except ExecutionTerminated as e:
             fault = None
             if e.__cause__:
                 fault = Fault.from_exception("EXECUTION_TERMINATED", e.__cause__)
-            self._termination = TerminationInfo(e.termination_status, utc_now(), fault)
+            term = TerminationInfo(e.termination_status, utc_now(), fault)
             raise PhaseCompletionError from e
         except Exception as e:
             fault = Fault.from_exception(UNCAUGHT_PHASE_EXEC_EXCEPTION, e)
-            self._termination = TerminationInfo(TerminationStatus.FAILED, utc_now(), fault)
+            term = TerminationInfo(TerminationStatus.FAILED, utc_now(), fault)
             raise PhaseCompletionError from e
         except (KeyboardInterrupt, SystemExit) as e:
             self.stop()
-            self._termination = TerminationInfo(TerminationStatus.INTERRUPTED, utc_now())
+            term = TerminationInfo(TerminationStatus.INTERRUPTED, utc_now())
             raise e
         finally:
-            if not self._termination:
+            if term:
+                self._termination = term
+            else:
                 self._termination = TerminationInfo(TerminationStatus.COMPLETED, utc_now())
-            self._notification.observer_proxy.new_phase_update(PhaseUpdateEvent(Stage.ENDED, self.detail()))
+            self._notification.observer_proxy.new_phase_update(
+                PhaseUpdateEvent(self.detail(), Stage.ENDED, self._termination.terminated_at))
 
-    def add_phase_observer(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+    def add_phase_observer(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, notify_last_stage=False):
         self._notification.add_observer(observer, priority)
+        if notify_last_stage:
+            detail = self.detail()
+            self._notification.observer_proxy.new_phase_update(
+                PhaseUpdateEvent(detail, detail.stage, detail.last_change_at))
 
     def remove_phase_observer(self, observer):
         self._notification.remove_observer(observer)
