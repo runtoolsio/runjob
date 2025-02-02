@@ -2,7 +2,7 @@ from runtools.runcore.listening import InstanceTransitionReceiver, InstanceOutpu
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import PhaseRun, RunState, PhaseInfo
 from runtools.runcore.job import JobInstanceMetadata
-from runtools.runcore.test.job import job_run
+from runtools.runcore.test.job import test_job_run
 from runtools.runcore.test.observer import GenericObserver
 from runtools.runcore.util import utc_now
 
@@ -16,7 +16,7 @@ def test_state_dispatching():
     receiver.add_observer_transition(observer)
     receiver.start()
 
-    test_run = job_run('j1')
+    test_run = test_job_run('j1')
     prev = PhaseRun('approval', RunState.PENDING, utc_now(), utc_now())
     new = PhaseRun('exec', RunState.EXECUTING, utc_now(), None)
     try:
