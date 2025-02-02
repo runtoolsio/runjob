@@ -202,8 +202,7 @@ class _JobInstance(JobInstance):
                  pre_run_hook, post_run_hook,
                  phase_update_observer_err_hook, output_observer_err_hook,
                  user_params):
-        parameters = {}
-        self._metadata = JobInstanceMetadata(job_id, run_id or instance_id, instance_id, parameters, user_params)
+        self._metadata = JobInstanceMetadata(job_id, run_id or instance_id, instance_id, user_params)
         self._root_phase: SequentialPhase = root_phase
         self._output = _JobOutput(self._metadata, tail_buffer, output_observer_err_hook)
         self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output)
