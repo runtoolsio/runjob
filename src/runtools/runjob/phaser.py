@@ -112,11 +112,6 @@ class PhaseV2(ABC, Generic[C]):
         pass
 
     @abstractmethod
-    @property
-    def total_run_time(self) -> Optional[timedelta]:
-        pass
-
-    @abstractmethod
     def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY, replay_last_update=False):
         pass
 
@@ -225,17 +220,7 @@ class BasePhase(PhaseV2[C], ABC):
         Returns:
             PhaseView: An immutable view of the phase's current state
         """
-        return PhaseDetail(
-            phase_id=self._id,
-            phase_type=self._type,
-            run_state=self._run_state,
-            phase_name=self._name,
-            attributes=self.attributes,
-            created_at=self._created_at,
-            started_at=self._started_at,
-            termination=self._termination,
-            children=[child.detail() for child in self.children] if self.children else [],
-        )
+        return PhaseDetail.from_phase(self)
 
     @abstractmethod
     def _run(self, ctx: Optional[C]):
@@ -276,7 +261,7 @@ class BasePhase(PhaseV2[C], ABC):
         if replay_last_update:
             detail = self.detail()
             self._notification.observer_proxy.new_phase_update(
-                PhaseUpdateEvent(detail, detail.stage, detail.last_change_at))
+                PhaseUpdateEvent(detail, detail.lifecycle.stage, detail.lifecycle.last_transition_at))
 
     def remove_phase_observer(self, observer):
         self._notification.remove_observer(observer)
