@@ -79,8 +79,8 @@ class PhaseV2(ABC, Generic[C]):
     def control(self):
         return PhaseControl(self)
 
-    @abstractmethod
     @property
+    @abstractmethod
     def children(self):
         pass
 
@@ -96,18 +96,18 @@ class PhaseV2(ABC, Generic[C]):
     def stop(self):
         pass
 
-    @abstractmethod
     @property
+    @abstractmethod
     def created_at(self):
         pass
 
-    @abstractmethod
     @property
+    @abstractmethod
     def started_at(self):
         pass
 
-    @abstractmethod
     @property
+    @abstractmethod
     def termination(self):
         pass
 
