@@ -50,8 +50,8 @@ from typing import Callable, Tuple, Optional, List
 
 from runtools.runcore import util
 from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserver,
-                                  InstanceOutputObserver, JobInstanceMetadata, JobFaults, InstancePhaseUpdateObserver,
-                                  InstancePhaseUpdateEvent)
+                                  InstanceOutputObserver, JobInstanceMetadata, JobFaults, InstanceTransitionObserver,
+                                  InstanceTransitionEvent)
 from runtools.runcore.output import Output, TailNotSupportedError, Mode, OutputLine
 from runtools.runcore.run import PhaseRun, Outcome, Fault, PhaseUpdateEvent
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
@@ -210,8 +210,8 @@ class _JobInstance(JobInstance):
         self._post_run_hook = post_run_hook
 
         self._phase_update_notification = (
-            ObservableNotification[InstancePhaseUpdateObserver](error_hook=phase_update_observer_err_hook,
-                                                                force_reraise=True))
+            ObservableNotification[InstanceTransitionObserver](error_hook=phase_update_observer_err_hook,
+                                                               force_reraise=True))
         self._transition_observer_faults: List[Fault] = []
 
     def _post_created(self):
@@ -321,9 +321,9 @@ class _JobInstance(JobInstance):
                 else:
                     log.debug(self._log('instance_terminated_successfully', "termination=[{}]", term))
 
-        event = InstancePhaseUpdateEvent(self.metadata, is_root_phase, e.phase_detail, e.new_stage, e.timestamp)
+        event = InstanceTransitionEvent(self.metadata, is_root_phase, e.phase_detail, e.new_stage, e.timestamp)
         try:
-            self._phase_update_notification.observer_proxy.new_instance_phase_update(event)
+            self._phase_update_notification.observer_proxy.new_instance_transition(event)
         except ExceptionGroup as eg:
             log.error("[transition_observer_error]", exc_info=eg)
             for e in eg.exceptions:

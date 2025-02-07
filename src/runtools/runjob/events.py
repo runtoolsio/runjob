@@ -12,7 +12,8 @@ import json
 import logging
 
 from runtools.runcore import util, paths
-from runtools.runcore.job import JobInstanceMetadata, JobRun, InstanceTransitionObserver, InstanceOutputObserver
+from runtools.runcore.job import JobInstanceMetadata, JobRun, InstanceTransitionObserver, InstanceOutputObserver, \
+    InstanceTransitionEvent, InstanceOutputEvent
 from runtools.runcore.output import OutputLine
 from runtools.runcore.util.socket import SocketClient, PayloadTooLarge
 
@@ -32,13 +33,13 @@ class EventDispatcher(abc.ABC):
     def __init__(self, client):
         self._client = client
 
-    def _send_event(self, event_type, instance_meta, event):
+    def _send_event(self, event_type, instance_meta, event_serialized):
         event_body = {
             "event_metadata": {
                 "event_type": event_type
             },
             "instance_metadata": instance_meta.serialize(),
-            "event": event
+            "event": event_serialized
         }
         try:
             self._client.communicate(json.dumps(event_body))
@@ -59,14 +60,8 @@ class TransitionDispatcher(EventDispatcher, InstanceTransitionObserver):
         super(TransitionDispatcher, self).__init__(
             SocketClient(paths.socket_files_provider(TRANSITION_LISTENER_FILE_EXTENSION)))
 
-    def new_instance_phase(self, job_run: JobRun, previous_phase, new_phase, ordinal):
-        event = {
-            "job_run": job_run.serialize(),
-            "previous_phase": previous_phase.serialize(),
-            "new_phase": new_phase.serialize(),
-            "ordinal": ordinal,
-        }
-        self._send_event("instance_phase_transition", job_run.metadata, event)
+    def new_instance_transition(self, event: InstanceTransitionEvent):
+        self._send_event("new_instance_transition", event.instance, event.serialize())
 
 
 class OutputDispatcher(EventDispatcher, InstanceOutputObserver):
@@ -79,10 +74,5 @@ class OutputDispatcher(EventDispatcher, InstanceOutputObserver):
         super(OutputDispatcher, self).__init__(
             SocketClient(paths.socket_files_provider(OUTPUT_LISTENER_FILE_EXTENSION)))
 
-    def new_instance_output(self, instance_meta: JobInstanceMetadata, line: OutputLine):
-        event = {
-            "text": util.truncate(line.text, 10000, truncated_suffix=".. (truncated)"),
-            "is_error": line.is_error,
-            "phase_id": line.source,
-        }
-        self._send_event("new_instance_output", instance_meta, event)
+    def new_instance_output(self, event: InstanceOutputEvent):
+        self._send_event("new_instance_output", event.instance, event.serialize(10000))
