@@ -2,8 +2,8 @@ from runtools.runcore.job import JobInstanceMetadata, InstanceTransitionEvent, I
 from runtools.runcore.listening import InstanceTransitionReceiver, InstanceOutputReceiver
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import Stage
+from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.test.observer import GenericObserver
-from runtools.runcore.test.run import FakePhaseDetailBuilder
 from runtools.runcore.util import utc_now
 from runtools.runjob.events import TransitionDispatcher, OutputDispatcher
 
@@ -15,10 +15,12 @@ def test_transition_dispatching():
     receiver.add_observer_transition(observer)
     receiver.start()
 
+    job_run = fake_job_run('j1', 'r1')
     event = InstanceTransitionEvent(
-        instance=(JobInstanceMetadata('j1', 'r1', 'i1', {})),
+        instance=job_run.metadata,
+        job_run=job_run,
         is_root_phase=True,
-        phase=FakePhaseDetailBuilder.root().build(),
+        phase_id=job_run.phase.phase_id,
         new_stage=Stage.RUNNING,
         timestamp=(utc_now())
     )

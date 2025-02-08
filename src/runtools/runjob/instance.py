@@ -53,7 +53,7 @@ from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserve
                                   InstanceOutputObserver, JobInstanceMetadata, JobFaults, InstanceTransitionObserver,
                                   InstanceTransitionEvent)
 from runtools.runcore.output import Output, TailNotSupportedError, Mode, OutputLine
-from runtools.runcore.run import PhaseRun, Outcome, Fault, PhaseUpdateEvent
+from runtools.runcore.run import PhaseRun, Outcome, Fault, PhaseTransitionEvent
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer
 from runtools.runjob.phaser import DelegatingPhase, SequentialPhase
@@ -209,13 +209,13 @@ class _JobInstance(JobInstance):
         self._pre_run_hook = pre_run_hook
         self._post_run_hook = post_run_hook
 
-        self._phase_update_notification = (
+        self._transition_notification = (
             ObservableNotification[InstanceTransitionObserver](error_hook=phase_update_observer_err_hook,
                                                                force_reraise=True))
         self._transition_observer_faults: List[Fault] = []
 
     def _post_created(self):
-        self._root_phase.add_phase_observer(self._phase_update_notification, replay_last_update=True)
+        self._root_phase.add_phase_observer(self._transition_notification.observer_proxy, replay_last_update=True)
 
     def _log(self, event: str, msg: str = '', *params):
         return ("[{}] job_run=[{}@{}] " + msg).format(
@@ -303,12 +303,12 @@ class _JobInstance(JobInstance):
     def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, notify_last_update=False):
         if notify_last_update:
             """TODO"""
-        self._phase_update_notification.add_observer(observer, priority)
+        self._transition_notification.add_observer(observer, priority)
 
     def remove_observer_transition(self, callback):
-        self._phase_update_notification.remove_observer(callback)
+        self._transition_notification.remove_observer(callback)
 
-    def _on_phase_update(self, e: PhaseUpdateEvent):
+    def _on_phase_update(self, e: PhaseTransitionEvent):
         log.debug(self._log('instance_phase_update', "event=[{}]", e))
 
         is_root_phase = e.phase_detail.phase_id == ROOT_PHASE_ID
@@ -323,7 +323,7 @@ class _JobInstance(JobInstance):
 
         event = InstanceTransitionEvent(self.metadata, is_root_phase, e.phase_detail, e.new_stage, e.timestamp)
         try:
-            self._phase_update_notification.observer_proxy.new_instance_transition(event)
+            self._transition_notification.observer_proxy.new_instance_transition(event)
         except ExceptionGroup as eg:
             log.error("[transition_observer_error]", exc_info=eg)
             for e in eg.exceptions:

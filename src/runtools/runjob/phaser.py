@@ -12,7 +12,7 @@ from runtools.runcore import util
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.job import Stage
 from runtools.runcore.run import Phase, PhaseRun, Lifecycle, TerminationStatus, TerminationInfo, Run, \
-    TerminateRun, FailedRun, Fault, RunState, C, PhaseControl, PhaseDetail, PhaseUpdateObserver, PhaseUpdateEvent
+    TerminateRun, FailedRun, Fault, RunState, C, PhaseControl, PhaseDetail, PhaseTransitionObserver, PhaseTransitionEvent
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
@@ -137,7 +137,7 @@ class BasePhase(PhaseV2[C], ABC):
         self._created_at: datetime = utc_now()
         self._started_at: Optional[datetime] = None
         self._termination: Optional[TerminationInfo] = None
-        self._notification = ObservableNotification[PhaseUpdateObserver]()
+        self._notification = ObservableNotification[PhaseTransitionObserver]()
 
     @property
     def id(self) -> str:
@@ -228,8 +228,8 @@ class BasePhase(PhaseV2[C], ABC):
 
     def run(self, ctx: Optional[C]):
         self._started_at = utc_now()
-        self._notification.observer_proxy.new_phase_update(
-            PhaseUpdateEvent(self.detail(), Stage.RUNNING, self._started_at))
+        self._notification.observer_proxy.new_phase_transition(
+            PhaseTransitionEvent(self.detail(), Stage.RUNNING, self._started_at))
 
         term = None
         try:
@@ -253,15 +253,15 @@ class BasePhase(PhaseV2[C], ABC):
                 self._termination = term
             else:
                 self._termination = TerminationInfo(TerminationStatus.COMPLETED, utc_now())
-            self._notification.observer_proxy.new_phase_update(
-                PhaseUpdateEvent(self.detail(), Stage.ENDED, self._termination.terminated_at))
+            self._notification.observer_proxy.new_phase_transition(
+                PhaseTransitionEvent(self.detail(), Stage.ENDED, self._termination.terminated_at))
 
     def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY, replay_last_update=False):
         self._notification.add_observer(observer, priority)
         if replay_last_update:
             detail = self.detail()
-            self._notification.observer_proxy.new_phase_update(
-                PhaseUpdateEvent(detail, detail.lifecycle.stage, detail.lifecycle.last_transition_at))
+            self._notification.observer_proxy.new_phase_transition(
+                PhaseTransitionEvent(detail, detail.lifecycle.stage, detail.lifecycle.last_transition_at))
 
     def remove_phase_observer(self, observer):
         self._notification.remove_observer(observer)

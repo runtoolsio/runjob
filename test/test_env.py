@@ -7,7 +7,7 @@ from runtools.runcore.job import JobInstance
 from runtools.runcore.run import RunState
 from runtools.runjob import environment
 from runtools.runjob.environment import Feature
-from runtools.runjob.test.phaser import TestPhase
+from runtools.runjob.test.phaser import TestPhase, TestPhaseV2
 
 
 @dataclass
@@ -50,8 +50,8 @@ def test_environment_lifecycle(feature):
     with environment.isolated(features=feature, transient=True) as e:
         assert feature.opened
 
-        inst = e.create_instance("test_job", [(TestPhase())])
-        inst2 = e.create_instance('test_job_2', [TestPhase()])
+        inst = e.create_instance("test_job", [(TestPhaseV2())])
+        inst2 = e.create_instance('test_job_2', [TestPhaseV2()])
 
         assert feature.added_instances[0] == inst
         assert feature.added_instances[1] == inst2
