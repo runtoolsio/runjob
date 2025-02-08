@@ -50,7 +50,7 @@ def test_environment_lifecycle(feature):
     with environment.isolated(features=feature, transient=True) as e:
         assert feature.opened
 
-        inst = e.create_instance("test_job", [(TestPhaseV2())])
+        inst = e.create_instance("test_job", [TestPhaseV2()])
         inst2 = e.create_instance('test_job_2', [TestPhaseV2()])
 
         assert feature.added_instances[0] == inst

@@ -27,6 +27,7 @@ class RunnableEnvironment(Environment, ABC):
 
     @abstractmethod
     def create_instance(self, *args, **kwargs):
+        """TODO Should the instance be auto-started to prevent environment waiting infinitely?"""
         pass
 
     @abstractmethod
@@ -76,6 +77,8 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
      - Close/exit method can be called multiple times (returns immediately if closing by another thread or already closed)
     Condition:
      - Close/exit operations wait for all instances to be detached
+
+     TODO: Do not wait in close() method for instances that haven't started
     """
     OBSERVERS_PRIORITY = 1000
 
@@ -185,6 +188,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
 
         job_instance.add_observer_transition(self._new_instance_phase, RunnableEnvironmentBase.OBSERVERS_PRIORITY)
 
+        # TODO Exception must be caught here to prevent inconsistent state and possibility in get stuck in close method:
         self._on_added(job_instance)
         for feature in self._features:
             feature.on_instance_added(job_instance)
@@ -200,7 +204,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
         #      will work regardless of the priority as the removal of the observers doesn't affect
         #      iteration/notification (`Notification` class)
 
-        if job_instance.snapshot().lifecycle.is_ended:
+        if job_instance.snapshot().phase.lifecycle.is_ended:
             self._detach_instance(job_instance.metadata.instance_id, self._transient)
 
         return job_instance
@@ -265,7 +269,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
             self._closing = True
             while not all((i.detached for i in self._managed_instances.values())):
                 try:
-                    self._detached_condition.wait()
+                    self._detached_condition.wait()  # TODO Could block infinitely if an error prevented to run an instance
                 except KeyboardInterrupt:
                     interrupt_received = True
                     break
