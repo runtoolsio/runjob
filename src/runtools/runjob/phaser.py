@@ -112,7 +112,7 @@ class PhaseV2(ABC, Generic[C]):
         pass
 
     @abstractmethod
-    def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY, replay_last_update=False):
+    def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY):
         pass
 
     @abstractmethod
@@ -256,12 +256,8 @@ class BasePhase(PhaseV2[C], ABC):
             self._notification.observer_proxy.new_phase_transition(
                 PhaseTransitionEvent(self.detail(), Stage.ENDED, self._termination.terminated_at))
 
-    def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY, replay_last_update=False):
+    def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY):
         self._notification.add_observer(observer, priority)
-        if replay_last_update:
-            detail = self.detail()
-            self._notification.observer_proxy.new_phase_transition(
-                PhaseTransitionEvent(detail, detail.lifecycle.stage, detail.lifecycle.last_transition_at))
 
     def remove_phase_observer(self, observer):
         self._notification.remove_observer(observer)

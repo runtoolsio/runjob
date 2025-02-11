@@ -4,10 +4,10 @@ from typing import List
 import pytest
 
 from runtools.runcore.job import JobInstance
-from runtools.runcore.run import RunState
+from runtools.runcore.run import Stage
 from runtools.runjob import environment
 from runtools.runjob.environment import Feature
-from runtools.runjob.test.phaser import TestPhase, TestPhaseV2
+from runtools.runjob.test.phaser import TestPhaseV2
 
 
 @dataclass
@@ -69,30 +69,35 @@ def test_environment_lifecycle(feature):
     assert feature.closed
 
 
-def test_instance_transition_observer(env):
+def test_instance_stage_observer(env):
     """Test instance transition notifications"""
+    stages = []
     transitions = []
 
-    def observer(job_run, _, new_phase, __):
-        transitions.append((job_run.metadata.job_id, new_phase.run_state))
+    def observer_s(event):
+        stages.append(event)
 
-    env.add_observer_transition(observer)
+    def observer_t(event):
+        transitions.append(event)
 
-    i = env.create_instance("test_job", [(TestPhase())])
-    # TODO uncomment when fixed
-    # assert transitions[0] == ("test_job", RunState.CREATED)
+    env.add_observer_stage(observer_s)
+    env.add_observer_transition(observer_t)
+
+    i = env.create_instance("test_job", [(TestPhaseV2())])
+    # TODO assert transitions[-1].new_stage == Stage.CREATED + transition phases
 
     i.run()
-    assert transitions[-1] == ("test_job", RunState.ENDED)
+    assert stages[-2].new_stage == Stage.RUNNING
+    assert stages[-1].new_stage == Stage.ENDED
 
 
 def test_output_observer(env):
     """Test instance output notifications"""
     outputs = []
 
-    def observer(metadata, output_line):
-        outputs.append((metadata.job_id, output_line.text))
+    def observer(e):
+        outputs.append(e)
 
     env.add_observer_output(observer)
-    env.create_instance("test_job", [(TestPhase(output_text='hey more'))]).run()
-    assert outputs[0] == ("test_job", "hey more")
+    env.create_instance("test_job", [(TestPhaseV2(output_text='hey more'))]).run()
+    assert outputs[0].output_line.text == 'hey more'

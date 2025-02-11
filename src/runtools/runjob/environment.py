@@ -7,9 +7,9 @@ from runtools.runcore import JobRun, plugins, paths
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.db import sqlite, PersistingObserver
 from runtools.runcore.environment import Environment, LocalEnvironment, PersistingEnvironment
-from runtools.runcore.job import JobInstance, JobInstanceObservable
+from runtools.runcore.job import JobInstance, JobInstanceObservable, InstanceStageEvent
 from runtools.runcore.plugins import Plugin
-from runtools.runcore.run import PhaseRun, RunState
+from runtools.runcore.run import Stage
 from runtools.runcore.util import ensure_tuple_copy, lock
 from runtools.runcore.util.err import run_isolated_collect_exceptions
 from runtools.runjob import instance, JobInstanceHook
@@ -156,10 +156,10 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
         with self._lock:
             return list(managed.instance for managed in self._managed_instances.values())
 
-    def _new_instance_phase(self, job_run: JobRun, _: PhaseRun, new_phase: PhaseRun, __: int):
+    def _new_instance_stage(self, event: InstanceStageEvent):
         # TODO Consider using post_run_hook for instances created by this container
-        if new_phase.run_state == RunState.ENDED:
-            self._detach_instance(job_run.metadata.instance_id, self._transient)
+        if event.new_stage == Stage.ENDED:
+            self._detach_instance(event.instance.instance_id, self._transient)
 
     def _add_instance(self, job_instance):
         """
@@ -186,7 +186,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
             managed_instance = _ManagedInstance(job_instance)
             self._managed_instances[job_instance.instance_id] = managed_instance
 
-        job_instance.add_observer_transition(self._new_instance_phase, RunnableEnvironmentBase.OBSERVERS_PRIORITY)
+        job_instance.add_observer_stage(self._new_instance_stage, RunnableEnvironmentBase.OBSERVERS_PRIORITY)
 
         # TODO Exception must be caught here to prevent inconsistent state and possibility in get stuck in close method:
         self._on_added(job_instance)
@@ -250,7 +250,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
                 feature.on_instance_removed(job_instance)
 
         if detach:
-            job_instance.remove_observer_transition(self._new_instance_phase)
+            job_instance.remove_observer_transition(self._new_instance_stage)
             with self._detached_condition:
                 managed_instance.detached = True
                 self._detached_condition.notify()
@@ -304,7 +304,9 @@ class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, Runnabl
         PersistingEnvironment.open(self)
 
     def _on_added(self, job_instance):
-        job_instance.add_observer_transition(self._persisting_observer)
+        job_instance.add_observer_stage(self._persisting_observer)
+        job_instance.add_observer_stage(self._stage_notification.observer_proxy,
+                                             RunnableEnvironmentBase.OBSERVERS_PRIORITY - 1)
         job_instance.add_observer_transition(self._transition_notification.observer_proxy,
                                              RunnableEnvironmentBase.OBSERVERS_PRIORITY - 1)
         job_instance.add_observer_output(self._output_notification.observer_proxy,
@@ -313,7 +315,8 @@ class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, Runnabl
     def _on_removed(self, job_instance):
         job_instance.remove_observer_output(self._output_notification.observer_proxy)
         job_instance.remove_observer_transition(self._transition_notification.observer_proxy)
-        job_instance.remove_observer_transition(self._persisting_observer)
+        job_instance.remove_observer_stage(self._stage_notification.observer_proxy)
+        job_instance.remove_observer_stage(self._persisting_observer)
 
     def get_active_runs(self, run_match=None) -> List[JobRun]:
         return [i.snapshot() for i in self.get_instances(run_match)]
@@ -327,8 +330,7 @@ class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, Runnabl
     def close(self):
         run_isolated_collect_exceptions(
             "Errors during closing isolated environment",
-            lambda: RunnableEnvironmentBase.close(self),
-            # Always execute first as the method is waiting until it can be closed
+            lambda: RunnableEnvironmentBase.close(self), # <- Always execute first as the method is waiting until it can be closed
             lambda: PersistingEnvironment.close(self)
         )
 
@@ -362,7 +364,7 @@ class RunnableLocalEnvironment(LocalEnvironment, RunnableEnvironmentBase):
         self._api.start()
 
     def _on_added(self, job_instance):
-        job_instance.add_observer_transition(self._persisting_observer)
+        job_instance.add_observer_stage(self._persisting_observer)
         self._api.register_instance(job_instance)
         job_instance.add_observer_transition(self._transition_dispatcher)
         job_instance.add_observer_output(self._output_dispatcher)
@@ -371,7 +373,7 @@ class RunnableLocalEnvironment(LocalEnvironment, RunnableEnvironmentBase):
         job_instance.remove_observer_output(self._output_dispatcher)
         job_instance.remove_observer_transition(self._transition_dispatcher)
         self._api.unregister_instance(job_instance)
-        job_instance.remove_observer_transition(self._persisting_observer)
+        job_instance.remove_observer_stage(self._persisting_observer)
 
     def lock(self, lock_id):
         # TODO Method to separate type

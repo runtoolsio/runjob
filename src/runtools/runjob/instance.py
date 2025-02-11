@@ -49,11 +49,13 @@ from threading import local, Thread
 from typing import Callable, Tuple, Optional, List
 
 from runtools.runcore import util
-from runtools.runcore.job import (JobInstance, JobRun, InstanceTransitionObserver,
-                                  InstanceOutputObserver, JobInstanceMetadata, JobFaults, InstanceTransitionObserver,
-                                  InstanceTransitionEvent)
+from runtools.runcore.job import (JobInstance, JobRun, InstanceOutputObserver, JobInstanceMetadata, JobFaults,
+                                  InstanceTransitionObserver,
+                                  InstanceTransitionEvent, InstanceOutputEvent, InstanceStageObserver,
+                                  InstanceStageEvent)
 from runtools.runcore.output import Output, TailNotSupportedError, Mode, OutputLine
 from runtools.runcore.run import PhaseRun, Outcome, Fault, PhaseTransitionEvent
+from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer
 from runtools.runjob.phaser import DelegatingPhase, SequentialPhase
@@ -97,7 +99,8 @@ class _JobOutput(Output, OutputSink):
         try:
             if self.tail_buffer:
                 self.tail_buffer.add_line(output_line)
-            self.output_notification.observer_proxy.new_instance_output(self.metadata, output_line)
+            self.output_notification.observer_proxy.new_instance_output(
+                InstanceOutputEvent(self.metadata, output_line, utc_now()))
         except ExceptionGroup as eg:
             log.error("[output_observer_error]", exc_info=eg)
             for e in eg.exceptions:
@@ -157,8 +160,6 @@ JobInstanceHook = Callable[[JobInstanceContext], None]
 
 def create(job_id, phases, environment=None,
            *, instance_id=None, run_id=None, tail_buffer=None, status_tracker=None,
-           transition_observers=(),
-           output_observers=(),
            pre_run_hook: Optional[JobInstanceHook] = None,
            post_run_hook: Optional[JobInstanceHook] = None,
            transition_observer_error_handler: Optional[TransitionObserverErrorHandler] = None,
@@ -186,11 +187,6 @@ def create(job_id, phases, environment=None,
                         pre_run_hook, post_run_hook,
                         transition_observer_error_handler, output_observer_error_handler,
                         user_params)
-    for o in transition_observers:
-        inst.add_observer_transition(o)
-    for o in output_observers:
-        inst.add_observer_output(o)
-
     # noinspection PyProtectedMember
     inst._post_created()
     return inst
@@ -209,13 +205,16 @@ class _JobInstance(JobInstance):
         self._pre_run_hook = pre_run_hook
         self._post_run_hook = post_run_hook
 
+        self._stage_notification = (
+            ObservableNotification[InstanceStageObserver](error_hook=phase_update_observer_err_hook,
+                                                          force_reraise=True))
         self._transition_notification = (
             ObservableNotification[InstanceTransitionObserver](error_hook=phase_update_observer_err_hook,
                                                                force_reraise=True))
         self._transition_observer_faults: List[Fault] = []
 
     def _post_created(self):
-        self._root_phase.add_phase_observer(self._transition_notification.observer_proxy, replay_last_update=True)
+        self._root_phase.add_phase_observer(self._on_phase_update)
 
     def _log(self, event: str, msg: str = '', *params):
         return ("[{}] job_run=[{}@{}] " + msg).format(
@@ -300,13 +299,19 @@ class _JobInstance(JobInstance):
         """
         self._root_phase.stop()  # TODO Interrupt
 
-    def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, notify_last_update=False):
-        if notify_last_update:
-            """TODO"""
+    def add_observer_stage(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
+        self._stage_notification.add_observer(observer, priority)
+        if reply_last_event:
+            pass  # TODO
+
+    def remove_observer_stage(self, observer):
+        self._stage_notification.remove_observer(observer)
+
+    def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         self._transition_notification.add_observer(observer, priority)
 
-    def remove_observer_transition(self, callback):
-        self._transition_notification.remove_observer(callback)
+    def remove_observer_transition(self, observer):
+        self._transition_notification.remove_observer(observer)
 
     def _on_phase_update(self, e: PhaseTransitionEvent):
         log.debug(self._log('instance_phase_update', "event=[{}]", e))
@@ -315,19 +320,29 @@ class _JobInstance(JobInstance):
         if is_root_phase:
             log.debug(self._log('instance_stage_update', "new_stage=[{}]", e.new_stage))
 
-            if term := e.phase_detail.termination:
+            if term := e.phase_detail.lifecycle.termination:
                 if term.status.is_outcome(Outcome.NON_SUCCESS):
                     log.warning(self._log('instance_terminated_unsuccessfully', "termination=[{}]", term))
                 else:
                     log.debug(self._log('instance_terminated_successfully', "termination=[{}]", term))
 
-        event = InstanceTransitionEvent(self.metadata, is_root_phase, e.phase_detail, e.new_stage, e.timestamp)
+        snapshot = self.snapshot()
+        if is_root_phase:
+            try:
+                event = InstanceStageEvent(self.metadata, snapshot, e.new_stage, e.timestamp)
+                self._stage_notification.observer_proxy.new_instance_stage(event)
+            except ExceptionGroup as eg:
+                log.error("[stage_observer_error]", exc_info=eg)
+                for exc in eg.exceptions:
+                    self._transition_observer_faults.append(Fault.from_exception(TRANSITION_OBSERVER_ERROR, exc))
         try:
+            event = InstanceTransitionEvent(self.metadata, snapshot, is_root_phase, e.phase_detail.phase_id,
+                                            e.new_stage, e.timestamp)
             self._transition_notification.observer_proxy.new_instance_transition(event)
         except ExceptionGroup as eg:
             log.error("[transition_observer_error]", exc_info=eg)
-            for e in eg.exceptions:
-                self._transition_observer_faults.append(Fault.from_exception(TRANSITION_OBSERVER_ERROR, e))
+            for exc in eg.exceptions:
+                self._transition_observer_faults.append(Fault.from_exception(TRANSITION_OBSERVER_ERROR, exc))
 
     def add_observer_output(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         self._output.output_notification.add_observer(observer, priority)
