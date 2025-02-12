@@ -15,18 +15,20 @@ from typing import Union, Tuple, Optional
 import sys
 
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import TerminateRun, TerminationStatus, FailedRun, Fault
+from runtools.runcore.run import TerminateRun, TerminationStatus, FailedRun, Fault, RunState
 from runtools.runjob.output import OutputContext
-from runtools.runjob.phaser import ExecutingPhase
+from runtools.runjob.phaser import BasePhase
 
 log = logging.getLogger(__name__)
 
 NON_ZERO_RETURN_CODE = "NON_ZERO_RETURN_CODE"
 
-class ProcessPhase(ExecutingPhase[OutputContext]):
+class ProcessPhase(BasePhase[OutputContext]):
+
+    TYPE = 'PROCESS'
 
     def __init__(self, phase_id: str, target, args=(), *, output_id = None):
-        super().__init__(phase_id)
+        super().__init__(phase_id, ProcessPhase.TYPE, RunState.EXECUTING)
         self.target = target
         self.args = args
         self.output_id = output_id
@@ -35,9 +37,9 @@ class ProcessPhase(ExecutingPhase[OutputContext]):
         self._stopped: bool = False
         self._interrupted: bool = False
 
-    def run(self, ctx):
+    def _run(self, ctx):
         if not self._stopped and not self._interrupted:
-            self._process = Process(target=self._run)
+            self._process = Process(target=self._exec)
 
             try:
                 self._process.start()
@@ -57,7 +59,7 @@ class ProcessPhase(ExecutingPhase[OutputContext]):
 
             raise FailedRun(Fault(NON_ZERO_RETURN_CODE, f"Process returned non-zero code {self._process.exitcode}"))
 
-    def _run(self):
+    def _exec(self):
         with self._capture_stdout():
             try:
                 self.target(*self.args)

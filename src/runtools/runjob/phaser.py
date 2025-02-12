@@ -139,6 +139,10 @@ class BasePhase(PhaseV2[C], ABC):
         self._termination: Optional[TerminationInfo] = None
         self._notification = ObservableNotification[PhaseTransitionObserver]()
 
+    @abstractmethod
+    def _run(self, ctx: Optional[C]):
+        pass
+
     @property
     def id(self) -> str:
         return self._id
@@ -222,10 +226,6 @@ class BasePhase(PhaseV2[C], ABC):
         """
         return PhaseDetail.from_phase(self)
 
-    @abstractmethod
-    def _run(self, ctx: Optional[C]):
-        pass
-
     def run(self, ctx: Optional[C]):
         self._started_at = utc_now()
         self._notification.observer_proxy.new_phase_transition(
@@ -239,11 +239,11 @@ class BasePhase(PhaseV2[C], ABC):
             if e.__cause__:
                 fault = Fault.from_exception("EXECUTION_TERMINATED", e.__cause__)
             term = TerminationInfo(e.termination_status, utc_now(), fault)
-            raise PhaseCompletionError from e
+            raise PhaseCompletionError(self.id) from e
         except Exception as e:
             fault = Fault.from_exception(UNCAUGHT_PHASE_EXEC_EXCEPTION, e)
             term = TerminationInfo(TerminationStatus.FAILED, utc_now(), fault)
-            raise PhaseCompletionError from e
+            raise PhaseCompletionError(self.id) from e
         except (KeyboardInterrupt, SystemExit) as e:
             self.stop()
             term = TerminationInfo(TerminationStatus.INTERRUPTED, utc_now())
