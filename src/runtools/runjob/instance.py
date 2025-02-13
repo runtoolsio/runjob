@@ -46,7 +46,7 @@ import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
 from threading import local, Thread
-from typing import Callable, Tuple, Optional, List
+from typing import Callable, Tuple, Optional, List, Iterable
 
 from runtools.runcore import util
 from runtools.runcore.job import (JobInstance, JobRun, InstanceOutputObserver, JobInstanceMetadata, JobFaults,
@@ -162,6 +162,7 @@ def create(job_id, phases, environment=None,
            *, instance_id=None, run_id=None, tail_buffer=None, status_tracker=None,
            pre_run_hook: Optional[JobInstanceHook] = None,
            post_run_hook: Optional[JobInstanceHook] = None,
+           stage_observers: Iterable[InstanceStageObserver] = (),
            transition_observer_error_handler: Optional[TransitionObserverErrorHandler] = None,
            output_observer_error_handler: Optional[OutputObserverErrorHandler] = None,
            **user_params) -> JobInstance:
@@ -187,6 +188,8 @@ def create(job_id, phases, environment=None,
                         pre_run_hook, post_run_hook,
                         transition_observer_error_handler, output_observer_error_handler,
                         user_params)
+    for so in stage_observers:
+        inst.add_observer_stage(so)
     # noinspection PyProtectedMember
     inst._post_created()
     return inst

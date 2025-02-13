@@ -84,13 +84,14 @@ class TestPhaseV2(BasePhase[JobInstanceContext]):
     def __init__(self, phase_id: str = 'test_phase', *,
                  wait: bool = False,
                  output_text: Optional[str] = None,
-                 raise_exc: Optional[Exception] = None,
+                 raise_exc = None,
+                 fail = False,
                  name: Optional[str] = None):
         super().__init__(phase_id, TestPhaseV2.TYPE, RunState.PENDING if wait else RunState.EXECUTING, name)
         self.wait: Optional[Event] = Event() if wait else None
         self.output_text = output_text
         self.exception = raise_exc
-        self.fail = False
+        self.fail = fail
         self.completed = False
 
     def release(self):

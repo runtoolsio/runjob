@@ -234,7 +234,7 @@ class BasePhase(PhaseV2[C], ABC):
             if e.__cause__:
                 fault = Fault.from_exception("EXECUTION_TERMINATED", e.__cause__)
             term = TerminationInfo(e.termination_status, utc_now(), fault)
-            raise PhaseCompletionError(self.id) from e
+            # raise PhaseCompletionError(self.id) from e  TODO Why was it here?
         except Exception as e:
             fault = Fault.from_exception(UNCAUGHT_PHASE_EXEC_EXCEPTION, e)
             term = TerminationInfo(TerminationStatus.FAILED, utc_now(), fault)
