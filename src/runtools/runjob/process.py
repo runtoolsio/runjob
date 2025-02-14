@@ -17,17 +17,17 @@ import sys
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminateRun, TerminationStatus, FailedRun, Fault, RunState
 from runtools.runjob.output import OutputContext
-from runtools.runjob.phaser import BasePhase
+from runtools.runjob.phaser import BasePhase, ExecutionTerminated
 
 log = logging.getLogger(__name__)
 
 NON_ZERO_RETURN_CODE = "NON_ZERO_RETURN_CODE"
 
-class ProcessPhase(BasePhase[OutputContext]):
 
+class ProcessPhase(BasePhase[OutputContext]):
     TYPE = 'PROCESS'
 
-    def __init__(self, phase_id: str, target, args=(), *, output_id = None):
+    def __init__(self, phase_id: str, target, args=(), *, output_id=None):
         super().__init__(phase_id, ProcessPhase.TYPE, RunState.EXECUTING)
         self.target = target
         self.args = args
@@ -49,15 +49,15 @@ class ProcessPhase(BasePhase[OutputContext]):
                 self.output_queue.close()
 
             if self._process.exitcode == 0:
-                    return
+                return
 
             if self._interrupted or self._process.exitcode == -signal.SIGINT:
                 # Exit code is -SIGINT only when SIGINT handler is set back to DFL (KeyboardInterrupt gets exit code 1)
-                raise TerminateRun(TerminationStatus.INTERRUPTED)
+                raise ExecutionTerminated(TerminationStatus.INTERRUPTED)
             if self._stopped or self._process.exitcode < 0:
-                raise TerminateRun(TerminationStatus.STOPPED)
+                raise ExecutionTerminated(TerminationStatus.STOPPED)
 
-            raise FailedRun(Fault(NON_ZERO_RETURN_CODE, f"Process returned non-zero code {self._process.exitcode}"))
+            raise NonZeroReturnCodeError(self._process.exitcode)
 
     def _exec(self):
         with self._capture_stdout():
@@ -131,3 +131,20 @@ class _CapturingWriter:
 class _QueueStop:
     """Poison object signalizing no more objects will be put in the queue"""
     pass
+
+
+class ProcessExecutionError(Exception):
+    """Base exception for process execution related errors."""
+    pass
+
+
+class NonZeroReturnCodeError(ProcessExecutionError):
+    """Exception raised when a process returns a non-zero exit code.
+
+    Attributes:
+        exit_code (int): The actual exit code returned by the process
+    """
+
+    def __init__(self, exit_code: int):
+        self.exit_code = exit_code
+        super().__init__(f"Process returned non-zero exit code: {exit_code}")

@@ -7,7 +7,8 @@ from threading import Thread
 import pytest
 from time import sleep
 
-from runtools.runcore.run import FailedRun, TerminateRun, TerminationStatus
+from runtools.runcore.run import TerminationStatus
+from runtools.runjob.phaser import PhaseCompletionError
 from runtools.runjob.process import ProcessPhase
 from runtools.runjob.test.phaser import FakeContext
 
@@ -26,7 +27,7 @@ def exec_hello(pipe):
 
 def test_failure_error():
     e = ProcessPhase('failed phase', raise_error, ())
-    with pytest.raises(FailedRun):
+    with pytest.raises(PhaseCompletionError):
         e.run(FakeContext())
 
 
@@ -36,7 +37,7 @@ def raise_error():
 
 def test_failure_exit():
     e = ProcessPhase('error code phase', exec_failure_exit, ())
-    with pytest.raises(FailedRun):
+    with pytest.raises(PhaseCompletionError):
         e.run(FakeContext())
 
 
@@ -48,10 +49,9 @@ def test_stop():
     e = ProcessPhase('never ending story', exec_infinity_loop, ())
     t = Thread(target=stop_after, args=(0.5, e))
     t.start()
-    with pytest.raises(TerminateRun) as exc_info:
-        e.run(FakeContext())
+    e.run(FakeContext())
 
-    assert exc_info.value.term_status == TerminationStatus.STOPPED
+    assert e.termination.status == TerminationStatus.STOPPED
 
 
 def exec_infinity_loop():

@@ -116,6 +116,7 @@ class PhaseV2(ABC, Generic[C]):
 
 
 class ExecutionTerminated(Exception):
+    """TODO RunTerminated?"""
 
     def __init__(self, termination_status: TerminationStatus):
         self.termination_status = termination_status
