@@ -5,7 +5,7 @@ import pytest
 from runtools.runcore.common import InvalidStateError
 from runtools.runcore.run import TerminationStatus, RunState, FailedRun, Fault
 from runtools.runjob import phaser
-from runtools.runjob.phaser import Phaser, InitPhase, TerminalPhase, WaitWrapperPhase, PhaseCompletionError
+from runtools.runjob.phaser import InitPhase, TerminalPhase, WaitWrapperPhase, PhaseCompletionError
 from runtools.runjob.test.phaser import TestPhase
 
 INIT = InitPhase.ID
