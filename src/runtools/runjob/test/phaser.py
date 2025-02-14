@@ -94,12 +94,18 @@ class TestPhaseV2(BasePhase[JobInstanceContext]):
         self.fail = fail
         self.completed = False
 
+    @control_api
     def release(self):
         """Release a waiting phase"""
         if self.wait:
             self.wait.set()
         else:
             raise InvalidStateError('Wait not set')
+
+    @control_api
+    @property
+    def is_released(self):
+        return self.wait.is_set()
 
     def _run(self, ctx: Optional[JobInstanceContext]):
         if self.wait:

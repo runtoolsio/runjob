@@ -289,7 +289,10 @@ class SequentialPhase(BasePhase):
             for child in self._children:
                 with self._stop_lock:
                     if self._stopped:
-                        raise ExecutionTerminated(TerminationStatus.STOPPED)
+                        if self.termination:
+                            break
+                        else:
+                            raise ExecutionTerminated(TerminationStatus.STOPPED)
                     self._current_child = child
                 child.run(ctx)
                 if child.termination.status != TerminationStatus.COMPLETED:
@@ -305,6 +308,8 @@ class SequentialPhase(BasePhase):
             self._stopped = True
             if self._current_child:
                 self._current_child.stop()
+            else:
+                self._termination = TerminationInfo(TerminationStatus.STOPPED, utc_now())
 
 
 def unique_phases_to_dict(phases) -> Dict[str, Phase]:
