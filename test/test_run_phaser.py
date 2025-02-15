@@ -1,170 +1,82 @@
-from threading import Thread
-
 import pytest
 
-from runtools.runcore.common import InvalidStateError
-from runtools.runcore.run import TerminationStatus, RunState, FailedRun, Fault
-from runtools.runjob import phaser
-from runtools.runjob.phaser import InitPhase, TerminalPhase, WaitWrapperPhase, PhaseCompletionError
-from runtools.runjob.test.phaser import TestPhase
+from runtools.runcore.run import TerminationStatus
+from runtools.runjob.phaser import SequentialPhase, PhaseCompletionError
+from runtools.runjob.test.phaser import FakeContext, TestPhaseV2
 
-INIT = InitPhase.ID
 APPROVAL = 'approval'
 EXEC = 'exec'
 EXEC1 = 'exec1'
 EXEC2 = 'exec2'
-PROGRAM = 'program'
-TERM = TerminalPhase.ID
 
 
 @pytest.fixture
-def sut():
-    return Phaser([TestPhase(EXEC1), TestPhase(EXEC2)])
+def ctx():
+    return FakeContext()
 
 
 @pytest.fixture
-def sut_approve():
-    return Phaser([WaitWrapperPhase(TestPhase(APPROVAL, wait=True)), TestPhase(EXEC)])
+def sequential():
+    """Basic sequential phase with two test phases"""
+    return SequentialPhase('seq', [TestPhaseV2(EXEC1), TestPhaseV2(EXEC2)])
 
 
-def test_run_with_approval(sut_approve):
-    sut_approve.prime()
-    run_thread = Thread(target=sut_approve.run)
-    run_thread.start()
-    # The below code will be released once the run starts pending in the approval phase
-    wait_wrapper = sut_approve.get_phase(APPROVAL)
-
-    wait_wrapper.wait(1)
-    snapshot = sut_approve.snapshot()
-    assert snapshot.lifecycle.current_phase_id == APPROVAL
-    assert snapshot.lifecycle.run_state == RunState.PENDING
-
-    wait_wrapper.wrapped.wait.set()
-    run_thread.join(1)
-    assert (sut_approve.snapshot().lifecycle.phase_ids == [INIT, APPROVAL, EXEC, TERM])
+@pytest.fixture
+def sequential_with_approval():
+    """Sequential phase with an approval (waiting) phase followed by execution"""
+    return SequentialPhase('seq_approve', [TestPhaseV2(APPROVAL, wait=True), TestPhaseV2(EXEC)])
 
 
-def test_post_prime(sut):
-    sut.prime()
+def test_basic_sequence(sequential, ctx):
+    """Test basic sequential execution flow"""
+    sequential.run(ctx)
 
-    snapshot = sut.snapshot()
-    assert snapshot.lifecycle.current_phase_id == INIT
-    assert snapshot.lifecycle.run_state == RunState.CREATED
-
-
-def test_empty_phaser():
-    empty = Phaser([])
-    empty.prime()
-    assert empty.snapshot().lifecycle.phase_ids == [INIT]
-
-    empty.run()
-
-    snapshot = empty.snapshot()
-    assert snapshot.lifecycle.phase_ids == [INIT, TERM]
-    assert snapshot.termination.status == TerminationStatus.COMPLETED
+    assert sequential.termination.status == TerminationStatus.COMPLETED
+    for child in sequential.children:
+        assert child.termination.status == TerminationStatus.COMPLETED
 
 
-def test_stop_before_prime(sut):
-    sut.stop()
+def test_failing_phase(ctx):
+    """Test behavior when a phase fails"""
+    failing_phase = TestPhaseV2(EXEC1, fail=True)
+    failing_phase.run(ctx)
 
-    snapshot = sut.snapshot()
-    assert snapshot.lifecycle.phase_ids == [TERM]
-    assert snapshot.termination.status == TerminationStatus.STOPPED
-
-
-def test_stop_before_run(sut):
-    sut.prime()
-    sut.stop()
-
-    snapshot = sut.snapshot()
-    assert snapshot.lifecycle.phase_ids == [INIT, TERM]
-    assert snapshot.termination.status == TerminationStatus.STOPPED
+    assert failing_phase.termination.status == TerminationStatus.FAILED
 
 
-def test_stop_in_run(sut_approve):
-    sut_approve.prime()
-    run_thread = Thread(target=sut_approve.run)
-    run_thread.start()
-    # The below code will be released once the run starts pending in the approval phase
-    sut_approve.get_phase(APPROVAL).wait(1)
+def test_sequential_stops_on_failure(ctx):
+    """Test that sequential execution stops when a phase fails"""
+    seq = SequentialPhase('seq_fail',
+                          [TestPhaseV2(EXEC1), TestPhaseV2(EXEC2, fail=True), TestPhaseV2('exec3')])
+    seq.run(ctx)
 
-    sut_approve.stop()
-    run_thread.join(1)  # Let the run end
+    assert seq.children[0].termination.status == TerminationStatus.COMPLETED
+    assert seq.children[1].termination.status == TerminationStatus.FAILED
+    assert not seq.children[2].termination
 
-    run = sut_approve.snapshot()
-    assert (run.lifecycle.phase_ids == [INIT, APPROVAL, TERM])
-    assert run.termination.status == TerminationStatus.CANCELLED
+    assert seq.termination.status == TerminationStatus.FAILED
 
-
-def test_premature_termination(sut):
-    sut.get_phase(EXEC1).fail = True
-    sut.prime()
-    sut.run()
-
-    run = sut.snapshot()
-    assert run.termination.status == TerminationStatus.FAILED
-    assert (run.lifecycle.phase_ids == [INIT, EXEC1, TERM])
-
-
-def test_transition_hook(sut):
-    transitions = []
-
-    def hook(*args):
-        transitions.append(args)
-
-    sut.transition_hook = hook
-
-    sut.prime()
-
-    assert len(transitions) == 1
-    prev_run, new_run, ordinal = transitions[0]
-    assert not prev_run
-    assert new_run.phase_id == INIT
-    assert ordinal == 1
-
-    sut.run()
-
-    assert len(transitions) == 4
-
-
-def test_failed_run_exception(sut):
-    failed_run = FailedRun(Fault('FaultType', 'reason'))
-    sut.get_phase(EXEC1).failed_run = failed_run
-    sut.prime()
-    sut.run()
-
-    snapshot = sut.snapshot()
-    assert snapshot.termination.status == TerminationStatus.FAILED
-    assert (snapshot.lifecycle.phase_ids == [INIT, EXEC1, TERM])
-
-    assert snapshot.termination.fault == failed_run.fault
-
-
-def test_exception(sut):
-    exc = InvalidStateError('reason')
-    sut.get_phase(EXEC1).exception = exc
-    sut.prime()
-
+def test_sequential_stops_on_exception(ctx):
+    """Test that sequential execution stops when a phase fails"""
+    exc = Exception()
+    seq = SequentialPhase('seq_fail',
+                          [TestPhaseV2(EXEC1), TestPhaseV2(EXEC2, raise_exc=exc), TestPhaseV2('exec3')])
     with pytest.raises(PhaseCompletionError) as exc_info:
-        sut.run()
+        seq.run(ctx)
 
-    assert exc_info.value.phase_id == EXEC1
-    assert exc_info.value.__cause__ == exc
+    assert exc_info.value.__cause__.__cause__ == exc
+    assert seq.children[0].termination.status == TerminationStatus.COMPLETED
+    assert seq.children[1].termination.status == TerminationStatus.FAILED
+    assert not seq.children[2].termination
 
-    snapshot = sut.snapshot()
-    assert snapshot.termination.status == TerminationStatus.ERROR
-    assert (snapshot.lifecycle.phase_ids == [INIT, EXEC1, TERM])
-
-    assert snapshot.termination.error.category == phaser.UNCAUGHT_PHASE_EXEC_EXCEPTION
-    assert snapshot.termination.error.reason == 'InvalidStateError: reason'
+    assert seq.termination.status == TerminationStatus.FAILED
 
 
-def test_interruption(sut):
-    sut.get_phase(EXEC1).exception = KeyboardInterrupt
-    sut.prime()
+def test_interruption(ctx):
+    """Test handling of keyboard interruption"""
+    phase = TestPhaseV2(EXEC1, raise_exc=KeyboardInterrupt)
 
     with pytest.raises(KeyboardInterrupt):
-        sut.run()
+        phase.run(ctx)
 
-    snapshot = sut.snapshot()
-    assert snapshot.termination.status == TerminationStatus.INTERRUPTED
+    assert phase.termination.status == TerminationStatus.INTERRUPTED
