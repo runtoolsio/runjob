@@ -3,14 +3,13 @@ from threading import Timer
 from typing import Sequence
 
 from runtools.runcore import util
-from runtools.runcore.job import (JobRun, InstanceTransitionObserver, JobInstance, JobInstanceMetadata,
-                                  InstanceOutputObserver)
-from runtools.runcore.output import OutputLine
-from runtools.runcore.run import RunState, PhaseRun
+from runtools.runcore.job import (JobInstance, InstanceOutputObserver, InstanceStageObserver, InstanceStageEvent,
+                                  InstanceOutputEvent)
+from runtools.runcore.run import Stage
 
 
 def exec_time_exceeded(job_instance: JobInstance, warning_name: str, time: float):
-    job_instance.add_observer_transition(_ExecTimeWarning(job_instance, warning_name, time))
+    job_instance.add_observer_stage(_ExecTimeWarning(job_instance, warning_name, time))
 
 
 def output_matches(job_instance: JobInstance, warning_name: str, regex: str):
@@ -26,7 +25,7 @@ def register(job_instance: JobInstance, *, warn_times: Sequence[str] = (), warn_
         output_matches(job_instance, f"output=~{warn_output}", warn_output)
 
 
-class _ExecTimeWarning(InstanceTransitionObserver):
+class _ExecTimeWarning(InstanceStageObserver):
 
     def __init__(self, job_instance, text, time: float):
         self.job_instance = job_instance
@@ -34,17 +33,17 @@ class _ExecTimeWarning(InstanceTransitionObserver):
         self.time = time
         self.timer = None
 
-    def new_instance_phase(self, job_run: JobRun, previous_phase: PhaseRun, new_phase: PhaseRun, ordinal: int):
-        if new_phase.run_state == RunState.ENDED:
+    def new_instance_stage(self, event: InstanceStageEvent):
+        if event.new_stage == Stage.ENDED:
             if self.timer is not None:
                 self.timer.cancel()
-        elif ordinal == 2:
+        elif event.new_stage == Stage.RUNNING:
             assert self.timer is None
             self.timer = Timer(self.time, self._check)
             self.timer.start()
 
     def _check(self):
-        if self.job_instance.snapshot().lifecycle.run_state != RunState.ENDED:
+        if not self.job_instance.snapshot().phase.lifecycle.termination:
             self.job_instance.status_tracker.warning(self.text)
 
     def __repr__(self):
@@ -59,7 +58,7 @@ class _OutputMatchesWarning(InstanceOutputObserver):
         self.text = text
         self.regex = re.compile(regex)
 
-    def new_instance_output(self, instance_meta: JobInstanceMetadata, output_line: OutputLine):
-        m = self.regex.search(output_line.text)
+    def new_instance_output(self, event: InstanceOutputEvent):
+        m = self.regex.search(event.output_line.text)
         if m:
             self.job_instance.status_tracker.warning(self.text)

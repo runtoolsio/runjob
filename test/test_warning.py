@@ -5,13 +5,13 @@ import time
 
 from runtools.runjob import instance
 from runtools.runjob import warning
-from runtools.runjob.test.phaser import TestPhase
+from runtools.runjob.test.phaser import TestPhaseV2
 from runtools.runjob.track import StatusTracker
 
 
 @pytest.fixture
 def job_instance():
-    return instance.create('j1', [TestPhase('p1', wait=True)], status_tracker=StatusTracker())
+    return instance.create('j1', [TestPhaseV2('p1', wait=True)], status_tracker=StatusTracker())
 
 
 def test_exec_time_warning(job_instance):
@@ -23,4 +23,4 @@ def test_exec_time_warning(job_instance):
 
     job_instance.find_phase_control('p1').release()
     run_thread.join(1)
-    assert job_instance.status_tracker.to_status().warnings
+    assert job_instance.snapshot().status.warnings
