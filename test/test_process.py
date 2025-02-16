@@ -8,9 +8,9 @@ import pytest
 from time import sleep
 
 from runtools.runcore.run import TerminationStatus
-from runtools.runjob.phaser import PhaseCompletionError
+from runtools.runjob.phase import PhaseCompletionError
 from runtools.runjob.process import ProcessPhase
-from runtools.runjob.test.phaser import FakeContext
+from runtools.runjob.test.phase import FakeContext
 
 
 def test_exec():

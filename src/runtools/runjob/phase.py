@@ -2,11 +2,10 @@ import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from multiprocessing import Lock  # TODO
-from threading import Event
-from typing import Any, Dict, Optional, Generic, List
+from typing import Optional, Generic, List
 
 from runtools.runcore.job import Stage
-from runtools.runcore.run import Phase, TerminationStatus, TerminationInfo, Fault, RunState, C, PhaseControl, \
+from runtools.runcore.run import TerminationStatus, TerminationInfo, Fault, RunState, C, PhaseControl, \
     PhaseDetail, PhaseTransitionObserver, PhaseTransitionEvent
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
@@ -29,7 +28,7 @@ class PhaseTypeMismatchError(Exception):
         super().__init__(f"Phase '{phase_id}' has unexpected type: expected {expected_type}, got {actual_type}")
 
 
-class PhaseV2(ABC, Generic[C]):
+class Phase(ABC, Generic[C]):
 
     @property
     @abstractmethod
@@ -122,7 +121,7 @@ class ExecutionTerminated(Exception):
         self.termination_status = termination_status
 
 
-class BasePhase(PhaseV2[C], ABC):
+class BasePhase(Phase[C], ABC):
     """Base implementation providing common functionality for V2 phases"""
 
     def __init__(self, phase_id: str, phase_type: str, run_state: RunState, name: Optional[str] = None):
@@ -181,7 +180,7 @@ class BasePhase(PhaseV2[C], ABC):
         return self._termination.terminated_at - self._started_at
 
     @property
-    def children(self) -> List[PhaseV2]:
+    def children(self) -> List[Phase]:
         return []
 
     def find_phase_control(self, phase_id: str, phase_type: str = None) -> Optional[PhaseControl]:
@@ -267,17 +266,17 @@ class SequentialPhase(BasePhase):
 
     TYPE = 'SEQUENTIAL'
 
-    def __init__(self, phase_id: str, children: List[PhaseV2[C]], name: Optional[str] = None):
+    def __init__(self, phase_id: str, children: List[Phase[C]], name: Optional[str] = None):
         super().__init__(phase_id, SequentialPhase.TYPE, RunState.EXECUTING, name)
         self._children = children
-        self._current_child: Optional[PhaseV2[C]] = None
+        self._current_child: Optional[Phase[C]] = None
         self._stop_lock = Lock()
         self._stopped = False
         for c in children:
             c.add_phase_observer(self._notification.observer_proxy)
 
     @property
-    def children(self) -> List[PhaseV2[C]]:
+    def children(self) -> List[Phase[C]]:
         return self._children.copy()
 
     def _run(self, ctx: Optional[C]):
@@ -310,163 +309,3 @@ class SequentialPhase(BasePhase):
                 self._current_child.stop()
             else:
                 self._termination = TerminationInfo(TerminationStatus.STOPPED, utc_now())
-
-
-def unique_phases_to_dict(phases) -> Dict[str, Phase]:
-    id_to_phase = {}
-    for phase in phases:
-        if phase.id in id_to_phase:
-            raise ValueError(f"Duplicate phase found: {phase.id}")
-        id_to_phase[phase.id] = phase
-    return id_to_phase
-
-
-class DelegatingPhase(Phase[C]):
-    """
-    Base class for phases that delegate to a wrapped phase.
-    Subclasses can override methods to add behavior while maintaining delegation.
-    """
-
-    def __init__(self, wrapped_phase: Phase[C]):
-        self.wrapped = wrapped_phase
-
-    @property
-    def id(self):
-        return self.wrapped.id
-
-    @property
-    def type(self) -> str:
-        return self.wrapped.type
-
-    @property
-    def run_state(self) -> RunState:
-        return self.wrapped.run_state
-
-    @property
-    def stop_status(self):
-        return self.wrapped.stop_status
-
-    def run(self, ctx: Optional[C]):
-        return self.wrapped.run(ctx)
-
-    def stop(self):
-        return self.wrapped.stop()
-
-
-class NoOpsPhase(Phase[Any], ABC):
-
-    def __init__(self, phase_id, phase_type, run_state, stop_status):
-        self._id = phase_id
-        self._type = phase_type
-        self._state = run_state
-        self._stop_status = stop_status
-
-    @property
-    def id(self):
-        return self._id
-
-    @property
-    def type(self) -> str:
-        return self._type
-
-    @property
-    def run_state(self) -> RunState:
-        return self._state
-
-    @property
-    def stop_status(self):
-        return self._stop_status
-
-    def run(self, ctx):
-        """No activity on run"""
-        pass
-
-    def stop(self):
-        """Nothing to stop"""
-        pass
-
-
-class InitPhase(NoOpsPhase):
-    ID = 'init'
-    TYPE = 'INIT'
-
-    def __init__(self):
-        super().__init__(InitPhase.ID, InitPhase.TYPE, RunState.CREATED, TerminationStatus.STOPPED)
-
-
-class ExecutingPhase(Phase[C], ABC):
-    """
-    Abstract base class for phases that execute some work.
-    Implementations should provide concrete run() and stop() methods
-    that handle their specific execution mechanics.
-    """
-    TYPE = 'EXEC'
-
-    def __init__(self, phase_id: str, phase_name: Optional[str] = None):
-        self._id = phase_id
-        self._name = phase_name
-
-    @property
-    def id(self):
-        return self._id
-
-    @property
-    def type(self) -> str:
-        return ExecutingPhase.TYPE
-
-    @property
-    def name(self) -> Optional[str]:
-        return self._name
-
-    @property
-    def run_state(self) -> RunState:
-        return RunState.EXECUTING
-
-    @property
-    def stop_status(self):
-        return TerminationStatus.STOPPED
-
-    @abstractmethod
-    def run(self, ctx):
-        """
-        Execute the phase's work.
-
-        Args:
-            ctx (C): Context object related to the given run
-
-        Raises:
-            TerminateRun: If execution is stopped or interrupted
-            FailedRun: If execution fails
-        """
-        pass
-
-    @abstractmethod
-    def stop(self):
-        """Stop the currently running execution"""
-        pass
-
-
-class TerminalPhase(NoOpsPhase):
-    ID = 'terminal'
-    TYPE = 'TERMINAL'
-
-    def __init__(self):
-        super().__init__(TerminalPhase.ID, TerminationStatus.NONE, RunState.ENDED, TerminationStatus.NONE)
-
-
-class WaitWrapperPhase(DelegatingPhase[C]):
-
-    def __init__(self, wrapped_phase: Phase[C]):
-        super().__init__(wrapped_phase)
-        self._run_event = Event()
-
-    def wait(self, timeout):
-        self._run_event.wait(timeout)
-
-    def run(self, ctx):
-        self._run_event.set()
-        super().run(ctx)
-
-
-class RunContext(ABC):
-    """Members to be added later"""

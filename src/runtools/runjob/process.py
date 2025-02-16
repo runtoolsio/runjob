@@ -15,9 +15,9 @@ from typing import Union, Tuple, Optional
 import sys
 
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import TerminateRun, TerminationStatus, FailedRun, Fault, RunState
+from runtools.runcore.run import TerminationStatus, RunState
 from runtools.runjob.output import OutputContext
-from runtools.runjob.phaser import BasePhase, ExecutionTerminated
+from runtools.runjob.phase import BasePhase, ExecutionTerminated
 
 log = logging.getLogger(__name__)
 

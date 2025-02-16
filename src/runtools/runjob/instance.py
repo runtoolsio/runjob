@@ -46,20 +46,20 @@ import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
 from threading import local, Thread
-from typing import Callable, Tuple, Optional, List, Iterable
+from typing import Callable, Optional, List, Iterable
 
 from runtools.runcore import util
 from runtools.runcore.job import (JobInstance, JobRun, InstanceOutputObserver, JobInstanceMetadata, JobFaults,
                                   InstanceTransitionObserver,
                                   InstanceTransitionEvent, InstanceOutputEvent, InstanceStageObserver,
                                   InstanceStageEvent)
-from runtools.runcore.output import Output, TailNotSupportedError, Mode, OutputLine
-from runtools.runcore.run import PhaseRun, Outcome, Fault, PhaseTransitionEvent
+from runtools.runcore.output import Output, TailNotSupportedError, Mode
+from runtools.runcore.run import Outcome, Fault, PhaseTransitionEvent
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer
-from runtools.runjob.phaser import DelegatingPhase, SequentialPhase
-from runtools.runjob.track import StatusTracker, OutputToStatusTransformer
+from runtools.runjob.phase import SequentialPhase
+from runtools.runjob.track import StatusTracker
 
 log = logging.getLogger(__name__)
 
@@ -68,10 +68,8 @@ ROOT_PHASE_ID = "root"
 TRANSITION_OBSERVER_ERROR = "TRANSITION_OBSERVER_ERROR"
 OUTPUT_OBSERVER_ERROR = "OUTPUT_OBSERVER_ERROR"
 
-TransitionObserverErrorHandler = Callable[
-    [InstanceTransitionObserver, Tuple[JobRun, PhaseRun, PhaseRun, int], Exception], None]
-OutputObserverErrorHandler = Callable[
-    [InstanceOutputObserver, Tuple[JobInstanceMetadata, OutputLine], Exception], None]
+TransitionObserverErrorHandler = Callable[[InstanceTransitionObserver, InstanceTransitionEvent, Exception], None]
+OutputObserverErrorHandler = Callable[[InstanceOutputObserver, InstanceOutputEvent, Exception], None]
 
 current_job_instance: ContextVar[Optional[JobInstanceMetadata]] = ContextVar('current_job_instance', default=None)
 
@@ -353,13 +351,3 @@ class _JobInstance(JobInstance):
     def remove_observer_output(self, observer):
         self._output.output_notification.remove_observer(observer)
 
-
-class OutputToStatus(DelegatingPhase[JobInstanceContext]):
-
-    def __init__(self, wrapped_phase, parsers):
-        super().__init__(wrapped_phase)
-        self._parsers = parsers
-
-    def run(self, ctx: Optional[JobInstanceContext]):
-        with ctx.output_sink.observer_context(OutputToStatusTransformer(ctx.status_tracker, parsers=self._parsers)):
-            return super().run(ctx)

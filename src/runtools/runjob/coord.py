@@ -3,17 +3,18 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 from threading import Condition, Event, Lock
-from typing import Optional, Any
+from typing import Any
 
 from runtools import runcore
 from runtools.runcore import paths
 from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion, MetadataCriterion, negate_id
-from runtools.runcore.job import JobRun, JobRuns, InstanceTransitionObserver
+from runtools.runcore.job import JobRun, JobRuns, InstanceStageObserver, InstanceStageEvent
 from runtools.runcore.listening import InstanceTransitionReceiver
-from runtools.runcore.run import RunState, TerminationStatus, PhaseRun, TerminateRun, control_api, Phase
+from runtools.runcore.run import RunState, TerminationStatus, TerminateRun, control_api
 from runtools.runcore.util import lock
 from runtools.runjob.instance import JobInstanceContext
 from runtools.runjob.output import OutputContext
+from runtools.runjob.phase import BasePhase, ExecutionTerminated
 
 log = logging.getLogger(__name__)
 
@@ -26,46 +27,29 @@ class CoordTypes(Enum):
     QUEUE = 'QUEUE'
 
 
-class ApprovalPhase(Phase[Any]):
+class ApprovalPhase(BasePhase[Any]):
     """
     Approval parameters (incl. timeout) + approval eval as separate objects
     TODO: parameters
     """
 
     def __init__(self, phase_id='approval', phase_name='Approval', *, timeout=0):
-        self._id = phase_id
-        self._name = phase_name
+        super().__init__(phase_id, CoordTypes.APPROVAL.value, RunState.PENDING, phase_name)
         self._timeout = timeout
         self._event = Event()
         self._stopped = False
 
-    @property
-    def id(self):
-        return self._id
-
-    @property
-    def type(self) -> str:
-        return CoordTypes.APPROVAL.value
-
-    @property
-    def run_state(self) -> RunState:
-        return RunState.PENDING
-
-    @property
-    def name(self) -> Optional[str]:
-        return self._name
-
-    def run(self, ctx: OutputContext):
+    def _run(self, _: OutputContext):
         # TODO Add support for denial request (rejection)
         log.debug("[waiting_for_approval]")
 
         approved = self._event.wait(self._timeout or None)
         if self._stopped:
             log.debug("[approval_cancelled]")
-            return
+            raise ExecutionTerminated(TerminationStatus.CANCELLED)
         if not approved:
             log.debug('[approval_timeout]')
-            raise TerminateRun(TerminationStatus.TIMEOUT)
+            raise ExecutionTerminated(TerminationStatus.TIMEOUT)
 
         log.debug("[approved]")
 
@@ -82,12 +66,8 @@ class ApprovalPhase(Phase[Any]):
         self._stopped = True
         self._event.set()
 
-    @property
-    def stop_status(self):
-        return TerminationStatus.CANCELLED
 
-
-class MutualExclusionPhase(Phase[JobInstanceContext]):
+class MutualExclusionPhase(BasePhase[JobInstanceContext]):
     """
     TODO Docs
     1. Set continue flag to be checked
@@ -96,10 +76,9 @@ class MutualExclusionPhase(Phase[JobInstanceContext]):
     UNTIL_PHASE = 'until_phase'
 
     def __init__(self, exclusion_id, phase_id=None, phase_name='Mutual Exclusion Check', *, until_phase=None):
+        super().__init__(phase_id or exclusion_id, CoordTypes.NO_OVERLAP.value, RunState.EVALUATING, phase_name)
         if not exclusion_id:
             raise ValueError("Parameter `no_overlap_id` cannot be empty")
-        self._id = phase_id or exclusion_id
-        self._name = phase_name
         self._exclusion_id = exclusion_id
         self._until_phase = until_phase
         self._attrs = {
@@ -108,22 +87,6 @@ class MutualExclusionPhase(Phase[JobInstanceContext]):
         }
         attr_to_match = {MutualExclusionPhase.EXCLUSION_ID: self._exclusion_id}
         self._excl_phase_filter = PhaseCriterion(phase_type=CoordTypes.NO_OVERLAP.value, attributes=attr_to_match)
-
-    @property
-    def id(self):
-        return self._id
-
-    @property
-    def type(self) -> str:
-        return CoordTypes.NO_OVERLAP.value
-
-    @property
-    def run_state(self) -> RunState:
-        return RunState.EVALUATING
-
-    @property
-    def name(self) -> Optional[str]:
-        return self._name
 
     @property
     def exclusion_id(self):
@@ -176,7 +139,7 @@ class MutualExclusionPhase(Phase[JobInstanceContext]):
         except ValueError:
             return False
 
-    def run(self, ctx: JobInstanceContext):
+    def _run(self, ctx: JobInstanceContext):
         log.debug("[mutex_check_started]")
         with ctx.environment.lock(f"mutex-{self.exclusion_id}"):
             c = JobRunCriteria()
@@ -197,34 +160,17 @@ class MutualExclusionPhase(Phase[JobInstanceContext]):
         return TerminationStatus.CANCELLED
 
 
-class DependencyPhase(Phase[JobInstanceContext]):
+class DependencyPhase(BasePhase[JobInstanceContext]):
 
     def __init__(self, dependency_match, phase_id=None, phase_name='Active dependency check'):
-        self._id = phase_id or str(dependency_match)
-        self._name = phase_name
+        super().__init__(phase_id or str(dependency_match), CoordTypes.DEPENDENCY.value, RunState.EVALUATING, phase_name)
         self._dependency_match = dependency_match
-
-    @property
-    def id(self):
-        return self._id
-
-    @property
-    def type(self) -> str:
-        return CoordTypes.DEPENDENCY.value
-
-    @property
-    def run_state(self) -> RunState:
-        return RunState.EVALUATING
-
-    @property
-    def name(self) -> Optional[str]:
-        return self._name
 
     @property
     def dependency_match(self):
         return self._dependency_match
 
-    def run(self, ctx):
+    def _run(self, ctx):
         log.debug(f"[active_dependency_search] dependency=[{self._dependency_match}]")
 
         matching_runs = [r for r in runcore.get_active_runs(self._dependency_match).successful if
@@ -242,31 +188,19 @@ class DependencyPhase(Phase[JobInstanceContext]):
         return TerminationStatus.CANCELLED
 
 
-class WaitingPhase(Phase[OutputContext]):
+class WaitingPhase(BasePhase[OutputContext]):
     """
     """
 
     def __init__(self, phase_id, observable_conditions, timeout=0):
-        self._id = phase_id
+        super().__init__(phase_id, CoordTypes.WAITING.value, RunState.WAITING)
         self._observable_conditions = observable_conditions
         self._timeout = timeout
         self._conditions_lock = Lock()
         self._event = Event()
         self._term_status = TerminationStatus.NONE
 
-    @property
-    def id(self):
-        return self._id
-
-    @property
-    def type(self) -> str:
-        return CoordTypes.WAITING.value
-
-    @property
-    def run_state(self) -> RunState:
-        return RunState.WAITING
-
-    def run(self, ctx):
+    def _run(self, ctx):
         for condition in self._observable_conditions:
             condition.add_result_listener(self._result_observer)
             condition.start_evaluating()
@@ -409,22 +343,20 @@ class ExecutionGroupLimit:
     max_executions: int
 
 
-class ExecutionQueue(Phase[OutputContext], InstanceTransitionObserver):
+class ExecutionQueue(BasePhase[OutputContext], InstanceStageObserver):
     QUEUE_ID = "queue_id"
     MAX_EXEC = "max_exec"
     LAST_PHASE = "last_phase"
 
-    def __init__(self, queue_id, max_executions, phase_id=None, phase_name=None, *,
-                 until_phase=None,
-                 locker_factory=lock.default_file_lock_factory(),
+    def __init__(self, queue_id, max_executions, phase_id=None, phase_name=None,
+                 *, until_phase=None, locker_factory=lock.default_file_lock_factory(),
                  state_receiver_factory=InstanceTransitionReceiver):
+        super().__init__(phase_id or queue_id, CoordTypes.QUEUE.value, RunState.IN_QUEUE, phase_name)
         if not queue_id:
             raise ValueError('Queue ID must be specified')
         if max_executions < 1:
             raise ValueError('Max executions must be greater than zero')
 
-        self._id = phase_id or queue_id
-        self._name = phase_name
         self._state = QueuedState.NONE
         self._queue_id = queue_id
         self._until_phase = until_phase
@@ -443,22 +375,6 @@ class ExecutionQueue(Phase[OutputContext], InstanceTransitionObserver):
         self._state_receiver = None
 
     @property
-    def id(self):
-        return self._id
-
-    @property
-    def type(self) -> str:
-        return CoordTypes.QUEUE.value
-
-    @property
-    def run_state(self) -> RunState:
-        return RunState.IN_QUEUE
-
-    @property
-    def name(self) -> Optional[str]:
-        return self._name
-
-    @property
     def stop_status(self):
         return TerminationStatus.CANCELLED
 
@@ -470,7 +386,7 @@ class ExecutionQueue(Phase[OutputContext], InstanceTransitionObserver):
     def queue_id(self):
         return self._queue_id
 
-    def run(self, ctx):
+    def _run(self, ctx):
         with self._wait_guard:
             if self._state == QueuedState.NONE:
                 self._state = QueuedState.IN_QUEUE
@@ -575,11 +491,11 @@ class ExecutionQueue(Phase[OutputContext], InstanceTransitionObserver):
                     if free_slots <= 0:
                         return
 
-    def new_instance_phase(self, job_run: JobRun, previous_phase: PhaseRun, new_phase: PhaseRun, ordinal: int):
+    def new_instance_stage(self, event: InstanceStageEvent):
         with self._wait_guard:
             if not self._current_wait:
                 return
-            if (protected_phases := job_run.protected_phases(CoordTypes.QUEUE, self._queue_id)) \
+            if (protected_phases := event.job_run.protected_phases(CoordTypes.QUEUE, self._queue_id)) \
                     and previous_phase.phase_id in protected_phases \
                     and new_phase not in protected_phases:
                 # Run slot freed

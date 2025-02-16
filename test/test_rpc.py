@@ -9,7 +9,7 @@ from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminationStatus
 from runtools.runjob import instance
 from runtools.runjob.server import RemoteCallServer
-from runtools.runjob.test.phaser import TestPhaseV2
+from runtools.runjob.test.phase import TestPhase
 
 EXEC = 'EXEC'
 APPROVAL = 'APPROVAL'
@@ -17,8 +17,8 @@ APPROVAL = 'APPROVAL'
 
 @pytest.fixture
 def job_instances():
-    j1 = instance.create('j1', [TestPhaseV2(EXEC)])
-    j2 = instance.create('j2',[TestPhaseV2(APPROVAL, wait=True)], run_id='i2')
+    j1 = instance.create('j1', [TestPhase(EXEC)])
+    j2 = instance.create('j2', [TestPhase(APPROVAL, wait=True)], run_id='i2')
     yield j1, j2
 
 

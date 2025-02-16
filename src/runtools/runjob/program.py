@@ -12,18 +12,20 @@ from typing import Union, Optional
 
 import sys
 
-from runtools.runcore.run import FailedRun, TerminateRun, TerminationStatus
-from runtools.runjob.phaser import ExecutingPhase
+from runtools.runcore.run import TerminationStatus, RunState
+from runtools.runjob.output import OutputContext
+from runtools.runjob.phase import ExecutionTerminated, BasePhase
 
 USE_SHELL = False  # For testing only
 
 log = logging.getLogger(__name__)
 
 
-class ProgramPhase(ExecutingPhase):
+class ProgramPhase(BasePhase[OutputContext]):
+    TYPE = 'PROGRAM'
 
     def __init__(self, phase_id, *args, read_output: bool = True):
-        super().__init__(phase_id)
+        super().__init__(phase_id, ProgramPhase.TYPE, RunState.EXECUTING)
         self.args = args
         self.read_output: bool = read_output
         self._popen: Union[Popen, None] = None
@@ -38,7 +40,7 @@ class ProgramPhase(ExecutingPhase):
 
         return self._popen.returncode
 
-    def run(self, run_ctx):
+    def _run(self, run_ctx):
         if not self._stopped and not self._interrupted:
             stdout = PIPE if self.read_output else None
             stderr = PIPE if self.read_output else None
@@ -60,13 +62,13 @@ class ProgramPhase(ExecutingPhase):
             except FileNotFoundError as e:
                 sys.stderr.write(str(e) + "\n")
                 """TODO Move exception level up"""
-                raise FailedRun('CommandNotFound', str(e)) from e
+                raise CommandNotFoundError(str(e)) from e
 
         if self._interrupted or self.ret_code == -signal.SIGINT:
-            raise TerminateRun(TerminationStatus.INTERRUPTED)
+            raise ExecutionTerminated(TerminationStatus.INTERRUPTED)
         if self._stopped or self.ret_code < 0:  # Negative exit code means terminated by a signal
-            raise TerminateRun(TerminationStatus.STOPPED)
-        raise FailedRun('ProgramError', "Process returned non-zero code " + str(self.ret_code))
+            raise ExecutionTerminated(TerminationStatus.STOPPED)
+        raise NonZeroReturnCodeError(self.ret_code)
 
     def _start_output_reader(self, run_ctx, infile, is_err):
         name = 'Stderr-Reader' if is_err else 'Stdout-Reader'
@@ -97,3 +99,24 @@ class ProgramPhase(ExecutingPhase):
                 self._status = line_stripped
                 print(line_stripped, file=sys.stderr if is_err else sys.stdout)
                 run_ctx.new_output(line_stripped, is_err)
+
+
+class ProgramExecutionError(Exception):
+    """Base exception for program execution related errors."""
+    pass
+
+
+class CommandNotFoundError(ProgramExecutionError):
+    pass
+
+
+class NonZeroReturnCodeError(ProgramExecutionError):
+    """Exception raised when a program returns a non-zero exit code.
+
+    Attributes:
+        exit_code (int): The actual exit code returned by the program
+    """
+
+    def __init__(self, exit_code: int):
+        self.exit_code = exit_code
+        super().__init__(f"Program returned non-zero exit code: {exit_code}")
