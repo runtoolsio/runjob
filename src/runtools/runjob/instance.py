@@ -237,9 +237,10 @@ class _JobInstance(JobInstance):
         return self._ctx.output_sink
 
     def snapshot(self) -> JobRun:
+        root_phase_detail = self._root_phase.detail()
         status = self._ctx.status_tracker.to_status() if self.status_tracker else None
         faults = JobFaults(tuple(self._transition_observer_faults), tuple(self._output.output_observer_faults))
-        return JobRun(self.metadata, self._root_phase.detail(), faults, status)
+        return JobRun(self.metadata, root_phase_detail.lifecycle, root_phase_detail.children, faults, status)
 
     @contextmanager
     def _job_instance_context(self):

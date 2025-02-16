@@ -32,7 +32,7 @@ def test_raise_exc(observer: TestStageObserver):
         instance.create('j1', [TestPhase(raise_exc=Exception)], stage_observers=[observer]).run()
 
     assert observer.stages == [Stage.RUNNING, Stage.ENDED]  # TODO CREATED
-    assert observer.job_runs[-1].phase.lifecycle.termination.fault.category == phase.UNCAUGHT_PHASE_EXEC_EXCEPTION
+    assert observer.job_runs[-1].lifecycle.termination.fault.category == phase.UNCAUGHT_PHASE_EXEC_EXCEPTION
 
 
 def test_raise_exec_terminated(observer: TestStageObserver):
@@ -43,7 +43,7 @@ def test_raise_exec_terminated(observer: TestStageObserver):
      .run())
 
     assert observer.stages == [Stage.RUNNING, Stage.ENDED]  # TODO CREATED
-    assert observer.job_runs[-1].phase.lifecycle.termination.status == TerminationStatus.FAILED
+    assert observer.job_runs[-1].lifecycle.termination.status == TerminationStatus.FAILED
 
 
 def test_observer_raises_exception():
@@ -55,7 +55,7 @@ def test_observer_raises_exception():
     job_instance = instance.create('j1', [execution], stage_observers=[observer])
     job_instance.run()
     assert execution.completed
-    assert job_instance.snapshot().phase.lifecycle.termination.status == TerminationStatus.COMPLETED
+    assert job_instance.snapshot().lifecycle.termination.status == TerminationStatus.COMPLETED
     assert job_instance.snapshot().faults.transition_observer_faults[0].category == instance.TRANSITION_OBSERVER_ERROR
 
 

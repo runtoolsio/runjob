@@ -20,7 +20,7 @@ def test_transition_dispatching():
         instance=job_run.metadata,
         job_run=job_run,
         is_root_phase=True,
-        phase_id=job_run.phase.phase_id,
+        phase_id=job_run.phases[0].phase_id,
         new_stage=Stage.RUNNING,
         timestamp=(utc_now())
     )

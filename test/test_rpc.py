@@ -70,8 +70,8 @@ def test_stop(job_instances, server):
     with RemoteCallClient() as c:
         c.stop_instance(server.address, j1.instance_id)
 
-    assert j1.snapshot().phase.lifecycle.termination.status == TerminationStatus.STOPPED
-    assert not j2.snapshot().phase.lifecycle.termination
+    assert j1.snapshot().lifecycle.termination.status == TerminationStatus.STOPPED
+    assert not j2.snapshot().lifecycle.termination
 
 
 def test_phase_op_release(job_instances, server):

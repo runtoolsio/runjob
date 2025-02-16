@@ -204,7 +204,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
         #      will work regardless of the priority as the removal of the observers doesn't affect
         #      iteration/notification (`Notification` class)
 
-        if job_instance.snapshot().phase.lifecycle.is_ended:
+        if job_instance.snapshot().lifecycle.is_ended:
             self._detach_instance(job_instance.metadata.instance_id, self._transient)
 
         return job_instance

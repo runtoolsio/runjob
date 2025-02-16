@@ -43,7 +43,7 @@ class _ExecTimeWarning(InstanceStageObserver):
             self.timer.start()
 
     def _check(self):
-        if not self.job_instance.snapshot().phase.lifecycle.termination:
+        if not self.job_instance.snapshot().lifecycle.termination:
             self.job_instance.status_tracker.warning(self.text)
 
     def __repr__(self):
