@@ -46,7 +46,7 @@ class ApprovalPhase(BasePhase[Any]):
         approved = self._event.wait(self._timeout or None)
         if self._stopped:
             log.debug("[approval_cancelled]")
-            raise ExecutionTerminated(TerminationStatus.CANCELLED)
+            raise ExecutionTerminated(TerminationStatus.STOPPED)
         if not approved:
             log.debug('[approval_timeout]')
             raise ExecutionTerminated(TerminationStatus.TIMEOUT)
@@ -73,17 +73,14 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
     1. Set continue flag to be checked
     """
     EXCLUSION_ID = 'exclusion_id'
-    UNTIL_PHASE = 'until_phase'
 
-    def __init__(self, exclusion_id, phase_id=None, phase_name='Mutual Exclusion Check', *, until_phase=None):
+    def __init__(self, exclusion_id, phase_id=None, phase_name='Mutual Exclusion Check'):
         super().__init__(phase_id or exclusion_id, CoordTypes.NO_OVERLAP.value, RunState.EVALUATING, phase_name)
         if not exclusion_id:
             raise ValueError("Parameter `no_overlap_id` cannot be empty")
         self._exclusion_id = exclusion_id
-        self._until_phase = until_phase
         self._attrs = {
             MutualExclusionPhase.EXCLUSION_ID: self._exclusion_id,
-            MutualExclusionPhase.UNTIL_PHASE: self._until_phase,
         }
         attr_to_match = {MutualExclusionPhase.EXCLUSION_ID: self._exclusion_id}
         self._excl_phase_filter = PhaseCriterion(phase_type=CoordTypes.NO_OVERLAP.value, attributes=attr_to_match)
