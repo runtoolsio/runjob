@@ -3,18 +3,18 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 from threading import Condition, Event, Lock
-from typing import Any
+from typing import Any, List
 
 from runtools import runcore
 from runtools.runcore import paths
-from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion, MetadataCriterion, negate_id
+from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion, MetadataCriterion, negate_id, LifecycleCriterion
 from runtools.runcore.job import JobRun, JobRuns, InstanceStageObserver, InstanceStageEvent
 from runtools.runcore.listening import InstanceTransitionReceiver
-from runtools.runcore.run import RunState, TerminationStatus, TerminateRun, control_api
+from runtools.runcore.run import RunState, TerminationStatus, TerminateRun, control_api, Stage
 from runtools.runcore.util import lock
 from runtools.runjob.instance import JobInstanceContext
 from runtools.runjob.output import OutputContext
-from runtools.runjob.phase import BasePhase, ExecutionTerminated
+from runtools.runjob.phase import BasePhase, ExecutionTerminated, Phase
 
 log = logging.getLogger(__name__)
 
@@ -74,16 +74,22 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
     """
     EXCLUSION_ID = 'exclusion_id'
 
-    def __init__(self, exclusion_id, phase_id=None, phase_name='Mutual Exclusion Check'):
+    def __init__(self, exclusion_id, protected_phase, *, phase_id=None, phase_name='Mutex Parent'):
         super().__init__(phase_id or exclusion_id, CoordTypes.NO_OVERLAP.value, RunState.EVALUATING, phase_name)
         if not exclusion_id:
             raise ValueError("Parameter `no_overlap_id` cannot be empty")
         self._exclusion_id = exclusion_id
-        self._attrs = {
-            MutualExclusionPhase.EXCLUSION_ID: self._exclusion_id,
-        }
-        attr_to_match = {MutualExclusionPhase.EXCLUSION_ID: self._exclusion_id}
-        self._excl_phase_filter = PhaseCriterion(phase_type=CoordTypes.NO_OVERLAP.value, attributes=attr_to_match)
+        self._protected_phase = protected_phase
+        self._attrs = {MutualExclusionPhase.EXCLUSION_ID: self._exclusion_id}
+        self._excl_phase_filter = PhaseCriterion(
+            phase_type=CoordTypes.NO_OVERLAP.value,
+            attributes={MutualExclusionPhase.EXCLUSION_ID: self._exclusion_id},
+            lifecycle=LifecycleCriterion(stage=Stage.RUNNING)
+        )
+
+    @property
+    def children(self) -> List[Phase]:
+        return [self._protected_phase]
 
     @property
     def exclusion_id(self):
@@ -93,61 +99,19 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
     def attributes(self):
         return self._attrs
 
-    def _is_in_exclusion_phase(self, job_run: JobRun) -> bool:
-        """
-        Checks if the given job run is currently between its exclusion phase and until phase.
-
-        Args:
-            job_run: The job run to check
-
-        Returns:
-            True if the current phase is between the exclusion phase and its target phase (inclusive),
-            False otherwise
-        """
-        exclusion_phase = job_run.find_phase(self._excl_phase_filter)
-        if not exclusion_phase:
-            log.warning("[mutex_phase_not_found]")
-            return False
-
-        until_phase_id = exclusion_phase.attributes.get(MutualExclusionPhase.UNTIL_PHASE)
-        if not until_phase_id:
-            next_phase = job_run.phase_after(exclusion_phase)
-            if not next_phase:
-                log.warning("[exclusive_phase_not_found]")
-                return False
-            until_phase_id = next_phase.phase_id
-
-        current_phase = job_run.current_phase
-        if not current_phase:
-            return False
-
-        until_phase = job_run.find_phase(PhaseCriterion(phase_id=until_phase_id))
-        if not until_phase:
-            log.warning(f"[last_exclusive_phase_not_found] phase=[{until_phase}]")
-            return False
-
-        try:
-            phases = job_run.phases
-            excl_idx = phases.index(exclusion_phase)
-            until_idx = phases.index(until_phase)
-            current_idx = phases.index(current_phase)
-
-            return excl_idx <= current_idx <= until_idx
-        except ValueError:
-            return False
-
     def _run(self, ctx: JobInstanceContext):
         log.debug("[mutex_check_started]")
-        with ctx.environment.lock(f"mutex-{self.exclusion_id}"):
+        with ctx.environment.lock(f"mutex-{self.exclusion_id}"):  # TODO Manage lock names better
             c = JobRunCriteria()
-            c += MetadataCriterion(instance_id=negate_id(ctx.metadata.instance_id))  # Excl self
+            c += MetadataCriterion.all_except(ctx.metadata.instance_id)  # Excl self
             c += self._excl_phase_filter
-            runs = ctx.environment.get_active_runs(c)
+            excl_runs = ctx.environment.get_active_runs(c)
 
-            for run in runs:
-                if self._is_in_exclusion_phase(run):
-                    log.debug(f"[overlap_found]: {run.metadata}")
-                    raise TerminateRun(TerminationStatus.OVERLAP)
+            for exc_run in excl_runs:
+                log.debug(f"[overlap_found]: {exc_run.metadata}")
+                raise TerminateRun(TerminationStatus.OVERLAP)
+
+            self._protected_phase.run(ctx)
 
     def stop(self):
         pass
@@ -160,7 +124,8 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
 class DependencyPhase(BasePhase[JobInstanceContext]):
 
     def __init__(self, dependency_match, phase_id=None, phase_name='Active dependency check'):
-        super().__init__(phase_id or str(dependency_match), CoordTypes.DEPENDENCY.value, RunState.EVALUATING, phase_name)
+        super().__init__(phase_id or str(dependency_match), CoordTypes.DEPENDENCY.value, RunState.EVALUATING,
+                         phase_name)
         self._dependency_match = dependency_match
 
     @property
