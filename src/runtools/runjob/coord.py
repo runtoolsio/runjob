@@ -5,10 +5,10 @@ from enum import Enum, auto
 from threading import Condition, Event, Lock
 from typing import Any, List
 
-from runtools import runcore
 from runtools.runcore import paths
-from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion, MetadataCriterion, negate_id, LifecycleCriterion
-from runtools.runcore.job import JobRun, JobRuns, InstanceStageObserver, InstanceStageEvent
+from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion, MetadataCriterion, LifecycleCriterion
+from runtools.runcore.job import JobRuns, InstanceTransitionEvent, \
+    InstanceTransitionObserver
 from runtools.runcore.listening import InstanceTransitionReceiver
 from runtools.runcore.run import RunState, TerminationStatus, TerminateRun, control_api, Stage
 from runtools.runcore.util import lock
@@ -135,7 +135,7 @@ class DependencyPhase(BasePhase[JobInstanceContext]):
     def _run(self, ctx):
         log.debug(f"[active_dependency_search] dependency=[{self._dependency_match}]")
 
-        matching_runs = [r for r in runcore.get_active_runs(self._dependency_match).successful if
+        matching_runs = [r for r in ctx.environment.get_active_runs(self._dependency_match) if
                          r.instance_id != ctx.metadata.instance_id]
         if not matching_runs:
             log.debug(f"[active_dependency_not_found] dependency=[{self._dependency_match}]")
@@ -305,13 +305,12 @@ class ExecutionGroupLimit:
     max_executions: int
 
 
-class ExecutionQueue(BasePhase[OutputContext], InstanceStageObserver):
+class ExecutionQueue(BasePhase[OutputContext], InstanceTransitionObserver):
     QUEUE_ID = "queue_id"
     MAX_EXEC = "max_exec"
-    LAST_PHASE = "last_phase"
 
     def __init__(self, queue_id, max_executions, phase_id=None, phase_name=None,
-                 *, until_phase=None, locker_factory=lock.default_file_lock_factory(),
+                 *, locker_factory=lock.default_file_lock_factory(),
                  state_receiver_factory=InstanceTransitionReceiver):
         super().__init__(phase_id or queue_id, CoordTypes.QUEUE.value, RunState.IN_QUEUE, phase_name)
         if not queue_id:
@@ -321,13 +320,11 @@ class ExecutionQueue(BasePhase[OutputContext], InstanceStageObserver):
 
         self._state = QueuedState.NONE
         self._queue_id = queue_id
-        self._until_phase = until_phase
         self._max_executions = max_executions
         self._locker = locker_factory(paths.lock_path(f"eq-{queue_id}.lock", True))
         attr_to_match = {
             ExecutionQueue.QUEUE_ID: self._queue_id,
             ExecutionQueue.MAX_EXEC: self._max_executions,
-            ExecutionQueue.LAST_PHASE: self._until_phase,
         }
         self._queue_phase_filter = PhaseCriterion(phase_type=CoordTypes.QUEUE.value, attributes=attr_to_match)
         self._state_receiver_factory = state_receiver_factory
@@ -453,17 +450,15 @@ class ExecutionQueue(BasePhase[OutputContext], InstanceStageObserver):
                     if free_slots <= 0:
                         return
 
-    def new_instance_stage(self, event: InstanceStageEvent):
+    def new_instance_transition(self, event: InstanceTransitionEvent):
         with self._wait_guard:
-            if not self._current_wait:
+            if not self._current_wait or event.new_stage != Stage.ENDED or not self._queue_phase_filter(event.job_run.find_phase(event.phase_id)):
                 return
-            if (protected_phases := event.job_run.protected_phases(CoordTypes.QUEUE, self._queue_id)) \
-                    and previous_phase.phase_id in protected_phases \
-                    and new_phase not in protected_phases:
-                # Run slot freed
-                self._current_wait = False
-                self._stop_listening()
-                self._wait_guard.notify()
+
+            # Run slot freed
+            self._current_wait = False
+            self._stop_listening()
+            self._wait_guard.notify()
 
     def _stop_listening(self):
         self._state_receiver.close()
