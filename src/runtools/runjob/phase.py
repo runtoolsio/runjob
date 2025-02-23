@@ -22,12 +22,6 @@ class PhaseCompletionError(Exception):
         self.phase_id = phase_id
 
 
-class PhaseTypeMismatchError(Exception):
-
-    def __init__(self, phase_id, expected_type, actual_type):
-        super().__init__(f"Phase '{phase_id}' has unexpected type: expected {expected_type}, got {actual_type}")
-
-
 class Phase(ABC, Generic[C]):
 
     @property
@@ -59,6 +53,10 @@ class Phase(ABC, Generic[C]):
     def attributes(self):
         return {}
 
+    @property
+    def variables(self):
+        return {}
+
     @abstractmethod
     def detail(self):
         """
@@ -79,8 +77,11 @@ class Phase(ABC, Generic[C]):
         pass
 
     @abstractmethod
-    def find_phase_control(self, phase_id: str, phase_type: str = None) -> Optional[PhaseControl]:
+    def find_phase_control(self, phase_filter) -> Optional[PhaseControl]:
         pass
+
+    def find_phase_control_by_id(self, phase_id: str) -> Optional[PhaseControl]:
+        self.find_phase_control(lambda phase: phase.id == phase_id)
 
     @abstractmethod
     def run(self, ctx: Optional[C]):
@@ -183,32 +184,29 @@ class BasePhase(Phase[C], ABC):
     def children(self) -> List[Phase]:
         return []
 
-    def find_phase_control(self, phase_id: str, phase_type: str = None) -> Optional[PhaseControl]:
+    def find_phase_control(self, phase_filter) -> Optional[PhaseControl]:
         """
-        Find phase control by phase ID, searching recursively through all children.
+        Find phase control, searching recursively through all children.
 
         Args:
-            phase_id: The ID of the phase to find
-            phase_type: The type of the found phase (TODO exception)
+            phase_filter: The filter to find the phase
 
         Returns:
             PhaseControl for the matching phase, or None if not found
         """
         phase = None
-        if self.id == phase_id:
+        if phase_filter(self):
             phase = self
         else:
             for child in self.children:
-                if child.id == phase_id:
+                if phase_filter(child):
                     phase = child
                     break
-                if phase_control := child.find_phase_control(phase_id, phase_type):
+                if phase_control := child.find_phase_control(phase_filter):
                     return phase_control
 
         if not phase:
             return None
-        if phase_type and phase.type != phase_type:
-            raise PhaseTypeMismatchError(phase.id, phase_type, phase.type)
 
         return phase.control
 

@@ -142,7 +142,7 @@ class ExecPhaseOpMethod(JsonRpcMethod):
         ]
 
     def execute(self, job_instance: JobInstance, phase_id, op_name, op_args) -> Dict[str, Any]:
-        control = job_instance.find_phase_control(phase_id)
+        control = job_instance.find_phase_control_by_id(phase_id)
         if not control:
             raise JsonRpcError(ErrorCode.PHASE_NOT_FOUND, f"Phase not found: {phase_id}")
 

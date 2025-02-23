@@ -79,7 +79,7 @@ def test_phase_op_release(job_instances, server):
     with RemoteCallClient() as c:
         c.exec_phase_op(server.address, j2.instance_id, APPROVAL, 'release')
 
-    assert j2.find_phase_control(APPROVAL).is_released
+    assert j2.find_phase_control_by_id(APPROVAL).is_released
 
 
 def test_tail(job_instances, server):

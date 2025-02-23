@@ -229,8 +229,8 @@ class _JobInstance(JobInstance):
     def status_tracker(self):
         return self._ctx.status_tracker
 
-    def find_phase_control(self, phase_id: str, phase_type: str = None):
-        return self._root_phase.find_phase_control(phase_id, phase_type)
+    def find_phase_control(self, phase_filter):
+        return self._root_phase.find_phase_control(phase_filter)
 
     @property
     def output(self):
