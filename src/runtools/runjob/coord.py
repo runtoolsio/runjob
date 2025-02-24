@@ -334,7 +334,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
         self._queue_change_condition = Condition()
         # vv Guarding these fields vv
         self._state = QueuedState.NONE
-        self._queue_changed = False
+        self._queue_changed = True
 
     def _lock_name(self):
         return f"eq-{self.execution_group}.lock"
@@ -415,26 +415,26 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
 
     def _dispatch_next(self, ctx):
         criteria = JobRunCriteria(
-            metadata_criteria=MetadataCriterion.all_except(ctx.metadata.instance_id),
+            # metadata_criteria=MetadataCriterion.all_except(ctx.metadata.instance_id),
             phase_criteria=self._phase_filter_running
         )
-        runs: List[JobRun] = ctx.get_active_runs(criteria)
+        runs: List[JobRun] = ctx.environment.get_active_runs(criteria)
 
         runs_sorted = sorted(runs, key=lambda run: run.find_phase(self._phase_filter).lifecycle.created_at)
-        dispatched = {r for r in runs_sorted if
+        ids_dispatched = {r.instance_id for r in runs_sorted if
                       r.find_phase(self._phase_filter).variables[ExecutionQueue.STATE] == QueuedState.DISPATCHED.name}
-        free_slots = self._execution_group.max_executions - len(dispatched)
+        free_slots = self._execution_group.max_executions - len(ids_dispatched)
         if free_slots <= 0:
             log.debug("event[exec_limit_reached] slots=[%d] dispatched=[%d]",
-                      self._execution_group.max_executions, len(dispatched))
+                      self._execution_group.max_executions, len(ids_dispatched))
             return False
 
         log.debug("event[dispatching_from_queue] count=[%d]", free_slots)
         for next_dispatch in runs_sorted:
-            if next_dispatch in dispatched:
+            if next_dispatch.instance_id in ids_dispatched:
                 continue
             dispatched = (
-                ctx.get_instance(next_dispatch.instance_id).find_phase_control(self._phase_filter).signal_dispatch())
+                ctx.environment.get_instance(next_dispatch.instance_id).find_phase_control(self._phase_filter).signal_dispatch())
             if dispatched:
                 log.debug("event[dispatched] run=[%s]", next_dispatch.metadata)
                 free_slots -= 1

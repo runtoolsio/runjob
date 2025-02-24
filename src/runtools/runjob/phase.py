@@ -195,11 +195,11 @@ class BasePhase(Phase[C], ABC):
             PhaseControl for the matching phase, or None if not found
         """
         phase = None
-        if phase_filter(self):
+        if phase_filter(self.detail()):
             phase = self
         else:
             for child in self.children:
-                if phase_filter(child):
+                if phase_filter(child.detail()):
                     phase = child
                     break
                 if phase_control := child.find_phase_control(phase_filter):

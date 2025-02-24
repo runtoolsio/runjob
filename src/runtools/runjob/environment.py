@@ -322,7 +322,7 @@ class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, Runnabl
         return [i.snapshot() for i in self.get_instances(run_match)]
 
     def get_instances(self, run_match=None) -> List[JobInstance]:
-        return [i for i in self.instances if not run_match or run_match(i)]
+        return [i for i in self.instances if not run_match or run_match(i.snapshot())]
 
     def lock(self, lock_id):
         return self._lock_factory(lock_id)
