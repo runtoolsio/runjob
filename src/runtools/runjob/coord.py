@@ -8,7 +8,7 @@ from typing import Any, List
 
 from runtools.runcore import JobRun
 from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion, MetadataCriterion, LifecycleCriterion
-from runtools.runcore.job import InstanceTransitionEvent, JobInstance
+from runtools.runcore.job import InstanceTransitionEvent
 from runtools.runcore.run import RunState, TerminationStatus, TerminateRun, control_api, Stage
 from runtools.runjob.instance import JobInstanceContext
 from runtools.runjob.output import OutputContext
@@ -297,43 +297,51 @@ class QueuedState(Enum):
             return cls.UNKNOWN
 
 
-@dataclass
-class ExecutionGroupLimit:
-    group: str
+@dataclass(frozen=True)
+class ExecutionGroup:
+    group_id: str
     max_executions: int
 
+    def __post_init__(self):
+        if self.max_executions < 1:
+            raise ValueError("max_executions must be greater than 0")
 
-class ExecutionQueue(BasePhase[OutputContext]):
-    QUEUE_ID = "queue_id"
+
+class ExecutionQueue(BasePhase[JobInstanceContext]):
+    GROUP_ID = "group_id"
     MAX_EXEC = "max_exec"
     STATE = "state"
 
-    def __init__(self, queue_id, max_executions, phase_id=None, phase_name=None):
-        super().__init__(phase_id or queue_id, CoordTypes.QUEUE.value, RunState.IN_QUEUE, phase_name)
-        if not queue_id:
-            raise ValueError('Queue ID must be specified')
-        if max_executions < 1:
-            raise ValueError('Max executions must be greater than zero')
+    def __init__(self, execution_group, limited_phase, phase_id=None, phase_name=None):
+        super().__init__(phase_id or execution_group.group_id, CoordTypes.QUEUE.value, RunState.IN_QUEUE, phase_name)
+        if not execution_group:
+            raise ValueError('Execution group must be specified')
 
-        self._state = QueuedState.NONE
-        self._queue_id = queue_id
-        self._max_executions = max_executions
+        self._execution_group = execution_group
+        self._limited_phase = limited_phase
         self._attrs = {
-            ExecutionQueue.QUEUE_ID: self._queue_id,
-            ExecutionQueue.MAX_EXEC: self._max_executions,
+            ExecutionQueue.GROUP_ID: execution_group.group_id,
+            ExecutionQueue.MAX_EXEC: execution_group.max_executions,
         }
+
         self._phase_filter = PhaseCriterion(
             phase_type=CoordTypes.QUEUE.value,
             attributes=self._attrs,
         )
         self._phase_filter_running = copy.copy(self._phase_filter)
         self._phase_filter_running.lifecycle = LifecycleCriterion(stage=Stage.RUNNING)
-        self._wait_guard = Condition()
+
+        self._queue_change_condition = Condition()
         # vv Guarding these fields vv
-        self._current_wait = False
+        self._state = QueuedState.NONE
+        self._queue_changed = False
 
     def _lock_name(self):
-        return f"eq-{self.queue_id}.lock"
+        return f"eq-{self.execution_group}.lock"
+
+    @property
+    def children(self) -> List[Phase]:
+        return [self._limited_phase]
 
     @property
     def attributes(self):
@@ -348,56 +356,61 @@ class ExecutionQueue(BasePhase[OutputContext]):
         return TerminationStatus.CANCELLED
 
     @property
+    @control_api
     def state(self):
         return self._state
 
     @property
-    def queue_id(self):
-        return self._queue_id
+    @control_api
+    def execution_group(self):
+        return self._execution_group
 
     def _run(self, ctx):
         try:
-            ctx.add_observer_transition(self._new_instance_transition)
+            ctx.environment.add_observer_transition(self._new_instance_transition)
 
-            with self._wait_guard:
+            with self._queue_change_condition:
+                # Transition under lock to prevent NONE -> CANCELLED -> IN_QUEUE race condition
                 if self._state == QueuedState.NONE:
                     self._state = QueuedState.IN_QUEUE
 
             while True:
-                with self._wait_guard:
-                    if self._state.dequeued:
+                with self._queue_change_condition:
+                    if self._state == QueuedState.CANCELLED:
+                        return
+                    if self._state == QueuedState.DISPATCHED:
                         break
 
-                    if self._current_wait:
-                        self._wait_guard.wait()
+                    if not self._queue_changed:
+                        self._queue_change_condition.wait()
                         continue
 
-                    self._current_wait = True
+                    self._queue_changed = False
 
                 with ctx.environment.lock(self._lock_name()):
                     self._dispatch_next(ctx)
         finally:
-            ctx.remove_observer_transition(self._new_instance_transition)
+            ctx.environment.remove_observer_transition(self._new_instance_transition)
+
+        self._limited_phase.run(ctx)
 
     def stop(self):
-        with self._wait_guard:
+        with self._queue_change_condition:
             if self._state.dequeued:
+                self._limited_phase.stop()
                 return
 
             self._state = QueuedState.CANCELLED
-            self._wait_guard.notify_all()
+            self._queue_change_condition.notify_all()
 
     @control_api
     def signal_dispatch(self):
-        with self._wait_guard:
-            if self._state == QueuedState.CANCELLED:
+        with self._queue_change_condition:
+            if self._state.dequeued:
                 return False
 
-            if self._state.dequeued:
-                return True  # TODO Safe to keep?
-
             self._state = QueuedState.DISPATCHED
-            self._wait_guard.notify_all()
+            self._queue_change_condition.notify_all()
             return True
 
     def _dispatch_next(self, ctx):
@@ -408,30 +421,31 @@ class ExecutionQueue(BasePhase[OutputContext]):
         runs: List[JobRun] = ctx.get_active_runs(criteria)
 
         runs_sorted = sorted(runs, key=lambda run: run.find_phase(self._phase_filter).lifecycle.created_at)
-        occupied = {r for r in runs_sorted if
-                    r.find_phase(self._phase_filter).variables[ExecutionQueue.STATE] == QueuedState.DISPATCHED.name}
-        free_slots = self._max_executions - len(occupied)
+        dispatched = {r for r in runs_sorted if
+                      r.find_phase(self._phase_filter).variables[ExecutionQueue.STATE] == QueuedState.DISPATCHED.name}
+        free_slots = self._execution_group.max_executions - len(dispatched)
         if free_slots <= 0:
-            log.debug("event[no_queue_dispatch] slots=[%d] occupied=[%d]", self._max_executions, len(occupied))
+            log.debug("event[exec_limit_reached] slots=[%d] dispatched=[%d]",
+                      self._execution_group.max_executions, len(dispatched))
             return False
 
         log.debug("event[dispatching_from_queue] count=[%d]", free_slots)
-        for next_proceed in runs_sorted:
-            if next_proceed in occupied:
+        for next_dispatch in runs_sorted:
+            if next_dispatch in dispatched:
                 continue
             dispatched = (
-                ctx.get_instance(next_proceed.instance_id).find_phase_control(self._phase_filter).signal_dispatch())
+                ctx.get_instance(next_dispatch.instance_id).find_phase_control(self._phase_filter).signal_dispatch())
             if dispatched:
-                log.debug("event[dispatched] run=[%s]", next_proceed.metadata)
+                log.debug("event[dispatched] run=[%s]", next_dispatch.metadata)
                 free_slots -= 1
                 if free_slots <= 0:
                     return
 
     def _new_instance_transition(self, event: InstanceTransitionEvent):
-        with self._wait_guard:
-            if not self._current_wait or event.new_stage != Stage.ENDED or not self._phase_filter(event.job_run.find_phase_by_id(event.phase_id)):
+        with self._queue_change_condition:
+            if not self._queue_changed or event.new_stage != Stage.ENDED or not self._phase_filter(
+                    event.job_run.find_phase_by_id(event.phase_id)):
                 return
 
-            # Run slot freed
-            self._current_wait = False
-            self._wait_guard.notify()
+            self._queue_changed = True  # Run slot freed
+            self._queue_change_condition.notify()
