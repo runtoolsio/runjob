@@ -382,7 +382,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
                         break
 
                     if not self._queue_changed:
-                        self._queue_change_condition.wait()
+                        self._queue_change_condition.wait()  # Set timeout
                         continue
 
                     self._queue_changed = False
@@ -414,16 +414,12 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
             return True
 
     def _dispatch_next(self, ctx):
-        criteria = JobRunCriteria(
-            # metadata_criteria=MetadataCriterion.all_except(ctx.metadata.instance_id),
-            phase_criteria=self._phase_filter_running
-        )
-        runs: List[JobRun] = ctx.environment.get_active_runs(criteria)
-
+        runs: List[JobRun] = ctx.environment.get_active_runs(JobRunCriteria(phase_criteria=self._phase_filter_running))
         runs_sorted = sorted(runs, key=lambda run: run.find_phase(self._phase_filter).lifecycle.created_at)
         ids_dispatched = {r.instance_id for r in runs_sorted if
                       r.find_phase(self._phase_filter).variables[ExecutionQueue.STATE] == QueuedState.DISPATCHED.name}
         free_slots = self._execution_group.max_executions - len(ids_dispatched)
+
         if free_slots <= 0:
             log.debug("event[exec_limit_reached] slots=[%d] dispatched=[%d]",
                       self._execution_group.max_executions, len(ids_dispatched))
@@ -443,9 +439,10 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
 
     def _new_instance_transition(self, event: InstanceTransitionEvent):
         with self._queue_change_condition:
-            if not self._queue_changed or event.new_stage != Stage.ENDED or not self._phase_filter(
+            if self._queue_changed or event.new_stage != Stage.ENDED or not self._phase_filter(
                     event.job_run.find_phase_by_id(event.phase_id)):
                 return
 
-            self._queue_changed = True  # Run slot freed
+            log.debug("event[queue_slot_freed] instance=[%s] phase=[%s]", event.instance.instance_id, event.phase_id)
+            self._queue_changed = True
             self._queue_change_condition.notify()
