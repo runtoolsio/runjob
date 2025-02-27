@@ -425,7 +425,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
                       self._execution_group.max_executions, len(ids_dispatched))
             return False
 
-        log.debug("event[dispatching_from_queue] count=[%d]", free_slots)
+        log.debug("event[dispatching_from_queue] free_slots=[%d]", free_slots)
         for next_dispatch in runs_sorted:
             if next_dispatch.instance_id in ids_dispatched:
                 continue
@@ -436,6 +436,8 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
                 free_slots -= 1
                 if free_slots <= 0:
                     return
+            else:
+                log.debug("event[not_dispatched] run=[%s]", next_dispatch.metadata)
 
     def _new_instance_transition(self, event: InstanceTransitionEvent):
         with self._queue_change_condition:

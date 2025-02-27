@@ -333,4 +333,4 @@ class RemoteCallServer(SocketServer, JobInstanceManager):
         except ValueError as e:
             raise JsonRpcError(ErrorCode.INVALID_PARAMS, f"Invalid run match criteria: {e}")
 
-        return [job_instance for job_instance in self._job_instances.values() if matching_criteria.matches(job_instance)]
+        return [job_instance for job_instance in self._job_instances.values() if matching_criteria.matches(job_instance.snapshot())]
