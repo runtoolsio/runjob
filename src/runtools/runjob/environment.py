@@ -1,20 +1,26 @@
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from threading import Lock, Condition
 from typing import Dict, Optional, List
 
-from runtools.runcore import JobRun, plugins, paths
+from runtools.runcore import JobRun, plugins, paths, connector
 from runtools.runcore.common import InvalidStateError
-from runtools.runcore.db import sqlite, PersistingObserver
-from runtools.runcore.environment import Environment, LocalEnvironment, PersistingEnvironment
+from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
+    create_layout_dirs, DEF_ENV_ID
+from runtools.runcore.db import sqlite, PersistingObserver, SortCriteria
 from runtools.runcore.job import JobInstance, JobInstanceObservable, InstanceStageEvent
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import Stage
 from runtools.runcore.util import ensure_tuple_copy, lock
 from runtools.runcore.util.err import run_isolated_collect_exceptions
+from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
+from runtools.runcore.util.socket import SocketClient
 from runtools.runjob import instance, JobInstanceHook
 from runtools.runjob.events import TransitionDispatcher, OutputDispatcher
 from runtools.runjob.server import RemoteCallServer
+
+log = logging.getLogger(__name__)
 
 
 def _create_plugins(names):
@@ -23,7 +29,7 @@ def _create_plugins(names):
     # TODO complete
 
 
-class RunnableEnvironment(Environment, ABC):
+class Environment(EnvironmentConnector, ABC):
 
     @abstractmethod
     def create_instance(self, *args, **kwargs):
@@ -33,10 +39,6 @@ class RunnableEnvironment(Environment, ABC):
     @abstractmethod
     def lock(self, lock_id):
         """TODO to separate type"""
-
-    def signal_dispatch(self, instance_id, phase_id):
-        """TODO TBD"""
-        self.get_instance(instance_id).find_phase_control_by_id().signal_dispatch()
 
 
 class Feature(ABC):
@@ -63,7 +65,7 @@ class _ManagedInstance:
     detached: bool = False
 
 
-class RunnableEnvironmentBase(RunnableEnvironment, ABC):
+class EnvironmentBase(Environment, ABC):
     """
     Implementation details
     ----------------------
@@ -186,7 +188,7 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
             managed_instance = _ManagedInstance(job_instance)
             self._managed_instances[job_instance.instance_id] = managed_instance
 
-        job_instance.add_observer_stage(self._new_instance_stage, RunnableEnvironmentBase.OBSERVERS_PRIORITY)
+        job_instance.add_observer_stage(self._new_instance_stage, EnvironmentBase.OBSERVERS_PRIORITY)
 
         # TODO Exception must be caught here to prevent inconsistent state and possibility in get stuck in close method:
         self._on_added(job_instance)
@@ -284,33 +286,33 @@ class RunnableEnvironmentBase(RunnableEnvironment, ABC):
             raise KeyboardInterrupt
 
 
-def isolated(persistence=None, *, lock_factory=None, features=None, transient=True):
+def isolated(persistence=None, *, lock_factory=None, features=None, transient=True) -> Environment:
     persistence = persistence or sqlite.create(':memory:')
     lock_factory = lock_factory or lock.default_memory_lock_factory()
     return _IsolatedEnvironment(persistence, lock_factory, ensure_tuple_copy(features), transient)
 
 
-class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, RunnableEnvironmentBase):
+class _IsolatedEnvironment(JobInstanceObservable, EnvironmentBase):
 
     def __init__(self, persistence, lock_factory, features, transient=True):
         JobInstanceObservable.__init__(self)
-        RunnableEnvironmentBase.__init__(self, features, transient=transient)
-        PersistingEnvironment.__init__(self, persistence)
+        EnvironmentBase.__init__(self, features, transient=transient)
+        self._persistence = persistence
         self._lock_factory = lock_factory
         self._persisting_observer = PersistingObserver(persistence)
 
     def open(self):
-        RunnableEnvironmentBase.open(self)  # Always first
-        PersistingEnvironment.open(self)
+        EnvironmentBase.open(self)  # Always first
+        self._persistence.open()
 
     def _on_added(self, job_instance):
         job_instance.add_observer_stage(self._persisting_observer)
         job_instance.add_observer_stage(self._stage_notification.observer_proxy,
-                                             RunnableEnvironmentBase.OBSERVERS_PRIORITY - 1)
+                                        EnvironmentBase.OBSERVERS_PRIORITY - 1)
         job_instance.add_observer_transition(self._transition_notification.observer_proxy,
-                                             RunnableEnvironmentBase.OBSERVERS_PRIORITY - 1)
+                                             EnvironmentBase.OBSERVERS_PRIORITY - 1)
         job_instance.add_observer_output(self._output_notification.observer_proxy,
-                                         RunnableEnvironmentBase.OBSERVERS_PRIORITY - 1)
+                                         EnvironmentBase.OBSERVERS_PRIORITY - 1)
 
     def _on_removed(self, job_instance):
         job_instance.remove_observer_output(self._output_notification.observer_proxy)
@@ -324,55 +326,131 @@ class _IsolatedEnvironment(JobInstanceObservable, PersistingEnvironment, Runnabl
     def get_instances(self, run_match=None) -> List[JobInstance]:
         return [i for i in self.instances if not run_match or run_match(i.snapshot())]
 
+    def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._persistence.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+
+    def read_history_stats(self, run_match=None):
+        return self._persistence.read_history_stats(run_match)
+
     def lock(self, lock_id):
         return self._lock_factory(lock_id)
 
     def close(self):
         run_isolated_collect_exceptions(
             "Errors during closing isolated environment",
-            lambda: RunnableEnvironmentBase.close(self), # <- Always execute first as the method is waiting until it can be closed
-            lambda: PersistingEnvironment.close(self)
+            lambda: EnvironmentBase.close(self),  # <- Always execute first as the method is waiting until it can be closed
+            self._persistence.close
         )
 
 
-def local(persistence=None, *, lock_factory=None, features=None, transient=True):
-    persistence = persistence or sqlite.create(':memory:')
-    api = RemoteCallServer()
-    transition_dispatcher = TransitionDispatcher()
-    output_dispatcher = OutputDispatcher()
+class LocalNodeLayout(LocalConnectorLayout, ABC):
+
+    @property
+    @abstractmethod
+    def socket_server_path(self):
+        pass
+
+    @property
+    @abstractmethod
+    def socket_listener_paths_provider(self):
+        pass
+
+
+class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
+
+    @classmethod
+    def create(cls, env_id, root_dir=None):
+        return cls(*create_layout_dirs(env_id, root_dir, cls.NODE_DIR_PREFIX))
+
+    def __init__(self, env_dir, node_dir):
+        super().__init__(env_dir, node_dir)
+
+    @property
+    def socket_server_path(self):
+        return self.component_path / self.server_socket_name
+
+    @property
+    def socket_listener_paths_provider(self):
+        # TODO pattern
+        return paths.files_in_subdir_provider(self.env_dir, self.listener_socket_name)
+
+
+def local(env_id=DEF_ENV_ID, persistence=None, node_layout=None, *, lock_factory=None, features=None, transient=True):
+    layout = node_layout or StandardLocalNodeLayout.create(env_id)
+    persistence = persistence or sqlite.create(':memory:')  # TODO Load correct database
+    local_connector = connector.local(env_id, persistence, layout)
+
+    api = RemoteCallServer(layout.socket_server_path)
+    transition_dispatcher = TransitionDispatcher(SocketClient(layout.socket_listener_paths_provider))
+    output_dispatcher = OutputDispatcher(SocketClient(layout.socket_listener_paths_provider))
     lock_factory = lock_factory or lock.default_file_lock_factory()
     features = ensure_tuple_copy(features)
-    return RunnableLocalEnvironment(persistence, api, transition_dispatcher, output_dispatcher, lock_factory,
-                                    features, transient)
+    return LocalEnvironmentNode(env_id, local_connector, persistence, api, transition_dispatcher, output_dispatcher,
+                                lock_factory, features, transient)
 
 
-class RunnableLocalEnvironment(LocalEnvironment, RunnableEnvironmentBase):
+class LocalEnvironmentNode(EnvironmentBase):
+    """
+    Environment node implementation that uses composition to delegate environment connector functionality.
+    """
 
-    def __init__(self, persistence, api, transition_dispatcher, output_dispatcher, lock_factory, features, transient):
-        RunnableEnvironmentBase.__init__(self, features, transient=transient)
-        LocalEnvironment.__init__(self, persistence)
-        self._api = api
+    def __init__(self, env_id, local_connector, persistence, rpc_server, transition_dispatcher, output_dispatcher,
+                 lock_factory, features, transient):
+        EnvironmentBase.__init__(self, features, transient=transient)
+        self._env_id = env_id
+        self._connector = local_connector
+        self._rpc_server = rpc_server
         self._transition_dispatcher = transition_dispatcher
         self._output_dispatcher = output_dispatcher
         self._lock_factory = lock_factory
         self._persisting_observer = PersistingObserver(persistence)
 
     def open(self):
-        RunnableEnvironmentBase.open(self)  # Execute first for opened only once check
-        LocalEnvironment.open(self)
+        EnvironmentBase.open(self)  # Execute first for opened only once check
+        self._connector.open()
+        self._rpc_server.start()
 
-        self._api.start()
+    def get_active_runs(self, run_match=None):
+        return self._connector.get_active_runs(run_match)
+
+    def get_instances(self, run_match=None):
+        return self._connector.get_instances(run_match)
+
+    def get_instance(self, instance_id):
+        for inst in self.instances:
+            if inst.instance_id == instance_id:
+                return inst
+
+        return self._connector.get_instance(instance_id)
+
+    def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._connector.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+
+    def read_history_stats(self, run_match=None):
+        return self._connector.read_history_stats(run_match)
+
+    def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        self._connector.add_observer_transition(observer, priority)
+
+    def remove_observer_transition(self, observer):
+        self._connector.remove_observer_transition(observer)
+
+    def add_observer_output(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        self._connector.add_observer_output(observer, priority)
+
+    def remove_observer_output(self, observer):
+        self._connector.remove_observer_output(observer)
 
     def _on_added(self, job_instance):
         job_instance.add_observer_stage(self._persisting_observer)
-        self._api.register_instance(job_instance)
+        self._rpc_server.register_instance(job_instance)
         job_instance.add_observer_transition(self._transition_dispatcher)
         job_instance.add_observer_output(self._output_dispatcher)
 
     def _on_removed(self, job_instance):
         job_instance.remove_observer_output(self._output_dispatcher)
         job_instance.remove_observer_transition(self._transition_dispatcher)
-        self._api.unregister_instance(job_instance)
+        self._rpc_server.unregister_instance(job_instance)
         job_instance.remove_observer_stage(self._persisting_observer)
 
     def lock(self, lock_id):
@@ -382,10 +460,9 @@ class RunnableLocalEnvironment(LocalEnvironment, RunnableEnvironmentBase):
     def close(self):
         run_isolated_collect_exceptions(
             "Errors during closing runnable local environment",
-            lambda: RunnableEnvironmentBase.close(self),
-            # Always execute first as the method is waiting until it can be closed
-            lambda: LocalEnvironment.close(self),
-            self._api.close,
+            lambda: EnvironmentBase.close(self),  # Always execute first as the method is waiting until it can be closed
+            self._rpc_server.close,
             self._output_dispatcher.close,
-            self._transition_dispatcher.close
+            self._transition_dispatcher.close,
+            self._connector.close,  # Keep last as it deletes the node directory
         )

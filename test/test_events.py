@@ -2,15 +2,18 @@ from runtools.runcore.job import JobInstanceMetadata, InstanceTransitionEvent, I
 from runtools.runcore.listening import InstanceTransitionReceiver, InstanceOutputReceiver
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import Stage
+from runtools.runcore.test import testutil
 from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.test.observer import GenericObserver
 from runtools.runcore.util import utc_now
+from runtools.runcore.util.socket import SocketClient
 from runtools.runjob.events import TransitionDispatcher, OutputDispatcher
 
 
 def test_transition_dispatching():
-    dispatcher = TransitionDispatcher()
-    receiver = InstanceTransitionReceiver()
+    test_path = testutil.random_test_socket()
+    dispatcher = TransitionDispatcher(SocketClient(lambda : [test_path]))
+    receiver = InstanceTransitionReceiver(test_path)
     observer = GenericObserver()
     receiver.add_observer_transition(observer)
     receiver.start()
@@ -36,8 +39,9 @@ def test_transition_dispatching():
 
 
 def test_output_dispatching():
-    dispatcher = OutputDispatcher()
-    receiver = InstanceOutputReceiver()
+    test_path = testutil.random_test_socket()
+    dispatcher = OutputDispatcher(SocketClient(lambda : [test_path]))
+    receiver = InstanceOutputReceiver(test_path)
     observer = GenericObserver()
     receiver.add_observer_output(observer)
     receiver.start()

@@ -11,14 +11,9 @@ import abc
 import json
 import logging
 
-from runtools.runcore import util, paths
-from runtools.runcore.job import JobInstanceMetadata, JobRun, InstanceTransitionObserver, InstanceOutputObserver, \
+from runtools.runcore.job import InstanceTransitionObserver, InstanceOutputObserver, \
     InstanceTransitionEvent, InstanceOutputEvent
-from runtools.runcore.output import OutputLine
-from runtools.runcore.util.socket import SocketClient, PayloadTooLarge
-
-TRANSITION_LISTENER_FILE_EXTENSION = '.tlistener'
-OUTPUT_LISTENER_FILE_EXTENSION = '.olistener'
+from runtools.runcore.util.socket import PayloadTooLarge
 
 log = logging.getLogger(__name__)
 
@@ -56,9 +51,8 @@ class TransitionDispatcher(EventDispatcher, InstanceTransitionObserver):
     the job instance as an `InstanceStateObserver`.
     """
 
-    def __init__(self):
-        super(TransitionDispatcher, self).__init__(
-            SocketClient(paths.socket_files_provider(TRANSITION_LISTENER_FILE_EXTENSION)))
+    def __init__(self, socket_client):
+        super(TransitionDispatcher, self).__init__(socket_client)
 
     def new_instance_transition(self, event: InstanceTransitionEvent):
         self._send_event("new_instance_transition", event.instance, event.serialize())
@@ -70,9 +64,8 @@ class OutputDispatcher(EventDispatcher, InstanceOutputObserver):
     the job instance as an `JobOutputObserver`.
     """
 
-    def __init__(self):
-        super(OutputDispatcher, self).__init__(
-            SocketClient(paths.socket_files_provider(OUTPUT_LISTENER_FILE_EXTENSION)))
+    def __init__(self, socket_client):
+        super(OutputDispatcher, self).__init__(socket_client)
 
     def new_instance_output(self, event: InstanceOutputEvent):
         self._send_event("new_instance_output", event.instance, event.serialize(10000))

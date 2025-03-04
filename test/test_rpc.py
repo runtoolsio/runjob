@@ -7,6 +7,7 @@ from runtools.runcore.client import RemoteCallClient, TargetNotFoundError, Remot
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminationStatus
+from runtools.runcore.test.testutil import random_test_socket
 from runtools.runjob import instance
 from runtools.runjob.server import RemoteCallServer
 from runtools.runjob.test.phase import TestPhase
@@ -25,7 +26,7 @@ def job_instances():
 @pytest.fixture(autouse=True)
 def server(job_instances):
     j1, j2 = job_instances
-    server = RemoteCallServer()
+    server = RemoteCallServer(random_test_socket())
 
     server.register_instance(j1)
     server.register_instance(j2)
@@ -37,20 +38,20 @@ def server(job_instances):
         server.close()
 
 
-def test_server_not_found():
+def test_server_not_found(server):
     with pytest.raises(TargetNotFoundError):
-        with RemoteCallClient() as c:
+        with RemoteCallClient(lambda: [server.address]) as c:
             c.call_method('no-server', 'no-method')
 
 
 def test_instance_not_found(server):
     with pytest.raises(TargetNotFoundError):
-        with RemoteCallClient() as c:
+        with RemoteCallClient(lambda: [server.address]) as c:
             c.stop_instance(server.address, 'java-fx')
 
 
 def test_active_runs(server):
-    with RemoteCallClient() as c:
+    with RemoteCallClient(lambda: [server.address]) as c:
         j1_run = c.get_active_runs(server.address, JobRunCriteria.job_match('j1'))[0]
         j2_run = c.get_active_runs(server.address, JobRunCriteria.job_match('j2'))[0]
         results: List[RemoteCallResult[List[JobRun]]] = c.collect_active_runs(JobRunCriteria.all())
@@ -67,7 +68,7 @@ def test_active_runs(server):
 def test_stop(job_instances, server):
     j1, j2 = job_instances
 
-    with RemoteCallClient() as c:
+    with RemoteCallClient(lambda: [server.address]) as c:
         c.stop_instance(server.address, j1.instance_id)
 
     assert j1.snapshot().lifecycle.termination.status == TerminationStatus.STOPPED
@@ -76,7 +77,7 @@ def test_stop(job_instances, server):
 
 def test_phase_op_release(job_instances, server):
     _, j2 = job_instances
-    with RemoteCallClient() as c:
+    with RemoteCallClient(lambda: [server.address]) as c:
         c.exec_phase_op(server.address, j2.instance_id, APPROVAL, 'release')
 
     assert j2.find_phase_control_by_id(APPROVAL).is_released
@@ -88,7 +89,7 @@ def test_tail(job_instances, server):
     j2.output.new_output(OutputLine('Escape...', True, 'EXEC2'))
     j2.output.new_output(OutputLine('...samsara!', True, 'EXEC2'))
 
-    with RemoteCallClient() as c:
+    with RemoteCallClient(lambda: [server.address]) as c:
         output_lines = c.get_output_tail(server.address, j1.instance_id)
         assert output_lines == [OutputLine('Meditate, do not delay, lest you later regret it.', False, 'EXEC1')]
 

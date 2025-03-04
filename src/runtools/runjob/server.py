@@ -20,10 +20,6 @@ log = logging.getLogger(__name__)
 RPC_FILE_EXTENSION = '.rpc'
 
 
-def _create_socket_name():
-    return util.unique_timestamp_hex() + RPC_FILE_EXTENSION
-
-
 @dataclass
 class MethodParameter:
     """Defines a parameter for a JSON-RPC method"""
@@ -271,8 +267,8 @@ class RemoteCallServer(SocketServer, JobInstanceManager):
         # Error response
         <-- {"jsonrpc": "2.0", "id": 3, "error": {"code": -32001, "message": "Instance not found: inst999"}}
     """
-    def __init__(self, methods=DEFAULT_METHODS):
-        super().__init__(lambda: paths.socket_path(_create_socket_name(), create=True), allow_ping=True)
+    def __init__(self, socket_path, methods=DEFAULT_METHODS):
+        super().__init__(socket_path, allow_ping=True)
         self._methods = {method.method_name: method for method in methods}
         self._job_instances = {}
 
