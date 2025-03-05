@@ -12,7 +12,7 @@ import json
 import logging
 
 from runtools.runcore.job import InstanceTransitionObserver, InstanceOutputObserver, \
-    InstanceTransitionEvent, InstanceOutputEvent
+    InstanceTransitionEvent, InstanceOutputEvent, InstanceStageObserver, InstanceStageEvent
 from runtools.runcore.util.socket import PayloadTooLarge
 
 log = logging.getLogger(__name__)
@@ -43,6 +43,19 @@ class EventDispatcher(abc.ABC):
 
     def close(self):
         self._client.close()
+
+
+class StageDispatcher(EventDispatcher, InstanceStageObserver):
+    """
+    This producer emits an event when a job instance changes stage.
+    This dispatcher should be registered to the job instance as an `InstanceStageObserver`.
+    """
+
+    def __init__(self, socket_client):
+        super(StageDispatcher, self).__init__(socket_client)
+
+    def new_instance_stage(self, event: InstanceStageEvent):
+        self._send_event("new_instance_stage", event.instance, event.serialize())
 
 
 class TransitionDispatcher(EventDispatcher, InstanceTransitionObserver):
