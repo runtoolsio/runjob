@@ -347,12 +347,12 @@ class LocalNodeLayout(LocalConnectorLayout, ABC):
 
     @property
     @abstractmethod
-    def socket_server_path(self):
+    def socket_server_rpc(self):
         pass
 
     @property
     @abstractmethod
-    def socket_listener_paths_provider(self):
+    def provider_sockets_listener_events(self):
         pass
 
 
@@ -366,13 +366,13 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         super().__init__(env_dir, node_dir)
 
     @property
-    def socket_server_path(self):
-        return self.component_path / self.server_socket_name
+    def socket_server_rpc(self):
+        return self.component_dir / self.socket_name_server_rpc
 
     @property
-    def socket_listener_paths_provider(self):
+    def provider_sockets_listener_events(self):
         # TODO pattern
-        return paths.files_in_subdir_provider(self.env_dir, self.listener_socket_name)
+        return paths.files_in_subdir_provider(self.env_dir, self.socket_name_listener_events)
 
 
 def local(env_id=DEF_ENV_ID, persistence=None, node_layout=None, *, lock_factory=None, features=None, transient=True):
@@ -380,16 +380,16 @@ def local(env_id=DEF_ENV_ID, persistence=None, node_layout=None, *, lock_factory
     persistence = persistence or sqlite.create(':memory:')  # TODO Load correct database
     local_connector = connector.local(env_id, persistence, layout)
 
-    api = RemoteCallServer(layout.socket_server_path)
-    transition_dispatcher = TransitionDispatcher(SocketClient(layout.socket_listener_paths_provider))
-    output_dispatcher = OutputDispatcher(SocketClient(layout.socket_listener_paths_provider))
+    api = RemoteCallServer(layout.socket_server_rpc)
+    transition_dispatcher = TransitionDispatcher(SocketClient(layout.provider_sockets_listener_events))
+    output_dispatcher = OutputDispatcher(SocketClient(layout.provider_sockets_listener_events))
     lock_factory = lock_factory or lock.default_file_lock_factory()
     features = ensure_tuple_copy(features)
-    return LocalEnvironmentNode(env_id, local_connector, persistence, api, transition_dispatcher, output_dispatcher,
-                                lock_factory, features, transient)
+    return LocalNode(env_id, local_connector, persistence, api, transition_dispatcher, output_dispatcher,
+                     lock_factory, features, transient)
 
 
-class LocalEnvironmentNode(EnvironmentBase):
+class LocalNode(EnvironmentBase):
     """
     Environment node implementation that uses composition to delegate environment connector functionality.
     """
