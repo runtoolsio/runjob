@@ -338,7 +338,8 @@ class _IsolatedEnvironment(JobInstanceObservable, EnvironmentBase):
     def close(self):
         run_isolated_collect_exceptions(
             "Errors during closing isolated environment",
-            lambda: EnvironmentBase.close(self),  # <- Always execute first as the method is waiting until it can be closed
+            lambda: EnvironmentBase.close(self),
+            # <- Always execute first as the method is waiting until it can be closed
             self._persistence.close
         )
 
@@ -352,7 +353,7 @@ class LocalNodeLayout(LocalConnectorLayout, ABC):
 
     @property
     @abstractmethod
-    def provider_sockets_listener_events(self):
+    def provider_sockets_listener_phase(self):
         pass
 
 
@@ -370,9 +371,36 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         return self.component_dir / self.socket_name_server_rpc
 
     @property
-    def provider_sockets_listener_events(self):
-        # TODO pattern
-        return paths.files_in_subdir_provider(self.env_dir, self.socket_name_listener_events)
+    def socket_name_listener_events(self):
+        return 'listener-events.sock'
+
+    @property
+    def socket_name_listener_stage(self):
+        return 'listener-stage.sock'
+
+    @property
+    def socket_name_listener_phase(self):
+        return 'listener-phase.sock'
+
+    @property
+    def socket_name_listener_output(self):
+        return 'listener-output.sock'
+
+    def _provider_sockets_listener(self, socket_name_listener):
+        file_names = [self.socket_name_listener_events, socket_name_listener]
+        return paths.files_in_subdir_provider(self.env_dir, file_names)
+
+    @property
+    def provider_sockets_listener_stage(self):
+        return self._provider_sockets_listener(self.socket_name_listener_stage)
+
+    @property
+    def provider_sockets_listener_phase(self):
+        return self._provider_sockets_listener(self.socket_name_listener_phase)
+
+    @property
+    def provider_sockets_listener_output(self):
+        return self._provider_sockets_listener(self.socket_name_listener_output)
 
 
 def local(env_id=DEF_ENV_ID, persistence=None, node_layout=None, *, lock_factory=None, features=None, transient=True):
@@ -381,8 +409,9 @@ def local(env_id=DEF_ENV_ID, persistence=None, node_layout=None, *, lock_factory
     local_connector = connector.local(env_id, persistence, layout)
 
     api = RemoteCallServer(layout.socket_server_rpc)
-    transition_dispatcher = TransitionDispatcher(SocketClient(layout.provider_sockets_listener_events))
-    output_dispatcher = OutputDispatcher(SocketClient(layout.provider_sockets_listener_events))
+    # TODO stage dispatcher
+    transition_dispatcher = TransitionDispatcher(SocketClient(layout.provider_sockets_listener_phase))
+    output_dispatcher = OutputDispatcher(SocketClient(layout.provider_sockets_listener_output))
     lock_factory = lock_factory or lock.default_file_lock_factory()
     features = ensure_tuple_copy(features)
     return LocalNode(env_id, local_connector, persistence, api, transition_dispatcher, output_dispatcher,
