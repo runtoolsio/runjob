@@ -17,7 +17,7 @@ from runtools.runcore.util.err import run_isolated_collect_exceptions
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
 from runtools.runcore.util.socket import SocketClient
 from runtools.runjob import instance, JobInstanceHook
-from runtools.runjob.events import TransitionDispatcher, OutputDispatcher
+from runtools.runjob.events import TransitionDispatcher, OutputDispatcher, EventDispatcher
 from runtools.runjob.server import RemoteCallServer
 
 log = logging.getLogger(__name__)
@@ -410,8 +410,8 @@ def local(env_id=DEF_ENV_ID, persistence=None, node_layout=None, *, lock_factory
 
     api = RemoteCallServer(layout.socket_server_rpc)
     # TODO stage dispatcher
-    transition_dispatcher = TransitionDispatcher(SocketClient(layout.provider_sockets_listener_phase))
-    output_dispatcher = OutputDispatcher(SocketClient(layout.provider_sockets_listener_output))
+    transition_dispatcher = TransitionDispatcher(EventDispatcher(SocketClient(layout.provider_sockets_listener_phase)))
+    output_dispatcher = OutputDispatcher(EventDispatcher(SocketClient(layout.provider_sockets_listener_output)))
     lock_factory = lock_factory or lock.default_file_lock_factory()
     features = ensure_tuple_copy(features)
     return LocalNode(env_id, local_connector, persistence, api, transition_dispatcher, output_dispatcher,

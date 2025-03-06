@@ -7,28 +7,45 @@ to send the events. In this design, the communication is unidirectional, with se
 and clients as producers.
 """
 
-import abc
 import json
 import logging
 
-from runtools.runcore.job import InstanceTransitionObserver, InstanceOutputObserver, \
-    InstanceTransitionEvent, InstanceOutputEvent, InstanceStageObserver, InstanceStageEvent
+from runtools.runcore.job import (
+    InstanceTransitionObserver,
+    InstanceOutputObserver,
+    InstanceTransitionEvent,
+    InstanceOutputEvent,
+    InstanceStageObserver,
+    InstanceStageEvent
+)
 from runtools.runcore.util.socket import PayloadTooLarge
 
 log = logging.getLogger(__name__)
 
 
-class EventDispatcher(abc.ABC):
+class EventDispatcher:
     """
-    This serves as a parent class for event producers. The subclasses (children) are expected to provide a specific
-    socket client and utilize the `_send_event` method to dispatch events to the respective consumers.
+    Handles the sending of events over socket connections.
     """
 
-    @abc.abstractmethod
     def __init__(self, client):
+        """
+        Initialize with a socket client for communication.
+
+        Args:
+            client: Socket client used to communicate with listeners
+        """
         self._client = client
 
-    def _send_event(self, event_type, instance_meta, event_serialized):
+    def send_event(self, event_type, instance_meta, event_serialized):
+        """
+        Send an event to all registered listeners.
+
+        Args:
+            event_type: Type identifier for the event
+            instance_meta: Metadata about the instance generating the event
+            event_serialized: Serialized event data
+        """
         event_body = {
             "event_metadata": {
                 "event_type": event_type
@@ -42,43 +59,92 @@ class EventDispatcher(abc.ABC):
             log.warning("event=[event_dispatch_failed] reason=[payload_too_large] note=[Please report this issue!]")
 
     def close(self):
+        """Release resources used by the dispatcher."""
         self._client.close()
 
 
-class StageDispatcher(EventDispatcher, InstanceStageObserver):
+class StageDispatcher(InstanceStageObserver):
     """
-    This producer emits an event when a job instance changes stage.
+    Dispatches job instance stage change events.
     This dispatcher should be registered to the job instance as an `InstanceStageObserver`.
     """
 
-    def __init__(self, socket_client):
-        super(StageDispatcher, self).__init__(socket_client)
+    def __init__(self, event_dispatcher):
+        """
+        Initialize with an event dispatcher.
+
+        Args:
+            event_dispatcher: EventDispatcher instance for sending events
+        """
+        self._dispatcher = event_dispatcher
 
     def new_instance_stage(self, event: InstanceStageEvent):
-        self._send_event("new_instance_stage", event.instance, event.serialize())
+        """
+        Handle a stage change event by dispatching it.
+
+        Args:
+            event: The stage change event
+        """
+        self._dispatcher.send_event("new_instance_stage", event.instance, event.serialize())
+
+    def close(self):
+        """Release resources used by the dispatcher."""
+        self._dispatcher.close()
 
 
-class TransitionDispatcher(EventDispatcher, InstanceTransitionObserver):
+class TransitionDispatcher(InstanceTransitionObserver):
     """
-    This producer emits an event when the state of a job instance changes. This dispatcher should be registered to
-    the job instance as an `InstanceStateObserver`.
+    Dispatches job instance transition events.
+    This dispatcher should be registered to the job instance as an `InstanceTransitionObserver`.
     """
 
-    def __init__(self, socket_client):
-        super(TransitionDispatcher, self).__init__(socket_client)
+    def __init__(self, event_dispatcher):
+        """
+        Initialize with an event dispatcher.
+
+        Args:
+            event_dispatcher: EventDispatcher instance for sending events
+        """
+        self._dispatcher = event_dispatcher
 
     def new_instance_transition(self, event: InstanceTransitionEvent):
-        self._send_event("new_instance_transition", event.instance, event.serialize())
+        """
+        Handle a transition event by dispatching it.
+
+        Args:
+            event: The transition event
+        """
+        self._dispatcher.send_event("new_instance_transition", event.instance, event.serialize())
+
+    def close(self):
+        """Release resources used by the dispatcher."""
+        self._dispatcher.close()
 
 
-class OutputDispatcher(EventDispatcher, InstanceOutputObserver):
+class OutputDispatcher(InstanceOutputObserver):
     """
-    This producer emits an event when a job instance generates a new output. This dispatcher should be registered to
-    the job instance as an `JobOutputObserver`.
+    Dispatches job instance output events.
+    This dispatcher should be registered to the job instance as an `InstanceOutputObserver`.
     """
 
-    def __init__(self, socket_client):
-        super(OutputDispatcher, self).__init__(socket_client)
+    def __init__(self, event_dispatcher):
+        """
+        Initialize with an event dispatcher.
+
+        Args:
+            event_dispatcher: EventDispatcher instance for sending events
+        """
+        self._dispatcher = event_dispatcher
 
     def new_instance_output(self, event: InstanceOutputEvent):
-        self._send_event("new_instance_output", event.instance, event.serialize(10000))
+        """
+        Handle an output event by dispatching it.
+
+        Args:
+            event: The output event
+        """
+        self._dispatcher.send_event("new_instance_output", event.instance, event.serialize(10000))
+
+    def close(self):
+        """Release resources used by the dispatcher."""
+        self._dispatcher.close()

@@ -44,10 +44,9 @@ def client(server):
         yield client
 
 
-def test_server_not_found(server):
+def test_server_not_found(client, server):
     with pytest.raises(TargetNotFoundError):
-        with RemoteCallClient(lambda: [server.address], random_test_socket()) as c:
-            c.call_method('no-server', 'no-method')
+        client.call_method('no-server', 'no-method')
 
 
 def test_instance_not_found(client, server):
