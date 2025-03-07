@@ -7,12 +7,12 @@ from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.test.observer import GenericObserver
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.socket import SocketClient
-from runtools.runjob.events import TransitionDispatcher, OutputDispatcher, EventDispatcher
+from runtools.runjob.events import EventDispatcher
 
 
 def test_transition_dispatching():
     test_path = testutil.random_test_socket()
-    dispatcher = TransitionDispatcher(EventDispatcher(SocketClient(lambda: [test_path])))
+    dispatcher = EventDispatcher(SocketClient(lambda: [test_path]))
     receiver = InstanceTransitionReceiver(test_path)
     observer = GenericObserver()
     receiver.add_observer_transition(observer)
@@ -29,7 +29,7 @@ def test_transition_dispatching():
     )
 
     try:
-        dispatcher.new_instance_transition(event)
+        dispatcher(event)
     finally:
         dispatcher.close()
         receiver.close()
@@ -40,7 +40,7 @@ def test_transition_dispatching():
 
 def test_output_dispatching():
     test_path = testutil.random_test_socket()
-    dispatcher = OutputDispatcher(EventDispatcher(SocketClient(lambda: [test_path])))
+    dispatcher = EventDispatcher(SocketClient(lambda: [test_path]))
     receiver = InstanceOutputReceiver(test_path)
     observer = GenericObserver()
     receiver.add_observer_output(observer)
@@ -53,7 +53,7 @@ def test_output_dispatching():
     )
 
     try:
-        dispatcher.new_instance_output(event)
+        dispatcher(event)
     finally:
         dispatcher.close()
         receiver.close()

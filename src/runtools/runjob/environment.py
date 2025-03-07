@@ -9,7 +9,8 @@ from runtools.runcore.common import InvalidStateError
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     create_layout_dirs, DEF_ENV_ID
 from runtools.runcore.db import sqlite, PersistingObserver, SortCriteria
-from runtools.runcore.job import JobInstance, JobInstanceObservable, InstanceStageEvent
+from runtools.runcore.job import JobInstance, JobInstanceObservable, InstanceStageEvent, InstanceTransitionEvent, \
+    InstanceOutputEvent
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import Stage
 from runtools.runcore.util import ensure_tuple_copy, lock
@@ -17,7 +18,7 @@ from runtools.runcore.util.err import run_isolated_collect_exceptions
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
 from runtools.runcore.util.socket import SocketClient
 from runtools.runjob import instance, JobInstanceHook
-from runtools.runjob.events import TransitionDispatcher, OutputDispatcher, EventDispatcher
+from runtools.runjob.events import EventDispatcher
 from runtools.runjob.server import RemoteCallServer
 
 log = logging.getLogger(__name__)
@@ -409,13 +410,14 @@ def local(env_id=DEF_ENV_ID, persistence=None, node_layout=None, *, lock_factory
     local_connector = connector.local(env_id, persistence, layout)
 
     api = RemoteCallServer(layout.socket_server_rpc)
-    # TODO stage dispatcher
-    transition_dispatcher = TransitionDispatcher(EventDispatcher(SocketClient(layout.provider_sockets_listener_phase)))
-    output_dispatcher = OutputDispatcher(EventDispatcher(SocketClient(layout.provider_sockets_listener_output)))
+    event_dispatcher = EventDispatcher(SocketClient(), {
+        InstanceStageEvent.EVENT_TYPE: layout.provider_sockets_listener_stage,
+        InstanceTransitionEvent.EVENT_TYPE: layout.provider_sockets_listener_phase,
+        InstanceOutputEvent.EVENT_TYPE: layout.provider_sockets_listener_output,
+    })
     lock_factory = lock_factory or lock.default_file_lock_factory()
     features = ensure_tuple_copy(features)
-    return LocalNode(env_id, local_connector, persistence, api, transition_dispatcher, output_dispatcher,
-                     lock_factory, features, transient)
+    return LocalNode(env_id, local_connector, persistence, api, event_dispatcher, lock_factory, features, transient)
 
 
 class LocalNode(EnvironmentBase):
@@ -423,14 +425,13 @@ class LocalNode(EnvironmentBase):
     Environment node implementation that uses composition to delegate environment connector functionality.
     """
 
-    def __init__(self, env_id, local_connector, persistence, rpc_server, transition_dispatcher, output_dispatcher,
-                 lock_factory, features, transient):
+    def __init__(self, env_id, local_connector, persistence, rpc_server, event_dispatcher, lock_factory, features,
+                 transient):
         EnvironmentBase.__init__(self, features, transient=transient)
         self._env_id = env_id
         self._connector = local_connector
         self._rpc_server = rpc_server
-        self._transition_dispatcher = transition_dispatcher
-        self._output_dispatcher = output_dispatcher
+        self._event_dispatcher = event_dispatcher
         self._lock_factory = lock_factory
         self._persisting_observer = PersistingObserver(persistence)
 
@@ -473,12 +474,10 @@ class LocalNode(EnvironmentBase):
     def _on_added(self, job_instance):
         job_instance.add_observer_stage(self._persisting_observer)
         self._rpc_server.register_instance(job_instance)
-        job_instance.add_observer_transition(self._transition_dispatcher)
-        job_instance.add_observer_output(self._output_dispatcher)
+        job_instance.add_observer_all_events(self._event_dispatcher)
 
     def _on_removed(self, job_instance):
-        job_instance.remove_observer_output(self._output_dispatcher)
-        job_instance.remove_observer_transition(self._transition_dispatcher)
+        job_instance.remove_observer_all_events(self._event_dispatcher)
         self._rpc_server.unregister_instance(job_instance)
         job_instance.remove_observer_stage(self._persisting_observer)
 
@@ -491,7 +490,6 @@ class LocalNode(EnvironmentBase):
             "Errors during closing runnable local environment",
             lambda: EnvironmentBase.close(self),  # Always execute first as the method is waiting until it can be closed
             self._rpc_server.close,
-            self._output_dispatcher.close,
-            self._transition_dispatcher.close,
+            self._event_dispatcher.close,
             self._connector.close,  # Keep last as it deletes the node directory
         )

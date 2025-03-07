@@ -9,18 +9,19 @@ and clients as producers.
 
 import json
 import logging
+from abc import ABC, abstractmethod
 
-from runtools.runcore.job import (
-    InstanceTransitionObserver,
-    InstanceOutputObserver,
-    InstanceTransitionEvent,
-    InstanceOutputEvent,
-    InstanceStageObserver,
-    InstanceStageEvent
-)
 from runtools.runcore.util.socket import PayloadTooLarge
 
 log = logging.getLogger(__name__)
+
+
+class Event(ABC):
+
+    @property
+    @abstractmethod
+    def event_type(self) -> str:
+        pass
 
 
 class EventDispatcher:
@@ -28,7 +29,7 @@ class EventDispatcher:
     Handles the sending of events over socket connections.
     """
 
-    def __init__(self, client):
+    def __init__(self, client, event_type_to_sockets_provider=None):
         """
         Initialize with a socket client for communication.
 
@@ -36,115 +37,29 @@ class EventDispatcher:
             client: Socket client used to communicate with listeners
         """
         self._client = client
+        self._event_type_to_sockets_provider = event_type_to_sockets_provider or {}
 
-    def send_event(self, event_type, instance_meta, event_serialized):
+    def __call__(self, event):
+        self.send_event(event.event_type, event)
+
+    def send_event(self, event_type, event):
         """
         Send an event to all registered listeners.
 
         Args:
-            event_type: Type identifier for the event
-            instance_meta: Metadata about the instance generating the event
-            event_serialized: Serialized event data
+            event_type(str): Type identifier for the event
+            event(Serializable): Event to send
         """
-        event_body = {
-            "event_metadata": {
-                "event_type": event_type
-            },
-            "instance_metadata": instance_meta.serialize(),
-            "event": event_serialized
-        }
+        socket_listeners_provider = self._event_type_to_sockets_provider.get(event_type)
+        if socket_listeners_provider:
+            addresses = socket_listeners_provider()
+        else:
+            addresses = None
         try:
-            self._client.communicate(json.dumps(event_body))
+            self._client.communicate(json.dumps(event.serialize()), addresses)
         except PayloadTooLarge:
             log.warning("event=[event_dispatch_failed] reason=[payload_too_large] note=[Please report this issue!]")
 
     def close(self):
         """Release resources used by the dispatcher."""
         self._client.close()
-
-
-class StageDispatcher(InstanceStageObserver):
-    """
-    Dispatches job instance stage change events.
-    This dispatcher should be registered to the job instance as an `InstanceStageObserver`.
-    """
-
-    def __init__(self, event_dispatcher):
-        """
-        Initialize with an event dispatcher.
-
-        Args:
-            event_dispatcher: EventDispatcher instance for sending events
-        """
-        self._dispatcher = event_dispatcher
-
-    def new_instance_stage(self, event: InstanceStageEvent):
-        """
-        Handle a stage change event by dispatching it.
-
-        Args:
-            event: The stage change event
-        """
-        self._dispatcher.send_event("new_instance_stage", event.instance, event.serialize())
-
-    def close(self):
-        """Release resources used by the dispatcher."""
-        self._dispatcher.close()
-
-
-class TransitionDispatcher(InstanceTransitionObserver):
-    """
-    Dispatches job instance transition events.
-    This dispatcher should be registered to the job instance as an `InstanceTransitionObserver`.
-    """
-
-    def __init__(self, event_dispatcher):
-        """
-        Initialize with an event dispatcher.
-
-        Args:
-            event_dispatcher: EventDispatcher instance for sending events
-        """
-        self._dispatcher = event_dispatcher
-
-    def new_instance_transition(self, event: InstanceTransitionEvent):
-        """
-        Handle a transition event by dispatching it.
-
-        Args:
-            event: The transition event
-        """
-        self._dispatcher.send_event("new_instance_transition", event.instance, event.serialize())
-
-    def close(self):
-        """Release resources used by the dispatcher."""
-        self._dispatcher.close()
-
-
-class OutputDispatcher(InstanceOutputObserver):
-    """
-    Dispatches job instance output events.
-    This dispatcher should be registered to the job instance as an `InstanceOutputObserver`.
-    """
-
-    def __init__(self, event_dispatcher):
-        """
-        Initialize with an event dispatcher.
-
-        Args:
-            event_dispatcher: EventDispatcher instance for sending events
-        """
-        self._dispatcher = event_dispatcher
-
-    def new_instance_output(self, event: InstanceOutputEvent):
-        """
-        Handle an output event by dispatching it.
-
-        Args:
-            event: The output event
-        """
-        self._dispatcher.send_event("new_instance_output", event.instance, event.serialize(10000))
-
-    def close(self):
-        """Release resources used by the dispatcher."""
-        self._dispatcher.close()
