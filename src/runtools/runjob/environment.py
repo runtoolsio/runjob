@@ -9,7 +9,7 @@ from runtools.runcore.common import InvalidStateError
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     create_layout_dirs, DEF_ENV_ID
 from runtools.runcore.db import sqlite, PersistingObserver, SortCriteria
-from runtools.runcore.job import JobInstance, JobInstanceObservable, InstanceStageEvent, InstanceTransitionEvent, \
+from runtools.runcore.job import JobInstance, JobInstanceNotifications, InstanceStageEvent, InstanceTransitionEvent, \
     InstanceOutputEvent
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import Stage
@@ -293,10 +293,10 @@ def isolated(persistence=None, *, lock_factory=None, features=None, transient=Tr
     return _IsolatedEnvironment(persistence, lock_factory, ensure_tuple_copy(features), transient)
 
 
-class _IsolatedEnvironment(JobInstanceObservable, EnvironmentBase):
+class _IsolatedEnvironment(JobInstanceNotifications, EnvironmentBase):
 
     def __init__(self, persistence, lock_factory, features, transient=True):
-        JobInstanceObservable.__init__(self)
+        JobInstanceNotifications.__init__(self)
         EnvironmentBase.__init__(self, features, transient=transient)
         self._persistence = persistence
         self._lock_factory = lock_factory
@@ -458,6 +458,18 @@ class LocalNode(EnvironmentBase):
 
     def read_history_stats(self, run_match=None):
         return self._connector.read_history_stats(run_match)
+
+    def add_observer_all_events(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        self._connector.add_observer_all_events(observer, priority)
+
+    def remove_observer_all_events(self, observer):
+        self._connector.remove_observer_all_events(observer)
+
+    def add_observer_stage(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        self._connector.add_observer_stage(observer, priority)
+
+    def remove_observer_stage(self, observer):
+        self._connector.remove_observer_stage(observer)
 
     def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         self._connector.add_observer_transition(observer, priority)

@@ -1,5 +1,5 @@
 from runtools.runcore.job import JobInstanceMetadata, InstanceTransitionEvent, InstanceOutputEvent
-from runtools.runcore.listening import InstanceTransitionReceiver, InstanceOutputReceiver
+from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import Stage
 from runtools.runcore.test import testutil
@@ -13,9 +13,10 @@ from runtools.runjob.events import EventDispatcher
 def test_transition_dispatching():
     test_path = testutil.random_test_socket()
     dispatcher = EventDispatcher(SocketClient(lambda: [test_path]))
-    receiver = InstanceTransitionReceiver(test_path)
     observer = GenericObserver()
-    receiver.add_observer_transition(observer)
+    instance_event_receiver = InstanceEventReceiver()
+    instance_event_receiver.add_observer_transition(observer)
+    receiver = EventReceiver(test_path).register_handler(instance_event_receiver, InstanceTransitionEvent.EVENT_TYPE)
     receiver.start()
 
     job_run = fake_job_run('j1', 'r1')
@@ -41,9 +42,10 @@ def test_transition_dispatching():
 def test_output_dispatching():
     test_path = testutil.random_test_socket()
     dispatcher = EventDispatcher(SocketClient(lambda: [test_path]))
-    receiver = InstanceOutputReceiver(test_path)
     observer = GenericObserver()
-    receiver.add_observer_output(observer)
+    instance_event_receiver = InstanceEventReceiver()
+    instance_event_receiver.add_observer_output(observer)
+    receiver = EventReceiver(test_path).register_handler(instance_event_receiver, InstanceOutputEvent.EVENT_TYPE)
     receiver.start()
 
     event = InstanceOutputEvent(
