@@ -1,6 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from enum import Enum, auto
 from threading import Lock, Condition
 from typing import Dict, Optional, List
 
@@ -10,9 +10,8 @@ from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayou
     create_layout_dirs, DEF_ENV_ID
 from runtools.runcore.db import sqlite, PersistingObserver, SortCriteria
 from runtools.runcore.job import JobInstance, JobInstanceNotifications, InstanceStageEvent, InstanceTransitionEvent, \
-    InstanceOutputEvent
+    InstanceOutputEvent, JobInstanceDelegate
 from runtools.runcore.plugins import Plugin
-from runtools.runcore.run import Stage
 from runtools.runcore.util import ensure_tuple_copy, lock
 from runtools.runcore.util.err import run_isolated_collect_exceptions
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
@@ -59,11 +58,33 @@ class Feature(ABC):
         pass
 
 
-@dataclass
-class _ManagedInstance:
-    instance: JobInstance
-    detaching: bool = False
-    detached: bool = False
+class _InstanceState(Enum):
+    NONE = auto()
+    STARTED = auto()
+    DETACHING = auto()
+    DETACHED = auto()
+
+
+class _JobInstanceManaged(JobInstanceDelegate):
+
+    def __init__(self, env, wrapped: JobInstance):
+        super().__init__(wrapped)
+        self.env = env
+        self.state: _InstanceState = _InstanceState.NONE
+
+    # noinspection PyProtectedMember
+    def run(self):
+        with self.env._lock:
+            if self.env._closing:
+                raise EnvironmentClosed
+            self.state = _InstanceState.STARTED
+
+        ret_val = super().run()
+        self.env._detach_instance(self.instance_id, self.env._transient)
+        return ret_val
+
+    def is_closeable(self):
+        return self.state in (_InstanceState.NONE, _InstanceState.DETACHED)
 
 
 class EnvironmentBase(Environment, ABC):
@@ -80,8 +101,6 @@ class EnvironmentBase(Environment, ABC):
      - Close/exit method can be called multiple times (returns immediately if closing by another thread or already closed)
     Condition:
      - Close/exit operations wait for all instances to be detached
-
-     TODO: Do not wait in close() method for instances that haven't started
     """
     OBSERVERS_PRIORITY = 1000
 
@@ -91,7 +110,7 @@ class EnvironmentBase(Environment, ABC):
         self._lock = Lock()
         self._detached_condition = Condition(self._lock)
         # Fields guarded by lock below:
-        self._managed_instances: Dict[str, _ManagedInstance] = {}
+        self._managed_instances: Dict[str, _JobInstanceManaged] = {}
         self._opened = False
         self._closing = False
 
@@ -157,12 +176,7 @@ class EnvironmentBase(Environment, ABC):
             A list of all job instances currently managed by this container.
         """
         with self._lock:
-            return list(managed.instance for managed in self._managed_instances.values())
-
-    def _new_instance_stage(self, event: InstanceStageEvent):
-        # TODO Consider using post_run_hook for instances created by this container
-        if event.new_stage == Stage.ENDED:
-            self._detach_instance(event.instance.instance_id, self._transient)
+            return list(self._managed_instances.values())
 
     def _add_instance(self, job_instance):
         """
@@ -186,10 +200,8 @@ class EnvironmentBase(Environment, ABC):
             if job_instance.instance_id in self._managed_instances:
                 raise ValueError("Instance with ID already exists in environment")
 
-            managed_instance = _ManagedInstance(job_instance)
-            self._managed_instances[job_instance.instance_id] = managed_instance
-
-        job_instance.add_observer_stage(self._new_instance_stage, EnvironmentBase.OBSERVERS_PRIORITY)
+            job_instance = _JobInstanceManaged(self, job_instance)
+            self._managed_instances[job_instance.instance_id] = job_instance
 
         # TODO Exception must be caught here to prevent inconsistent state and possibility in get stuck in close method:
         self._on_added(job_instance)
@@ -207,25 +219,10 @@ class EnvironmentBase(Environment, ABC):
         #      will work regardless of the priority as the removal of the observers doesn't affect
         #      iteration/notification (`Notification` class)
 
-        if job_instance.snapshot().lifecycle.is_ended:
-            self._detach_instance(job_instance.metadata.instance_id, self._transient)
-
         return job_instance
 
     def _on_added(self, job_instance):
         pass
-
-    def _remove_instance(self, job_instance_id) -> Optional[JobInstance]:
-        """
-        Remove a job instance from the context using its ID.
-
-        Args:
-            job_instance_id (JobRunId): The ID of the job instance to remove.
-
-        Returns:
-            Optional[JobInstance]: The removed job instance if found, otherwise None.
-        """
-        return self._detach_instance(job_instance_id, True)
 
     def _detach_instance(self, job_instance_id, remove):
         """
@@ -234,18 +231,16 @@ class EnvironmentBase(Environment, ABC):
         detach = False
         removed = False
         with self._lock:
-            managed_instance = self._managed_instances.get(job_instance_id)
-            if not managed_instance:
+            job_instance = self._managed_instances.get(job_instance_id)
+            if not job_instance:
                 return None
 
-            if not managed_instance.detaching:
-                managed_instance.detaching = detach = True
-
+            if job_instance.state != _InstanceState.DETACHING:
+                job_instance.state = _InstanceState.DETACHING
+                detach = True
             if remove:
                 del self._managed_instances[job_instance_id]
                 removed = True
-
-        job_instance = managed_instance.instance
 
         if removed:
             self._on_removed(job_instance)
@@ -253,9 +248,8 @@ class EnvironmentBase(Environment, ABC):
                 feature.on_instance_removed(job_instance)
 
         if detach:
-            job_instance.remove_observer_transition(self._new_instance_stage)
             with self._detached_condition:
-                managed_instance.detached = True
+                job_instance.stat = _InstanceState.DETACHED
                 self._detached_condition.notify()
 
         return job_instance
@@ -270,13 +264,14 @@ class EnvironmentBase(Environment, ABC):
                 return
 
             self._closing = True
-            while not all((i.detached for i in self._managed_instances.values())):
+            while not all((i.is_closeable() for i in self._managed_instances.values())):
                 try:
-                    self._detached_condition.wait()  # TODO Could block infinitely if an error prevented to run an instance
+                    self._detached_condition.wait()
                 except KeyboardInterrupt:
                     interrupt_received = True
                     break
 
+        log.debug(f"[closing_environment] environment=[{self}]")
         run_isolated_collect_exceptions(
             "Errors on environment features closing",
             *(feature.on_close for feature in self._features),
@@ -505,3 +500,7 @@ class LocalNode(EnvironmentBase):
             self._event_dispatcher.close,
             self._connector.close,  # Keep last as it deletes the node directory
         )
+
+
+class EnvironmentClosed(InvalidStateError):
+    pass

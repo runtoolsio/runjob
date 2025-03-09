@@ -441,7 +441,8 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
 
     def _new_instance_transition(self, event: InstanceTransitionEvent):
         with self._queue_change_condition:
-            if self._queue_changed or event.new_stage != Stage.ENDED or not self._phase_filter(
+            if self._queue_changed or event.new_stage != Stage.ENDED or event.is_root_phase or not self._phase_filter(
+                    # TODO Root phase
                     event.job_run.find_phase_by_id(event.phase_id)):
                 return
 
