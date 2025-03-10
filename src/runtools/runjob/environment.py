@@ -79,11 +79,12 @@ class _JobInstanceManaged(JobInstanceDelegate):
                 raise EnvironmentClosed
             self.state = _InstanceState.STARTED
 
-        ret_val = super().run()
-        self.env._detach_instance(self.instance_id, self.env._transient)
-        return ret_val
+        try:
+            return super().run()
+        finally:
+            self.env._detach_instance(self.instance_id, self.env._transient)
 
-    def is_closeable(self):
+    def allows_env_closing(self):
         return self.state in (_InstanceState.NONE, _InstanceState.DETACHED)
 
 
@@ -264,7 +265,7 @@ class EnvironmentBase(Environment, ABC):
                 return
 
             self._closing = True
-            while not all((i.is_closeable() for i in self._managed_instances.values())):
+            while not all((i.allows_env_closing() for i in self._managed_instances.values())):
                 try:
                     self._detached_condition.wait()
                 except KeyboardInterrupt:
