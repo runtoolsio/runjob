@@ -1,5 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
+from concurrent.futures.thread import ThreadPoolExecutor
 from enum import Enum, auto
 from threading import Lock, Condition
 from typing import Dict, Optional, List
@@ -65,27 +66,38 @@ class _InstanceState(Enum):
     DETACHED = auto()
 
 
-class _JobInstanceManaged(JobInstanceDelegate):
+# noinspection PyProtectedMember
+class JobInstanceManaged(JobInstanceDelegate):
 
-    def __init__(self, env, wrapped: JobInstance):
+    def __init__(self, env: 'EnvironmentBase', wrapped: JobInstance):
         super().__init__(wrapped)
-        self.env = env
-        self.state: _InstanceState = _InstanceState.NONE
+        self._env: 'EnvironmentBase' = env
+        self._state: _InstanceState = _InstanceState.NONE
 
-    # noinspection PyProtectedMember
-    def run(self):
-        with self.env._lock:
-            if self.env._closing:
+    def run(self, in_background=False):
+        with self._env._lock:
+            if self._state != _InstanceState.NONE:
+                raise AlreadyStarted
+            if self._env._closing:
                 raise EnvironmentClosed
-            self.state = _InstanceState.STARTED
+            self._state = _InstanceState.STARTED
 
+        if in_background:
+            return self._env._run_in_executor(self._run_and_detach)
+        else:
+            return self._run_and_detach()
+
+    def run_in_background(self):
+        return self.run(True)
+
+    def _run_and_detach(self):
         try:
             return super().run()
         finally:
-            self.env._detach_instance(self.instance_id, self.env._transient)
+            self._env._detach_instance(self.instance_id, self._env._transient)
 
-    def allows_env_closing(self):
-        return self.state in (_InstanceState.NONE, _InstanceState.DETACHED)
+    def _allows_env_closing(self):
+        return self._state in (_InstanceState.NONE, _InstanceState.DETACHED)
 
 
 class EnvironmentBase(Environment, ABC):
@@ -111,9 +123,17 @@ class EnvironmentBase(Environment, ABC):
         self._lock = Lock()
         self._detached_condition = Condition(self._lock)
         # Fields guarded by lock below:
-        self._managed_instances: Dict[str, _JobInstanceManaged] = {}
+        self._managed_instances: Dict[str, JobInstanceManaged] = {}
         self._opened = False
         self._closing = False
+        self._executor = None
+
+    def _run_in_executor(self, fnc):
+        with self._lock:
+            if not self._executor:
+                self._executor = ThreadPoolExecutor()
+
+        return self._executor.submit(fnc)
 
     def open(self):
         """
@@ -131,7 +151,7 @@ class EnvironmentBase(Environment, ABC):
                         instance_id=None, run_id=None, tail_buffer=None,
                         pre_run_hook: Optional[JobInstanceHook] = None,
                         post_run_hook: Optional[JobInstanceHook] = None,
-                        user_params=None) -> JobInstance:
+                        user_params=None) -> JobInstanceManaged:
         """
         Create a new job instance within this environment.
 
@@ -179,7 +199,7 @@ class EnvironmentBase(Environment, ABC):
         with self._lock:
             return list(self._managed_instances.values())
 
-    def _add_instance(self, job_instance):
+    def _add_instance(self, job_instance) -> JobInstanceManaged:
         """
         Add a job instance to the environment.
 
@@ -201,7 +221,7 @@ class EnvironmentBase(Environment, ABC):
             if job_instance.instance_id in self._managed_instances:
                 raise ValueError("Instance with ID already exists in environment")
 
-            job_instance = _JobInstanceManaged(self, job_instance)
+            job_instance = JobInstanceManaged(self, job_instance)
             self._managed_instances[job_instance.instance_id] = job_instance
 
         # TODO Exception must be caught here to prevent inconsistent state and possibility in get stuck in close method:
@@ -236,8 +256,9 @@ class EnvironmentBase(Environment, ABC):
             if not job_instance:
                 return None
 
-            if job_instance.state != _InstanceState.DETACHING:
-                job_instance.state = _InstanceState.DETACHING
+            # noinspection PyProtectedMember
+            if job_instance._state != _InstanceState.DETACHING:
+                job_instance._state = _InstanceState.DETACHING
                 detach = True
             if remove:
                 del self._managed_instances[job_instance_id]
@@ -258,6 +279,10 @@ class EnvironmentBase(Environment, ABC):
     def _on_removed(self, job_instance):
         pass
 
+    def _shutdown_executor(self):
+        if self._executor:
+            self._executor.shutdown()
+
     def close(self):
         interrupt_received = False
         with self._detached_condition:
@@ -265,7 +290,8 @@ class EnvironmentBase(Environment, ABC):
                 return
 
             self._closing = True
-            while not all((i.allows_env_closing() for i in self._managed_instances.values())):
+            # noinspection PyProtectedMember
+            while not all((i._allows_env_closing() for i in self._managed_instances.values())):
                 try:
                     self._detached_condition.wait()
                 except KeyboardInterrupt:
@@ -276,6 +302,7 @@ class EnvironmentBase(Environment, ABC):
         run_isolated_collect_exceptions(
             "Errors on environment features closing",
             *(feature.on_close for feature in self._features),
+            self._shutdown_executor,
             suppress=interrupt_received
         )
 
@@ -501,6 +528,10 @@ class LocalNode(EnvironmentBase):
             self._event_dispatcher.close,
             self._connector.close,  # Keep last as it deletes the node directory
         )
+
+
+class AlreadyStarted(InvalidStateError):
+    pass
 
 
 class EnvironmentClosed(InvalidStateError):
