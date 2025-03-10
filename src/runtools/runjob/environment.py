@@ -310,13 +310,13 @@ class EnvironmentBase(Environment, ABC):
             raise KeyboardInterrupt
 
 
-def isolated(persistence=None, *, lock_factory=None, features=None, transient=True) -> Environment:
+def isolated(persistence=None, *, lock_factory=None, features=None, transient=True) -> 'IsolatedEnvironment':
     persistence = persistence or sqlite.create(':memory:')
     lock_factory = lock_factory or lock.default_memory_lock_factory()
-    return _IsolatedEnvironment(persistence, lock_factory, ensure_tuple_copy(features), transient)
+    return IsolatedEnvironment(persistence, lock_factory, ensure_tuple_copy(features), transient)
 
 
-class _IsolatedEnvironment(JobInstanceNotifications, EnvironmentBase):
+class IsolatedEnvironment(JobInstanceNotifications, EnvironmentBase):
 
     def __init__(self, persistence, lock_factory, features, transient=True):
         JobInstanceNotifications.__init__(self)
