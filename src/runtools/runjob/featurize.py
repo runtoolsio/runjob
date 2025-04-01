@@ -162,7 +162,7 @@ class FeaturedContextBuilder:
 
     def persistence(self, db_type, db_config=None):
         # Lower default priority so other listeners can see the instance already persisted
-        self.add_transition_observer(lambda: db.load_database_module(db_type).create_database(db_config),
+        self.add_transition_observer(lambda: db.load_database_module(db_type).create(db_config['database'], **db_config),
                                      close_hook=lambda persistence: persistence.close(), priority=50)
         return self
 
