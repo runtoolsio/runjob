@@ -17,7 +17,7 @@ from typing import Optional, Tuple, Callable, TypeVar, Generic, Dict
 
 from runtools.runcore import db
 from runtools.runcore import plugins as plugins_mod
-from runtools.runcore.common import InvalidStateError
+from runtools.runcore.err import InvalidStateError
 from runtools.runcore.job import JobRun, InstanceTransitionObserver, InstanceOutputObserver, JobInstanceManager, \
     JobInstance
 from runtools.runcore.plugins import Plugin

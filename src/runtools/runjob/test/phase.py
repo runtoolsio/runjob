@@ -1,7 +1,7 @@
 from threading import Event
 from typing import Optional
 
-from runtools.runcore.common import InvalidStateError
+from runtools.runcore.err import InvalidStateError
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import RunState, TerminationStatus, control_api
 from runtools.runjob.instance import JobInstanceContext

@@ -6,7 +6,7 @@ from threading import Lock, Condition
 from typing import Dict, Optional, List
 
 from runtools.runcore import JobRun, plugins, paths, connector
-from runtools.runcore.common import InvalidStateError
+from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     create_layout_dirs, DEF_ENV_ID
 from runtools.runcore.db import sqlite, PersistingObserver, SortCriteria
@@ -14,7 +14,6 @@ from runtools.runcore.job import JobInstance, JobInstanceNotifications, Instance
     InstanceOutputEvent, JobInstanceDelegate
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.util import to_tuple, lock
-from runtools.runcore.util.err import run_isolated_collect_exceptions
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
 from runtools.runcore.util.socket import SocketClient
 from runtools.runjob import instance, JobInstanceHook
