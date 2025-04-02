@@ -2,7 +2,7 @@ from runtools.runcore.job import JobInstanceMetadata, InstanceTransitionEvent, I
 from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import Stage
-from runtools.runcore.test import testutil
+from runtools.runjob.test import testutil
 from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.test.observer import GenericObserver
 from runtools.runcore.util import utc_now

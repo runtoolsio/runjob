@@ -13,7 +13,7 @@ from runtools.runcore.db import sqlite, PersistingObserver, SortCriteria
 from runtools.runcore.job import JobInstance, JobInstanceNotifications, InstanceStageEvent, InstanceTransitionEvent, \
     InstanceOutputEvent, JobInstanceDelegate
 from runtools.runcore.plugins import Plugin
-from runtools.runcore.util import ensure_tuple_copy, lock
+from runtools.runcore.util import to_tuple, lock
 from runtools.runcore.util.err import run_isolated_collect_exceptions
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
 from runtools.runcore.util.socket import SocketClient
@@ -313,7 +313,7 @@ class EnvironmentBase(Environment, ABC):
 def isolated(persistence=None, *, lock_factory=None, features=None, transient=True) -> 'IsolatedEnvironment':
     persistence = persistence or sqlite.create(':memory:')
     lock_factory = lock_factory or lock.default_memory_lock_factory()
-    return IsolatedEnvironment(persistence, lock_factory, ensure_tuple_copy(features), transient)
+    return IsolatedEnvironment(persistence, lock_factory, to_tuple(features), transient)
 
 
 class IsolatedEnvironment(JobInstanceNotifications, EnvironmentBase):
@@ -439,7 +439,7 @@ def local(env_id=DEF_ENV_ID, persistence=None, node_layout=None, *, lock_factory
         InstanceOutputEvent.EVENT_TYPE: layout.provider_sockets_listener_output,
     })
     lock_factory = lock_factory or lock.default_file_lock_factory()
-    features = ensure_tuple_copy(features)
+    features = to_tuple(features)
     return LocalNode(env_id, local_connector, persistence, api, event_dispatcher, lock_factory, features, transient)
 
 

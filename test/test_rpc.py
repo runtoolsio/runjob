@@ -7,7 +7,7 @@ from runtools.runcore.client import RemoteCallClient, TargetNotFoundError, Remot
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminationStatus
-from runtools.runcore.test.testutil import random_test_socket
+from runtools.runjob.test.testutil import random_test_socket
 from runtools.runjob import instance
 from runtools.runjob.server import RemoteCallServer
 from runtools.runjob.test.phase import TestPhase

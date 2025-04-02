@@ -8,10 +8,8 @@ from typing import Dict, Any, List, Union
 
 from itertools import zip_longest
 
-from runtools.runcore import paths
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.job import JobInstanceManager, JobInstance
-from runtools.runcore.run import util
 from runtools.runcore.util.json import ErrorCode, JsonRpcError
 from runtools.runcore.util.socket import SocketServer
 
