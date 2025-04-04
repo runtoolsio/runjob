@@ -5,12 +5,12 @@ from enum import Enum, auto
 from threading import Lock, Condition
 from typing import Dict, Optional, List
 
-from runtools.runcore import JobRun, plugins, paths, connector
+from runtools.runcore import plugins, paths, connector
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     create_layout_dirs, DEF_ENV_ID
 from runtools.runcore.db import sqlite, PersistingObserver, SortCriteria
-from runtools.runcore.job import JobInstance, JobInstanceNotifications, InstanceStageEvent, InstanceTransitionEvent, \
+from runtools.runcore.job import JobRun, JobInstance, JobInstanceNotifications, InstanceStageEvent, InstanceTransitionEvent, \
     InstanceOutputEvent, JobInstanceDelegate
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.util import to_tuple, lock
@@ -391,7 +391,7 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
 
     @property
     def socket_server_rpc(self):
-        return self.component_dir / self.socket_name_server_rpc
+        return self._connector_dir / self.socket_name_server_rpc
 
     @property
     def socket_name_listener_events(self):

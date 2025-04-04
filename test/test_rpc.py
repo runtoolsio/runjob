@@ -2,9 +2,9 @@ from typing import List
 
 import pytest
 
-from runtools.runcore import JobRun
 from runtools.runcore.client import RemoteCallClient, TargetNotFoundError, RemoteCallResult
 from runtools.runcore.criteria import JobRunCriteria
+from runtools.runcore.job import JobRun
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminationStatus
 from runtools.runjob.test.testutil import random_test_socket

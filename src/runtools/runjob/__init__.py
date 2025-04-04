@@ -8,7 +8,6 @@ IMPLEMENTATION NOTE:
 """
 from typing import List
 
-from runtools.runcore import InvalidConfiguration
 from runtools.runcore.util.socket import SocketClient
 from runtools.runjob import instance
 from runtools.runjob.featurize import FeaturedContextBuilder
@@ -35,7 +34,8 @@ def configure(**kwargs):
     dbs = []  # TODO max age and max records
     for p in persistence_array:
         if "type" not in p:
-            raise InvalidConfiguration("Field `type` is mandatory in `persistence` configuration object")
+            # raise InvalidConfiguration("Field `type` is mandatory in `persistence` configuration object")
+            pass
         if not p.get("enabled", True):
             continue
         dbs.append(p)
