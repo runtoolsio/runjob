@@ -8,7 +8,7 @@ from typing import Dict, Optional, List
 from runtools.runcore import plugins, paths, connector
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
-    create_layout_dirs, DEF_ENV_ID
+    ensure_component_dirs, DEF_ENV_ID
 from runtools.runcore.db import sqlite, PersistingObserver, SortCriteria
 from runtools.runcore.job import JobRun, JobInstance, JobInstanceNotifications, InstanceStageEvent, InstanceTransitionEvent, \
     InstanceOutputEvent, JobInstanceDelegate
@@ -384,7 +384,7 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
 
     @classmethod
     def create(cls, env_id, root_dir=None):
-        return cls(*create_layout_dirs(env_id, root_dir, cls.NODE_DIR_PREFIX))
+        return cls(*ensure_component_dirs(env_id, cls.NODE_DIR_PREFIX, root_dir))
 
     def __init__(self, env_dir, node_dir):
         super().__init__(env_dir, node_dir)
