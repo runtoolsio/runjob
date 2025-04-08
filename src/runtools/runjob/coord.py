@@ -337,6 +337,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
         self._queue_changed = True
 
     def _lock_name(self):
+        # TODO Modifiable (inheritance?)
         return f"eq-{self.execution_group}.lock"
 
     @property
