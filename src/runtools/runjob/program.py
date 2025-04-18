@@ -12,6 +12,7 @@ from typing import Union, Optional
 
 import sys
 
+from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminationStatus, RunState
 from runtools.runjob.output import OutputContext
 from runtools.runjob.phase import ExecutionTerminated, BasePhase
@@ -98,7 +99,7 @@ class ProgramPhase(BasePhase[OutputContext]):
                 line_stripped = line.rstrip()
                 self._status = line_stripped
                 print(line_stripped, file=sys.stderr if is_err else sys.stdout)
-                run_ctx.new_output(line_stripped, is_err)
+                run_ctx.output_sink.new_output(OutputLine(line_stripped, is_err))
 
 
 class ProgramExecutionError(Exception):
