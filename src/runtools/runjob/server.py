@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Union
 from itertools import zip_longest
 
 from runtools.runcore.criteria import JobRunCriteria
-from runtools.runcore.job import JobInstanceManager, JobInstance
+from runtools.runcore.job import JobInstanceManager, JobInstance, InstanceID
 from runtools.runcore.util.json import ErrorCode, JsonRpcError
 from runtools.runcore.util.socket import SocketServer
 
@@ -28,7 +28,7 @@ class MethodParameter:
 
 
 RUN_MATCH_PARAM = MethodParameter('run_match', dict)
-INSTANCE_ID_PARAM = MethodParameter('instance_id', str)
+INSTANCE_ID_PARAM = MethodParameter('instance_id', dict)
 
 
 class JsonRpcMethodType(Enum):
@@ -303,7 +303,7 @@ class RemoteCallServer(SocketServer, JobInstanceManager):
             validated_args = validate_params(method.parameters, params)
             if method.type == JsonRpcMethodType.INSTANCE:
                 try:
-                    job_instance = self._job_instances[validated_args[0]]
+                    job_instance = self._job_instances[InstanceID.deserialize(validated_args[0])]
                 except KeyError:
                     return _error_response(request_id, ErrorCode.TARGET_NOT_FOUND,
                                            f"Instance not found: {validated_args[0]}")

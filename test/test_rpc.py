@@ -4,7 +4,7 @@ import pytest
 
 from runtools.runcore.client import RemoteCallClient, TargetNotFoundError, RemoteCallResult
 from runtools.runcore.criteria import JobRunCriteria
-from runtools.runcore.job import JobRun
+from runtools.runcore.job import JobRun, InstanceID
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminationStatus
 from runtools.runjob.test.testutil import random_test_socket
@@ -51,7 +51,7 @@ def test_server_not_found(client, server):
 
 def test_instance_not_found(client, server):
     with pytest.raises(TargetNotFoundError):
-        client.stop_instance(server.address, 'java-fx')
+        client.stop_instance(server.address, InstanceID('java', 'fx'))
 
 
 def test_active_runs(client, server):

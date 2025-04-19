@@ -1,4 +1,4 @@
-from runtools.runcore.job import JobInstanceMetadata, InstanceTransitionEvent, InstanceOutputEvent
+from runtools.runcore.job import JobInstanceMetadata, InstanceTransitionEvent, InstanceOutputEvent, InstanceID
 from runtools.runcore.listening import EventReceiver, InstanceEventReceiver
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import Stage
@@ -49,7 +49,7 @@ def test_output_dispatching():
     receiver.start()
 
     event = InstanceOutputEvent(
-        instance=(JobInstanceMetadata('j1', 'r1', 'i1', {})),
+        instance=(JobInstanceMetadata(InstanceID('j1', 'r1'), {})),
         output_line=(OutputLine("Fucking voodoo magic, man!", True, "5555")),
         timestamp=utc_now()
     )
