@@ -3,6 +3,7 @@ from threading import Thread
 import pytest
 import time
 
+from runtools.runcore.job import iid
 from runtools.runjob import instance
 from runtools.runjob import warning
 from runtools.runjob.test.phase import TestPhase
@@ -11,7 +12,7 @@ from runtools.runjob.track import StatusTracker
 
 @pytest.fixture
 def job_instance():
-    return instance.create('j1', [TestPhase('p1', wait=True)], status_tracker=StatusTracker())
+    return instance.create(iid('j1'), [TestPhase('p1', wait=True)], status_tracker=StatusTracker())
 
 
 def test_exec_time_warning(job_instance):

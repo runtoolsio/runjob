@@ -146,8 +146,7 @@ class EnvironmentBase(Environment, ABC):
         for feature in self._features:
             feature.on_open()
 
-    def create_instance(self, job_id: str, phases, status_tracker=None, *,
-                        instance_id=None, run_id=None, tail_buffer=None,
+    def create_instance(self, instance_id, phases, status_tracker=None, *, tail_buffer=None,
                         pre_run_hook: Optional[JobInstanceHook] = None,
                         post_run_hook: Optional[JobInstanceHook] = None,
                         user_params=None) -> JobInstanceManaged:
@@ -155,11 +154,9 @@ class EnvironmentBase(Environment, ABC):
         Create a new job instance within this environment.
 
         Args:
-            job_id: Job identifier
+            instance_id (InstanceID): Instance identifier
             phases: Job execution phases to run
             status_tracker: Optional status tracker for the job
-            instance_id: Optional instance identifier (auto-generated if not provided)
-            run_id: Optional run identifier (defaults to instance_id if not provided)
             tail_buffer: Optional buffer for output tailing
             pre_run_hook: Optional hook called before running the instance
             post_run_hook: Optional hook called after running the instance
@@ -173,12 +170,10 @@ class EnvironmentBase(Environment, ABC):
             ValueError: If job_id is empty or None
         """
         inst = instance.create(
-            job_id=job_id,
+            instance_id=instance_id,
             phases=phases,
             environment=self,
             status_tracker=status_tracker,
-            instance_id=instance_id,
-            run_id=run_id,
             tail_buffer=tail_buffer,
             pre_run_hook=pre_run_hook,
             post_run_hook=post_run_hook,

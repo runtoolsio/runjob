@@ -4,7 +4,7 @@ import pytest
 
 from runtools.runcore.client import RemoteCallClient, TargetNotFoundError, RemoteCallResult
 from runtools.runcore.criteria import JobRunCriteria
-from runtools.runcore.job import JobRun, InstanceID
+from runtools.runcore.job import JobRun, InstanceID, iid
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminationStatus
 from runtools.runjob.test.testutil import random_test_socket
@@ -18,8 +18,8 @@ APPROVAL = 'APPROVAL'
 
 @pytest.fixture
 def job_instances():
-    j1 = instance.create('j1', [TestPhase(EXEC)])
-    j2 = instance.create('j2', [TestPhase(APPROVAL, wait=True)], run_id='i2')
+    j1 = instance.create(iid('j1'), [TestPhase(EXEC)])
+    j2 = instance.create(iid('j2'), [TestPhase(APPROVAL, wait=True)], run_id='i2')
     yield j1, j2
 
 

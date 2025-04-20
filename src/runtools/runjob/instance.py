@@ -48,11 +48,10 @@ from contextvars import ContextVar
 from threading import local, Thread
 from typing import Callable, Optional, List, Iterable
 
-from runtools.runcore import util
 from runtools.runcore.job import (JobInstance, JobRun, InstanceOutputObserver, JobInstanceMetadata, JobFaults,
                                   InstanceTransitionObserver,
                                   InstanceTransitionEvent, InstanceOutputEvent, InstanceStageObserver,
-                                  InstanceStageEvent, InstanceID)
+                                  InstanceStageEvent)
 from runtools.runcore.output import Output, TailNotSupportedError, Mode
 from runtools.runcore.run import Outcome, Fault, PhaseTransitionEvent
 from runtools.runcore.util import utc_now
@@ -156,8 +155,8 @@ class JobInstanceContext(OutputContext):
 JobInstanceHook = Callable[[JobInstanceContext], None]
 
 
-def create(job_id, phases, environment=None,
-           *, run_id=None, tail_buffer=None, status_tracker=None,
+def create(instance_id, phases, environment=None,
+           *, tail_buffer=None, status_tracker=None,
            pre_run_hook: Optional[JobInstanceHook] = None,
            post_run_hook: Optional[JobInstanceHook] = None,
            stage_observers: Iterable[InstanceStageObserver] = (),
@@ -174,14 +173,13 @@ def create(job_id, phases, environment=None,
         ```
     :return:
     """
-    if not job_id:
-        raise ValueError("Job ID is mandatory")
+    if not instance_id:
+        raise ValueError("Instance ID is mandatory")
 
-    run_id = run_id or util.unique_timestamp_hex()
     root_phase = SequentialPhase(ROOT_PHASE_ID, phases)
     tail_buffer = tail_buffer or InMemoryTailBuffer(max_capacity=10)
     status_tracker = status_tracker or StatusTracker()
-    inst = _JobInstance(job_id, run_id, root_phase, environment, tail_buffer, status_tracker,
+    inst = _JobInstance(instance_id, root_phase, environment, tail_buffer, status_tracker,
                         pre_run_hook, post_run_hook,
                         transition_observer_error_handler, output_observer_error_handler,
                         user_params)
@@ -194,11 +192,11 @@ def create(job_id, phases, environment=None,
 
 class _JobInstance(JobInstance):
 
-    def __init__(self, job_id, run_id, root_phase, env, tail_buffer, status_tracker,
+    def __init__(self, instance_id, root_phase, env, tail_buffer, status_tracker,
                  pre_run_hook, post_run_hook,
                  phase_update_observer_err_hook, output_observer_err_hook,
                  user_params):
-        self._metadata = JobInstanceMetadata(InstanceID(job_id, run_id), user_params)
+        self._metadata = JobInstanceMetadata(instance_id, user_params)
         self._root_phase: SequentialPhase = root_phase
         self._output = _JobOutput(self._metadata, tail_buffer, output_observer_err_hook)
         self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output)

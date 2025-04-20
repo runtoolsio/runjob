@@ -3,7 +3,7 @@ from typing import List
 
 import pytest
 
-from runtools.runcore.job import JobInstance
+from runtools.runcore.job import JobInstance, iid
 from runtools.runcore.run import Stage
 from runtools.runjob import environment
 from runtools.runjob.environment import Feature
@@ -50,8 +50,8 @@ def test_environment_lifecycle(feature):
     with environment.isolated(features=feature, transient=True) as e:
         assert feature.opened
 
-        inst = e.create_instance("test_job", [TestPhase()])
-        inst2 = e.create_instance('test_job_2', [TestPhase()])
+        inst = e.create_instance(iid("test_job"), [TestPhase()])
+        inst2 = e.create_instance(iid('test_job_2'), [TestPhase()])
 
         assert feature.added_instances[0] == inst
         assert feature.added_instances[1] == inst2
@@ -83,7 +83,7 @@ def test_instance_stage_observer(env):
     env.add_observer_stage(observer_s)
     env.add_observer_transition(observer_t)
 
-    i = env.create_instance("test_job", [(TestPhase())])
+    i = env.create_instance(iid("test_job"), [(TestPhase())])
     # TODO assert transitions[-1].new_stage == Stage.CREATED + transition phases
 
     i.run()
@@ -99,5 +99,5 @@ def test_output_observer(env):
         outputs.append(e)
 
     env.add_observer_output(observer)
-    env.create_instance("test_job", [(TestPhase(output_text='hey more'))]).run()
+    env.create_instance(iid("test_job"), [(TestPhase(output_text='hey more'))]).run()
     assert outputs[0].output_line.text == 'hey more'
