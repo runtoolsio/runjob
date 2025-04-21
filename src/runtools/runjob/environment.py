@@ -8,7 +8,8 @@ from typing import Dict, Optional, List
 from runtools.runcore import plugins, paths, connector
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
-    ensure_component_dirs, DEF_ENV_ID
+    ensure_component_dirs
+from runtools.runcore.constants import DEFAULT_ENVIRONMENT
 from runtools.runcore.db import sqlite, PersistingObserver, SortCriteria
 from runtools.runcore.job import JobRun, JobInstance, JobInstanceNotifications, InstanceStageEvent, InstanceTransitionEvent, \
     InstanceOutputEvent, JobInstanceDelegate
@@ -421,9 +422,9 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         return self._provider_sockets_listener(self.socket_name_listener_output)
 
 
-def local(env_id=DEF_ENV_ID, persistence=None, node_layout=None, *, lock_factory=None, features=None, transient=True):
+def local(env_id=DEFAULT_ENVIRONMENT, persistence=None, node_layout=None, *, lock_factory=None, features=None, transient=True):
     layout = node_layout or StandardLocalNodeLayout.create(env_id)
-    persistence = persistence or sqlite.create(':memory:')  # TODO Load correct database
+    persistence = persistence or sqlite.create(str(paths.sqlite_db_path(env_id, create=True)))
     local_connector = connector.local(env_id, persistence, layout)
 
     api = RemoteCallServer(layout.socket_server_rpc)
