@@ -56,7 +56,7 @@ def test_observer_raises_exception():
     job_instance.run()
     assert execution.completed
     assert job_instance.snapshot().lifecycle.termination.status == TerminationStatus.COMPLETED
-    assert job_instance.snapshot().faults.transition_observer_faults[0].category == instance.TRANSITION_OBSERVER_ERROR
+    assert job_instance.snapshot().faults[0].category == instance.LIFECYCLE_OBSERVER_ERROR
 
 
 class ExceptionRaisingObserver(InstanceStageObserver):

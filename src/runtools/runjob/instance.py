@@ -48,7 +48,7 @@ from contextvars import ContextVar
 from threading import local, Thread
 from typing import Callable, Optional, List, Iterable
 
-from runtools.runcore.job import (JobInstance, JobRun, InstanceOutputObserver, JobInstanceMetadata, JobFaults,
+from runtools.runcore.job import (JobInstance, JobRun, InstanceOutputObserver, JobInstanceMetadata,
                                   InstanceTransitionObserver,
                                   InstanceTransitionEvent, InstanceOutputEvent, InstanceStageObserver,
                                   InstanceStageEvent)
@@ -64,6 +64,7 @@ log = logging.getLogger(__name__)
 
 ROOT_PHASE_ID = "root"
 
+LIFECYCLE_OBSERVER_ERROR = "LIFECYCLE_OBSERVER_ERROR"
 TRANSITION_OBSERVER_ERROR = "TRANSITION_OBSERVER_ERROR"
 OUTPUT_OBSERVER_ERROR = "OUTPUT_OBSERVER_ERROR"
 
@@ -77,13 +78,10 @@ _thread_local = local()
 
 class _JobOutput(Output, OutputSink):
 
-    def __init__(self, metadata, tail_buffer, output_observer_err_hook):
+    def __init__(self, instance, tail_buffer, output_observer_err_hook):
         super().__init__()
-        self.metadata = metadata
+        self.instance = instance
         self.tail_buffer = tail_buffer
-        self.output_notification = (
-            ObservableNotification[InstanceOutputObserver](error_hook=output_observer_err_hook, force_reraise=True))
-        self.output_observer_faults: List[Fault] = []
         self._notifying_observers = False
 
     def _process_output(self, output_line):
@@ -96,12 +94,14 @@ class _JobOutput(Output, OutputSink):
         try:
             if self.tail_buffer:
                 self.tail_buffer.add_line(output_line)
-            self.output_notification.observer_proxy.new_instance_output(
-                InstanceOutputEvent(self.metadata, output_line, utc_now()))
+            # noinspection PyProtectedMember
+            self.instance._output_notification.observer_proxy.new_instance_output(
+                InstanceOutputEvent(self.instance.metadata, output_line, utc_now()))
         except ExceptionGroup as eg:
             log.error("[output_observer_error]", exc_info=eg)
             for e in eg.exceptions:
-                self.output_observer_faults.append(Fault.from_exception(OUTPUT_OBSERVER_ERROR, e))
+                # noinspection PyProtectedMember
+                self.instance._faults.append(Fault.from_exception(OUTPUT_OBSERVER_ERROR, e))
         finally:
             _thread_local.processing_output = False
 
@@ -198,18 +198,20 @@ class _JobInstance(JobInstance):
                  user_params):
         self._metadata = JobInstanceMetadata(instance_id, user_params)
         self._root_phase: SequentialPhase = root_phase
-        self._output = _JobOutput(self._metadata, tail_buffer, output_observer_err_hook)
+        self._output = _JobOutput(self, tail_buffer, output_observer_err_hook)
         self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output)
         self._pre_run_hook = pre_run_hook
         self._post_run_hook = post_run_hook
 
-        self._stage_notification = (
+        self._lifecycle_notification = (
             ObservableNotification[InstanceStageObserver](error_hook=phase_update_observer_err_hook,
                                                           force_reraise=True))
         self._transition_notification = (
             ObservableNotification[InstanceTransitionObserver](error_hook=phase_update_observer_err_hook,
                                                                force_reraise=True))
-        self._transition_observer_faults: List[Fault] = []
+        self._output_notification = (
+            ObservableNotification[InstanceOutputObserver](error_hook=output_observer_err_hook, force_reraise=True))
+        self._faults: List[Fault] = []
 
     def _post_created(self):
         self._root_phase.add_phase_observer(self._on_phase_update)
@@ -236,8 +238,7 @@ class _JobInstance(JobInstance):
     def snapshot(self) -> JobRun:
         root_phase_detail = self._root_phase.detail()
         status = self._ctx.status_tracker.to_status() if self.status_tracker else None
-        faults = JobFaults(tuple(self._transition_observer_faults), tuple(self._output.output_observer_faults))
-        return JobRun(self.metadata, root_phase_detail.lifecycle, root_phase_detail.children, faults, status)
+        return JobRun(self.metadata, root_phase_detail.lifecycle, root_phase_detail.children, tuple(self._faults), status)
 
     @contextmanager
     def _job_instance_context(self):
@@ -299,12 +300,12 @@ class _JobInstance(JobInstance):
         self._root_phase.stop()  # TODO Interrupt
 
     def add_observer_stage(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
-        self._stage_notification.add_observer(observer, priority)
+        self._lifecycle_notification.add_observer(observer, priority)
         if reply_last_event:
             pass  # TODO
 
     def remove_observer_stage(self, observer):
-        self._stage_notification.remove_observer(observer)
+        self._lifecycle_notification.remove_observer(observer)
 
     def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         self._transition_notification.add_observer(observer, priority)
@@ -329,11 +330,11 @@ class _JobInstance(JobInstance):
         if is_root_phase:
             try:
                 event = InstanceStageEvent(self.metadata, snapshot, e.new_stage, e.timestamp)
-                self._stage_notification.observer_proxy.new_instance_stage(event)
+                self._lifecycle_notification.observer_proxy.new_instance_stage(event)
             except ExceptionGroup as eg:
                 log.error("[stage_observer_error]", exc_info=eg)
                 for exc in eg.exceptions:
-                    self._transition_observer_faults.append(Fault.from_exception(TRANSITION_OBSERVER_ERROR, exc))
+                    self._faults.append(Fault.from_exception(LIFECYCLE_OBSERVER_ERROR, exc))
         try:
             event = InstanceTransitionEvent(self.metadata, snapshot, is_root_phase, e.phase_detail.phase_id,
                                             e.new_stage, e.timestamp)
@@ -341,11 +342,10 @@ class _JobInstance(JobInstance):
         except ExceptionGroup as eg:
             log.error("[transition_observer_error]", exc_info=eg)
             for exc in eg.exceptions:
-                self._transition_observer_faults.append(Fault.from_exception(TRANSITION_OBSERVER_ERROR, exc))
+                self._faults.append(Fault.from_exception(TRANSITION_OBSERVER_ERROR, exc))
 
     def add_observer_output(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        self._output.output_notification.add_observer(observer, priority)
+        self._output_notification.add_observer(observer, priority)
 
     def remove_observer_output(self, observer):
-        self._output.output_notification.remove_observer(observer)
-
+        self._output_notification.remove_observer(observer)
