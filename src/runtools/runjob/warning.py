@@ -9,7 +9,7 @@ from runtools.runcore.run import Stage
 
 
 def exec_time_exceeded(job_instance: JobInstance, warning_name: str, time: float):
-    job_instance.add_observer_stage(_ExecTimeWarning(job_instance, warning_name, time))
+    job_instance.add_observer_lifecycle(_ExecTimeWarning(job_instance, warning_name, time))
 
 
 def output_matches(job_instance: JobInstance, warning_name: str, regex: str):

@@ -80,7 +80,7 @@ def test_instance_stage_observer(env):
     def observer_t(event):
         transitions.append(event)
 
-    env.add_observer_stage(observer_s)
+    env.add_observer_lifecycle(observer_s)
     env.add_observer_transition(observer_t)
 
     i = env.create_instance(iid("test_job"), [(TestPhase())])

@@ -184,7 +184,7 @@ def create(instance_id, phases, environment=None,
                         transition_observer_error_handler, output_observer_error_handler,
                         user_params)
     for so in stage_observers:
-        inst.add_observer_stage(so)
+        inst.add_observer_lifecycle(so)
     # noinspection PyProtectedMember
     inst._post_created()
     return inst
@@ -299,12 +299,12 @@ class _JobInstance(JobInstance):
         """
         self._root_phase.stop()  # TODO Interrupt
 
-    def add_observer_stage(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
+    def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
         self._lifecycle_notification.add_observer(observer, priority)
         if reply_last_event:
             pass  # TODO
 
-    def remove_observer_stage(self, observer):
+    def remove_observer_lifecycle(self, observer):
         self._lifecycle_notification.remove_observer(observer)
 
     def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):

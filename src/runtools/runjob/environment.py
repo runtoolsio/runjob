@@ -4,18 +4,18 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from enum import Enum, auto
 from pathlib import Path
 from threading import Lock, Condition
-from typing import Dict, Optional, List, Callable, Union
+from typing import Dict, Optional, List, Callable
 
 from runtools.runcore import plugins, paths, connector
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
-    ensure_component_dirs
+    ensure_component_dir
 from runtools.runcore.constants import DEFAULT_ENVIRONMENT
 from runtools.runcore.db import sqlite, PersistingObserver, SortCriteria
 from runtools.runcore.job import JobRun, JobInstance, JobInstanceNotifications, InstanceStageEvent, \
     InstanceTransitionEvent, \
     InstanceOutputEvent, JobInstanceDelegate
-from runtools.runcore.layout import LocalEnvironmentLayoutConfig, LayoutDefaults
+from runtools.runcore.layout import LayoutDefaults
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.util import to_tuple, lock
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
@@ -328,9 +328,9 @@ class IsolatedEnvironment(JobInstanceNotifications, EnvironmentBase):
         self._persistence.open()
 
     def _on_added(self, job_instance):
-        job_instance.add_observer_stage(self._persisting_observer)
-        job_instance.add_observer_stage(self._stage_notification.observer_proxy,
-                                        EnvironmentBase.OBSERVERS_PRIORITY - 1)
+        job_instance.add_observer_lifecycle(self._persisting_observer)
+        job_instance.add_observer_lifecycle(self._stage_notification.observer_proxy,
+                                            EnvironmentBase.OBSERVERS_PRIORITY - 1)
         job_instance.add_observer_transition(self._transition_notification.observer_proxy,
                                              EnvironmentBase.OBSERVERS_PRIORITY - 1)
         job_instance.add_observer_output(self._output_notification.observer_proxy,
@@ -339,8 +339,8 @@ class IsolatedEnvironment(JobInstanceNotifications, EnvironmentBase):
     def _on_removed(self, job_instance):
         job_instance.remove_observer_output(self._output_notification.observer_proxy)
         job_instance.remove_observer_transition(self._transition_notification.observer_proxy)
-        job_instance.remove_observer_stage(self._stage_notification.observer_proxy)
-        job_instance.remove_observer_stage(self._persisting_observer)
+        job_instance.remove_observer_lifecycle(self._stage_notification.observer_proxy)
+        job_instance.remove_observer_lifecycle(self._persisting_observer)
 
     def get_active_runs(self, run_match=None) -> List[JobRun]:
         return [i.snapshot() for i in self.get_instances(run_match)]
@@ -371,25 +371,25 @@ class LocalNodeLayout(LocalConnectorLayout, ABC):
 
     @property
     @abstractmethod
-    def socket_path_server_rpc(self) -> Path:
+    def server_socket_path(self) -> Path:
         """Return the server RPC socket path"""
         pass
 
     @property
     @abstractmethod
-    def provider_sockets_listener_lifecycle(self) -> Callable:
+    def listener_lifecycle_sockets_provider(self) -> Callable:
         """Return the provider for lifecycle listener sockets"""
         pass
 
     @property
     @abstractmethod
-    def provider_sockets_listener_phase(self) -> Callable:
+    def listener_phase_sockets_provider(self) -> Callable:
         """Return the provider for phase listener sockets"""
         pass
 
     @property
     @abstractmethod
-    def provider_sockets_listener_output(self) -> Callable:
+    def listener_output_sockets_provider(self) -> Callable:
         """Return the provider for output listener sockets"""
         pass
 
@@ -411,46 +411,18 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         └── ...                                      # Other node-specific sockets
     """
 
-    def __init__(
-            self,
-            env_dir: Path,
-            component_dir: Path,
-            node_dir_prefix: str = LayoutDefaults.NODE_DIR_PREFIX,
-            connector_dir_prefix: str = LayoutDefaults.CONNECTOR_DIR_PREFIX,
-            socket_name_client_rpc: str = LayoutDefaults.SOCKET_NAME_CLIENT_RPC,
-            socket_name_server_rpc: str = LayoutDefaults.SOCKET_NAME_SERVER_RPC,
-            socket_name_listener_events: str = LayoutDefaults.SOCKET_NAME_LISTENER_EVENTS,
-            socket_name_listener_stage: str = LayoutDefaults.SOCKET_NAME_LISTENER_LIFECYCLE,
-            socket_name_listener_phase: str = LayoutDefaults.SOCKET_NAME_LISTENER_PHASE,
-            socket_name_listener_output: str = LayoutDefaults.SOCKET_NAME_LISTENER_OUTPUT
-    ):
+    def __init__(self, env_path: Path, node_path: Path):
         """
         Initializes the node layout with environment and component directories.
 
         Args:
-            env_dir (Path): Directory containing the environment structure
-            component_dir (Path): Directory specific to this node instance
-            node_dir_prefix (str): Prefix for node directories
-            connector_dir_prefix (str): Prefix for connector directories
-            socket_name_client_rpc (str): Filename for client RPC socket
-            socket_name_server_rpc (str): Filename for server RPC socket
-            socket_name_listener_events (str): Filename for event listener socket
-            socket_name_listener_stage (str): Filename for lifecycle listener socket
-            socket_name_listener_phase (str): Filename for phase listener socket
-            socket_name_listener_output (str): Filename for output listener socket
+            env_path (Path): Directory containing the environment structure
+            node_path (Path): Directory specific to this node instance
         """
-        super().__init__(
-            env_dir=env_dir,
-            component_dir=component_dir,
-            node_dir_prefix=node_dir_prefix,
-            connector_dir_prefix=connector_dir_prefix,
-            socket_name_client_rpc=socket_name_client_rpc,
-            socket_name_server_rpc=socket_name_server_rpc,
-            socket_name_listener_events=socket_name_listener_events
-        )
-        self._socket_name_listener_lifecycle = socket_name_listener_stage
-        self._socket_name_listener_phase = socket_name_listener_phase
-        self._socket_name_listener_output = socket_name_listener_output
+        super().__init__(env_path=env_path, connector_path=node_path)
+        self._listener_lifecycle_socket_name = "listener-lifecycle.sock"
+        self._listener_phase_socket_name = "listener-phase.sock"
+        self._listener_output_socket_name = "listener-output.sock"
 
     @classmethod
     def create(cls, env_id: str, root_dir: Optional[Path] = None,
@@ -465,68 +437,15 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
 
         Returns (StandardLocalNodeLayout): Layout instance for a node
         """
-        env_dir, component_dir = ensure_component_dirs(env_id, node_dir_prefix, root_dir)
-        return cls(
-            env_dir=env_dir,
-            component_dir=component_dir,
-            node_dir_prefix=node_dir_prefix
-        )
-
-    @classmethod
-    def from_config(cls, config: LocalEnvironmentLayoutConfig):
-        """
-        Factory method to create a StandardLocalNodeLayout from a configuration object.
-
-        Args:
-            config (LocalEnvironmentLayoutConfig): Configuration object
-
-        Returns:
-            StandardLocalNodeLayout: A new node layout configured according to the provided config
-        """
-        return cls(
-            env_dir=config.env_dir,
-            component_dir=config.component_dir,
-            node_dir_prefix=config.node_dir_prefix,
-            connector_dir_prefix=config.connector_dir_prefix,
-            socket_name_client_rpc=config.socket_name_client_rpc,
-            socket_name_server_rpc=config.socket_name_server_rpc,
-            socket_name_listener_events=config.socket_name_listener_events,
-            socket_name_listener_stage=config.socket_name_listener_lifecycle,
-            socket_name_listener_phase=config.socket_name_listener_phase,
-            socket_name_listener_output=config.socket_name_listener_output
-        )
+        return cls(*ensure_component_dir(env_id, node_dir_prefix, root_dir))
 
     @property
-    def socket_path_server_rpc(self) -> Path:
+    def server_socket_path(self) -> Path:
         """
         Returns:
             Path: Full path of server domain socket used for sending requests to RPC servers
         """
-        return self._component_dir / self._socket_name_server_rpc
-
-    @property
-    def socket_name_listener_lifecycle(self) -> str:
-        """
-        Returns:
-            str: File name of domain socket used for receiving lifecycle events
-        """
-        return self._socket_name_listener_lifecycle
-
-    @property
-    def socket_name_listener_phase(self) -> str:
-        """
-        Returns:
-            str: File name of domain socket used for receiving phase events
-        """
-        return self._socket_name_listener_phase
-
-    @property
-    def socket_name_listener_output(self) -> str:
-        """
-        Returns:
-            str: File name of domain socket used for receiving output events
-        """
-        return self._socket_name_listener_output
+        return self._component_path / self._server_socket_name
 
     def _provider_sockets_listener(self, socket_listener_name) -> Callable:
         """
@@ -538,32 +457,32 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         Returns:
             Callable: Provider function for the specified socket(s)
         """
-        file_names = [self.socket_name_listener_events, socket_listener_name]
-        return paths.files_in_subdir_provider(self.env_dir, file_names)
+        file_names = [self._listener_events_socket_name, socket_listener_name]
+        return paths.files_in_subdir_provider(self._env_path, file_names)
 
     @property
-    def provider_sockets_listener_lifecycle(self) -> Callable:
+    def listener_lifecycle_sockets_provider(self) -> Callable:
         """
         Returns:
             Callable: A provider function that generates paths to lifecycle listener socket files
         """
-        return self._provider_sockets_listener(self._socket_name_listener_lifecycle)
+        return self._provider_sockets_listener(self._listener_lifecycle_socket_name)
 
     @property
-    def provider_sockets_listener_phase(self) -> Callable:
+    def listener_phase_sockets_provider(self) -> Callable:
         """
         Returns:
             Callable: A provider function that generates paths to phase listener socket files
         """
-        return self._provider_sockets_listener(self._socket_name_listener_phase)
+        return self._provider_sockets_listener(self._listener_phase_socket_name)
 
     @property
-    def provider_sockets_listener_output(self) -> Callable:
+    def listener_output_sockets_provider(self) -> Callable:
         """
         Returns:
             Callable: A provider function that generates paths to output listener socket files
         """
-        return self._provider_sockets_listener(self._socket_name_listener_output)
+        return self._provider_sockets_listener(self._listener_output_socket_name)
 
 
 def local(env_id=DEFAULT_ENVIRONMENT, persistence=None, node_layout=None, *, lock_factory=None, features=None,
@@ -572,11 +491,11 @@ def local(env_id=DEFAULT_ENVIRONMENT, persistence=None, node_layout=None, *, loc
     persistence = persistence or sqlite.create(str(paths.sqlite_db_path(env_id, create=True)))
     local_connector = connector.local(env_id, persistence, layout)
 
-    api = RemoteCallServer(layout.socket_path_server_rpc)
+    api = RemoteCallServer(layout.server_socket_path)
     event_dispatcher = EventDispatcher(SocketClient(), {
-        InstanceStageEvent.EVENT_TYPE: layout.provider_sockets_listener_lifecycle,
-        InstanceTransitionEvent.EVENT_TYPE: layout.provider_sockets_listener_phase,
-        InstanceOutputEvent.EVENT_TYPE: layout.provider_sockets_listener_output,
+        InstanceStageEvent.EVENT_TYPE: layout.listener_lifecycle_sockets_provider,
+        InstanceTransitionEvent.EVENT_TYPE: layout.listener_phase_sockets_provider,
+        InstanceOutputEvent.EVENT_TYPE: layout.listener_output_sockets_provider,
     })
     lock_factory = lock_factory or lock.default_file_lock_factory()
     features = to_tuple(features)
@@ -628,11 +547,11 @@ class LocalNode(EnvironmentBase):
     def remove_observer_all_events(self, observer):
         self._connector.remove_observer_all_events(observer)
 
-    def add_observer_stage(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        self._connector.add_observer_stage(observer, priority)
+    def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
+        self._connector.add_observer_lifecycle(observer, priority)
 
-    def remove_observer_stage(self, observer):
-        self._connector.remove_observer_stage(observer)
+    def remove_observer_lifecycle(self, observer):
+        self._connector.remove_observer_lifecycle(observer)
 
     def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         self._connector.add_observer_transition(observer, priority)
@@ -647,14 +566,14 @@ class LocalNode(EnvironmentBase):
         self._connector.remove_observer_output(observer)
 
     def _on_added(self, job_instance):
-        job_instance.add_observer_stage(self._persisting_observer)
+        job_instance.add_observer_lifecycle(self._persisting_observer)
         self._rpc_server.register_instance(job_instance)
         job_instance.add_observer_all_events(self._event_dispatcher)
 
     def _on_removed(self, job_instance):
         job_instance.remove_observer_all_events(self._event_dispatcher)
         self._rpc_server.unregister_instance(job_instance)
-        job_instance.remove_observer_stage(self._persisting_observer)
+        job_instance.remove_observer_lifecycle(self._persisting_observer)
 
     def lock(self, lock_id):
         # TODO Method to separate type
