@@ -370,10 +370,6 @@ class LocalNodeLayout(LocalConnectorLayout, ABC):
     def socket_server_rpc(self):
         pass
 
-    @property
-    @abstractmethod
-    def provider_sockets_listener_phase(self):
-        pass
 
 
 class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
