@@ -2,8 +2,9 @@ import logging
 from abc import ABC, abstractmethod
 from concurrent.futures.thread import ThreadPoolExecutor
 from enum import Enum, auto
+from pathlib import Path
 from threading import Lock, Condition
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Callable, Union
 
 from runtools.runcore import plugins, paths, connector
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
@@ -11,8 +12,10 @@ from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayou
     ensure_component_dirs
 from runtools.runcore.constants import DEFAULT_ENVIRONMENT
 from runtools.runcore.db import sqlite, PersistingObserver, SortCriteria
-from runtools.runcore.job import JobRun, JobInstance, JobInstanceNotifications, InstanceStageEvent, InstanceTransitionEvent, \
+from runtools.runcore.job import JobRun, JobInstance, JobInstanceNotifications, InstanceStageEvent, \
+    InstanceTransitionEvent, \
     InstanceOutputEvent, JobInstanceDelegate
+from runtools.runcore.layout import LocalEnvironmentLayoutConfig, LayoutDefaults
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.util import to_tuple, lock
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
@@ -364,68 +367,214 @@ class IsolatedEnvironment(JobInstanceNotifications, EnvironmentBase):
 
 
 class LocalNodeLayout(LocalConnectorLayout, ABC):
+    """Base class for local node layouts"""
 
     @property
     @abstractmethod
-    def socket_server_rpc(self):
+    def socket_path_server_rpc(self) -> Path:
+        """Return the server RPC socket path"""
+        pass
+
+    @property
+    @abstractmethod
+    def provider_sockets_listener_lifecycle(self) -> Callable:
+        """Return the provider for lifecycle listener sockets"""
+        pass
+
+    @property
+    @abstractmethod
+    def provider_sockets_listener_phase(self) -> Callable:
+        """Return the provider for phase listener sockets"""
+        pass
+
+    @property
+    @abstractmethod
+    def provider_sockets_listener_output(self) -> Callable:
+        """Return the provider for output listener sockets"""
         pass
 
 
-
 class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
+    """
+    Standard implementation of a local node layout.
+
+    Extends the connector layout with additional functionality specific to nodes,
+    such as server sockets and additional listener providers.
+
+    Example structure:
+    /tmp/runtools/env/{env_id}/                      # Directory for the specific environment (env_dir)
+    │
+    └── node_abc123/                                 # Node directory (component_dir)
+        ├── server-rpc.sock                          # Node's RPC server socket
+        ├── client-rpc.sock                          # Node's RPC client socket
+        ├── listener-events.sock                     # Node's events listener socket
+        └── ...                                      # Other node-specific sockets
+    """
+
+    def __init__(
+            self,
+            env_dir: Path,
+            component_dir: Path,
+            node_dir_prefix: str = LayoutDefaults.NODE_DIR_PREFIX,
+            connector_dir_prefix: str = LayoutDefaults.CONNECTOR_DIR_PREFIX,
+            socket_name_client_rpc: str = LayoutDefaults.SOCKET_NAME_CLIENT_RPC,
+            socket_name_server_rpc: str = LayoutDefaults.SOCKET_NAME_SERVER_RPC,
+            socket_name_listener_events: str = LayoutDefaults.SOCKET_NAME_LISTENER_EVENTS,
+            socket_name_listener_stage: str = LayoutDefaults.SOCKET_NAME_LISTENER_LIFECYCLE,
+            socket_name_listener_phase: str = LayoutDefaults.SOCKET_NAME_LISTENER_PHASE,
+            socket_name_listener_output: str = LayoutDefaults.SOCKET_NAME_LISTENER_OUTPUT
+    ):
+        """
+        Initializes the node layout with environment and component directories.
+
+        Args:
+            env_dir (Path): Directory containing the environment structure
+            component_dir (Path): Directory specific to this node instance
+            node_dir_prefix (str): Prefix for node directories
+            connector_dir_prefix (str): Prefix for connector directories
+            socket_name_client_rpc (str): Filename for client RPC socket
+            socket_name_server_rpc (str): Filename for server RPC socket
+            socket_name_listener_events (str): Filename for event listener socket
+            socket_name_listener_stage (str): Filename for lifecycle listener socket
+            socket_name_listener_phase (str): Filename for phase listener socket
+            socket_name_listener_output (str): Filename for output listener socket
+        """
+        super().__init__(
+            env_dir=env_dir,
+            component_dir=component_dir,
+            node_dir_prefix=node_dir_prefix,
+            connector_dir_prefix=connector_dir_prefix,
+            socket_name_client_rpc=socket_name_client_rpc,
+            socket_name_server_rpc=socket_name_server_rpc,
+            socket_name_listener_events=socket_name_listener_events
+        )
+        self._socket_name_listener_lifecycle = socket_name_listener_stage
+        self._socket_name_listener_phase = socket_name_listener_phase
+        self._socket_name_listener_output = socket_name_listener_output
 
     @classmethod
-    def create(cls, env_id, root_dir=None):
-        return cls(*ensure_component_dirs(env_id, cls.NODE_DIR_PREFIX, root_dir))
+    def create(cls, env_id: str, root_dir: Optional[Path] = None,
+               node_dir_prefix: str = LayoutDefaults.NODE_DIR_PREFIX):
+        """
+        Creates a layout for a new node together with a new unique directory for the node.
 
-    def __init__(self, env_dir, node_dir):
-        super().__init__(env_dir, node_dir)
+        Args:
+            env_id (str): Identifier for the environment
+            root_dir (Path, optional): Root directory containing environments or uses the default one.
+            node_dir_prefix (str): Prefix for node directories
+
+        Returns (StandardLocalNodeLayout): Layout instance for a node
+        """
+        env_dir, component_dir = ensure_component_dirs(env_id, node_dir_prefix, root_dir)
+        return cls(
+            env_dir=env_dir,
+            component_dir=component_dir,
+            node_dir_prefix=node_dir_prefix
+        )
+
+    @classmethod
+    def from_config(cls, config: LocalEnvironmentLayoutConfig):
+        """
+        Factory method to create a StandardLocalNodeLayout from a configuration object.
+
+        Args:
+            config (LocalEnvironmentLayoutConfig): Configuration object
+
+        Returns:
+            StandardLocalNodeLayout: A new node layout configured according to the provided config
+        """
+        return cls(
+            env_dir=config.env_dir,
+            component_dir=config.component_dir,
+            node_dir_prefix=config.node_dir_prefix,
+            connector_dir_prefix=config.connector_dir_prefix,
+            socket_name_client_rpc=config.socket_name_client_rpc,
+            socket_name_server_rpc=config.socket_name_server_rpc,
+            socket_name_listener_events=config.socket_name_listener_events,
+            socket_name_listener_stage=config.socket_name_listener_lifecycle,
+            socket_name_listener_phase=config.socket_name_listener_phase,
+            socket_name_listener_output=config.socket_name_listener_output
+        )
 
     @property
-    def socket_server_rpc(self):
-        return self._connector_dir / self.socket_name_server_rpc
+    def socket_path_server_rpc(self) -> Path:
+        """
+        Returns:
+            Path: Full path of server domain socket used for sending requests to RPC servers
+        """
+        return self._component_dir / self._socket_name_server_rpc
 
     @property
-    def socket_name_listener_events(self):
-        return 'listener-events.sock'
+    def socket_name_listener_lifecycle(self) -> str:
+        """
+        Returns:
+            str: File name of domain socket used for receiving lifecycle events
+        """
+        return self._socket_name_listener_lifecycle
 
     @property
-    def socket_name_listener_stage(self):
-        return 'listener-stage.sock'
+    def socket_name_listener_phase(self) -> str:
+        """
+        Returns:
+            str: File name of domain socket used for receiving phase events
+        """
+        return self._socket_name_listener_phase
 
     @property
-    def socket_name_listener_phase(self):
-        return 'listener-phase.sock'
+    def socket_name_listener_output(self) -> str:
+        """
+        Returns:
+            str: File name of domain socket used for receiving output events
+        """
+        return self._socket_name_listener_output
 
-    @property
-    def socket_name_listener_output(self):
-        return 'listener-output.sock'
+    def _provider_sockets_listener(self, socket_listener_name) -> Callable:
+        """
+        Helper method for creating socket providers for different listener types.
 
-    def _provider_sockets_listener(self, socket_name_listener):
-        file_names = [self.socket_name_listener_events, socket_name_listener]
+        Args:
+            socket_listener_name: Socket filename to look for
+
+        Returns:
+            Callable: Provider function for the specified socket(s)
+        """
+        file_names = [self.socket_name_listener_events, socket_listener_name]
         return paths.files_in_subdir_provider(self.env_dir, file_names)
 
     @property
-    def provider_sockets_listener_stage(self):
-        return self._provider_sockets_listener(self.socket_name_listener_stage)
+    def provider_sockets_listener_lifecycle(self) -> Callable:
+        """
+        Returns:
+            Callable: A provider function that generates paths to lifecycle listener socket files
+        """
+        return self._provider_sockets_listener(self._socket_name_listener_lifecycle)
 
     @property
-    def provider_sockets_listener_phase(self):
-        return self._provider_sockets_listener(self.socket_name_listener_phase)
+    def provider_sockets_listener_phase(self) -> Callable:
+        """
+        Returns:
+            Callable: A provider function that generates paths to phase listener socket files
+        """
+        return self._provider_sockets_listener(self._socket_name_listener_phase)
 
     @property
-    def provider_sockets_listener_output(self):
-        return self._provider_sockets_listener(self.socket_name_listener_output)
+    def provider_sockets_listener_output(self) -> Callable:
+        """
+        Returns:
+            Callable: A provider function that generates paths to output listener socket files
+        """
+        return self._provider_sockets_listener(self._socket_name_listener_output)
 
 
-def local(env_id=DEFAULT_ENVIRONMENT, persistence=None, node_layout=None, *, lock_factory=None, features=None, transient=True):
+def local(env_id=DEFAULT_ENVIRONMENT, persistence=None, node_layout=None, *, lock_factory=None, features=None,
+          transient=True):
     layout = node_layout or StandardLocalNodeLayout.create(env_id)
     persistence = persistence or sqlite.create(str(paths.sqlite_db_path(env_id, create=True)))
     local_connector = connector.local(env_id, persistence, layout)
 
-    api = RemoteCallServer(layout.socket_server_rpc)
+    api = RemoteCallServer(layout.socket_path_server_rpc)
     event_dispatcher = EventDispatcher(SocketClient(), {
-        InstanceStageEvent.EVENT_TYPE: layout.provider_sockets_listener_stage,
+        InstanceStageEvent.EVENT_TYPE: layout.provider_sockets_listener_lifecycle,
         InstanceTransitionEvent.EVENT_TYPE: layout.provider_sockets_listener_phase,
         InstanceOutputEvent.EVENT_TYPE: layout.provider_sockets_listener_output,
     })
