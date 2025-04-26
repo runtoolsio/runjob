@@ -6,12 +6,12 @@ from pathlib import Path
 from threading import Lock, Condition
 from typing import Dict, Optional, List, Callable
 
-from runtools.runcore import plugins, paths, connector
+from runtools.runcore import plugins, paths, connector, db
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
-from runtools.runcore.env import DEFAULT_ENVIRONMENT
-from runtools.runcore.db import sqlite, PersistingObserver, SortCriteria
+from runtools.runcore.env import DEFAULT_ENVIRONMENT, EnvironmentConfigUnion, LocalEnvironmentConfig
+from runtools.runcore.db import sqlite, PersistingObserver, SortCriteria, NullPersistence
 from runtools.runcore.job import JobRun, JobInstance, JobInstanceNotifications, InstanceStageEvent, \
     InstanceTransitionEvent, \
     InstanceOutputEvent, JobInstanceDelegate
@@ -487,8 +487,20 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         return self._provider_sockets_listener(self._listener_output_socket_name)
 
 
-def local(env_id=DEFAULT_ENVIRONMENT, persistence=None, node_layout=None, *, lock_factory=None, features=None,
-          transient=True):
+def create(env_config: EnvironmentConfigUnion):
+    if isinstance(env_config, LocalEnvironmentConfig):
+        if env_config.persistence:
+            persistence = db.create_persistence(env_config.id, env_config.persistence)
+        else:
+            persistence = NullPersistence()
+        layout = StandardLocalNodeLayout.create(env_config.id, env_config.layout.root_dir)  # TODO fact fnc for cfg
+        return local(env_config.id, persistence, layout)
+
+    raise AssertionError(f"Unsupported environment type: {env_config.type}. This is a programming error.")
+
+
+def local(env_id=DEFAULT_ENVIRONMENT, persistence=None, node_layout=None,
+          *, lock_factory=None, features=None, transient=True):
     layout = node_layout or StandardLocalNodeLayout.create(env_id)
     persistence = persistence or sqlite.create(str(paths.sqlite_db_path(env_id, create=True)))
     local_connector = connector.local(env_id, persistence, layout)
