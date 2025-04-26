@@ -6,9 +6,8 @@ from enum import Enum, auto
 from threading import Condition, Event, Lock
 from typing import Any, List
 
-from runtools.runcore import JobRun
 from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion, MetadataCriterion, LifecycleCriterion
-from runtools.runcore.job import InstanceTransitionEvent
+from runtools.runcore.job import JobRun, InstanceTransitionEvent
 from runtools.runcore.run import RunState, TerminationStatus, TerminateRun, control_api, Stage
 from runtools.runjob.instance import JobInstanceContext
 from runtools.runjob.output import OutputContext

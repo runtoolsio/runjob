@@ -10,12 +10,11 @@ from runtools.runcore import plugins, paths, connector
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
-from runtools.runcore.constants import DEFAULT_ENVIRONMENT
+from runtools.runcore.env import DEFAULT_ENVIRONMENT
 from runtools.runcore.db import sqlite, PersistingObserver, SortCriteria
 from runtools.runcore.job import JobRun, JobInstance, JobInstanceNotifications, InstanceStageEvent, \
     InstanceTransitionEvent, \
     InstanceOutputEvent, JobInstanceDelegate
-from runtools.runcore.layout import LayoutDefaults
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.util import to_tuple, lock
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
@@ -323,6 +322,10 @@ class IsolatedEnvironment(JobInstanceNotifications, EnvironmentBase):
         self._lock_factory = lock_factory
         self._persisting_observer = PersistingObserver(persistence)
 
+    @property
+    def persistence_enabled(self) -> bool:
+        return self._persistence.enabled
+
     def open(self):
         EnvironmentBase.open(self)  # Always first
         self._persistence.open()
@@ -425,8 +428,7 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         self._listener_output_socket_name = "listener-output.sock"
 
     @classmethod
-    def create(cls, env_id: str, root_dir: Optional[Path] = None,
-               node_dir_prefix: str = LayoutDefaults.NODE_DIR_PREFIX):
+    def create(cls, env_id: str, root_dir: Optional[Path] = None, node_dir_prefix: str = "node_"):
         """
         Creates a layout for a new node together with a new unique directory for the node.
 
@@ -516,6 +518,10 @@ class LocalNode(EnvironmentBase):
         self._event_dispatcher = event_dispatcher
         self._lock_factory = lock_factory
         self._persisting_observer = PersistingObserver(persistence)
+
+    @property
+    def persistence_enabled(self) -> bool:
+        return self._connector.persistence_enabled
 
     def open(self):
         EnvironmentBase.open(self)  # Execute first for opened only once check
