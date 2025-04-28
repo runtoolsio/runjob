@@ -2,7 +2,8 @@ from typing import List, Annotated, Union
 
 from pydantic import BaseModel, Field, Discriminator
 
-from runtools.runcore.env import LocalEnvironmentConfig
+from runtools.runcore.db import PersistenceConfig
+from runtools.runcore.env import LocalEnvironmentConfig, EnvironmentConfig
 
 
 class PluginsConfig(BaseModel):
@@ -25,7 +26,20 @@ class LocalRunEnvironmentConfig(LocalEnvironmentConfig):
     )
 
 
+class IsolatedEnvironmentConfig(EnvironmentConfig):
+    """Configuration for isolated environments used primarily in testing."""
+    type: str = "isolated"
+    persistence: PersistenceConfig = Field(
+        default_factory=PersistenceConfig.in_memory_sqlite,
+        description="Persistence configuration, defaults to in-memory SQLite for testing"
+    )
+    plugins: PluginsConfig = Field(
+        default_factory=PluginsConfig,
+        description="Configuration for plugins in the isolated environment"
+    )
+
+
 RunEnvironmentConfigUnion = Annotated[
-    Union[LocalRunEnvironmentConfig],
+    Union[LocalRunEnvironmentConfig, IsolatedEnvironmentConfig],
     Discriminator("type")
 ]
