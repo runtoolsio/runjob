@@ -10,7 +10,8 @@ from runtools.runcore import plugins, paths, connector, db
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
 from runtools.runcore.db import sqlite, PersistingObserver, SortCriteria, NullPersistence
-from runtools.runcore.env import DEFAULT_ENVIRONMENT
+from runtools.runcore.env import DEFAULT_ENVIRONMENT, EnvironmentConfigUnion, LocalEnvironmentConfig, \
+    IsolatedEnvironmentConfig
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, JobInstanceNotifications, InstanceStageEvent, \
     InstanceTransitionEvent, \
@@ -20,7 +21,6 @@ from runtools.runcore.util import to_tuple, lock
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
 from runtools.runcore.util.socket import SocketClient
 from runtools.runjob import instance, JobInstanceHook
-from runtools.runjob.environment import RunEnvironmentConfigUnion, LocalRunEnvironmentConfig, IsolatedEnvironmentConfig
 from runtools.runjob.events import EventDispatcher
 from runtools.runjob.server import RemoteCallServer
 
@@ -488,13 +488,13 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         return self._provider_sockets_listener(self._listener_output_socket_name)
 
 
-def create(env_config: RunEnvironmentConfigUnion):
+def create(env_config: EnvironmentConfigUnion):
     if env_config.persistence:
         persistence = db.create_persistence(env_config.id, env_config.persistence)
     else:
         persistence = NullPersistence()
 
-    if isinstance(env_config, LocalRunEnvironmentConfig):
+    if isinstance(env_config, LocalEnvironmentConfig):
         layout = StandardLocalNodeLayout.create(env_config.id, env_config.layout.root_dir)  # TODO fact fnc for cfg
         return local(env_config.id, persistence, layout)
 
