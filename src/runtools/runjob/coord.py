@@ -74,7 +74,7 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
     def __init__(self, exclusion_id, protected_phase, *, phase_id=None, phase_name='Mutex Parent'):
         super().__init__(phase_id or exclusion_id, CoordTypes.NO_OVERLAP.value, RunState.EVALUATING, phase_name)
         if not exclusion_id:
-            raise ValueError("Parameter `no_overlap_id` cannot be empty")
+            raise ValueError("Parameter `exclusion_id` cannot be empty")
         self._exclusion_id = exclusion_id
         self._protected_phase = protected_phase
         self._attrs = {MutualExclusionPhase.EXCLUSION_ID: self._exclusion_id}
