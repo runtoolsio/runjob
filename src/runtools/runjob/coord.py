@@ -68,6 +68,7 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
     """
     TODO Docs
     1. Set continue flag to be checked
+    Note: Current implementation doesn't implement a fair strategy for phases executed at nearly the same time
     """
     EXCLUSION_ID = 'exclusion_id'
 
@@ -96,19 +97,21 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
     def attributes(self):
         return self._attrs
 
-    def _run(self, ctx: JobInstanceContext):
-        log.debug("[mutex_check_started]")
-        with ctx.environment.lock(f"mutex-{self.exclusion_id}"):  # TODO Manage lock names better
-            c = JobRunCriteria()
-            c += MetadataCriterion.all_except(ctx.metadata.instance_id)  # Excl self
-            c += self._excl_running_phase_filter
-            excl_runs = ctx.environment.get_active_runs(c)
+    def _excl_running_job_filter(self, ctx):
+        c = JobRunCriteria()
+        c += MetadataCriterion.all_except(ctx.metadata.instance_id)  # Excl self
+        c += self._excl_running_phase_filter
+        return c
 
+    def _run(self, ctx: JobInstanceContext):
+        log.debug("[mutex_check_started] exclusion_id=[%s]", self.exclusion_id)
+        with ctx.environment.lock(f"mutex-{self.exclusion_id}"):  # TODO Manage lock names better
+            excl_runs = ctx.environment.get_active_runs(self._excl_running_job_filter(ctx))
             for exc_run in excl_runs:
                 log.debug(f"[overlap_found]: {exc_run.metadata}")
-                raise TerminateRun(TerminationStatus.OVERLAP)
+                raise TerminateRun(TerminationStatus.OVERLAP)  # TODO Race-condition - set flag before raise
 
-            self._protected_phase.run(ctx)
+        self._protected_phase.run(ctx)
 
     def stop(self):
         pass
