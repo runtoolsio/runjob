@@ -322,9 +322,9 @@ class _JobInstance(JobInstance):
 
             if term := e.phase_detail.lifecycle.termination:
                 if term.status.is_outcome(Outcome.NON_SUCCESS):
-                    log.warning(self._log('instance_terminated_unsuccessfully', "termination=[{}]", term))
+                    log.warning(self._log('run_unsuccessful', "termination=[{}]", term))
                 else:
-                    log.debug(self._log('instance_terminated_successfully', "termination=[{}]", term))
+                    log.debug(self._log('run_successful', "termination=[{}]", term))
 
         snapshot = self.snapshot()
         if is_root_phase:

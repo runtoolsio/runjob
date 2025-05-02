@@ -4,22 +4,34 @@ from datetime import datetime, timedelta
 from multiprocessing import Lock  # TODO
 from typing import Optional, Generic, List
 
+from runtools.runcore import err
 from runtools.runcore.job import Stage
-from runtools.runcore.run import TerminationStatus, TerminationInfo, Fault, RunState, C, PhaseControl, \
-    PhaseDetail, PhaseTransitionObserver, PhaseTransitionEvent
+from runtools.runcore.run import TerminationStatus, TerminationInfo, RunState, C, PhaseControl, \
+    PhaseDetail, PhaseTransitionObserver, PhaseTransitionEvent, TerminateRun, Outcome
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
 log = logging.getLogger(__name__)
 
 UNCAUGHT_PHASE_EXEC_EXCEPTION = "UNCAUGHT_PHASE_RUN_EXCEPTION"
+CHILD_RUN_ERROR = "ERROR"
 
 
 class PhaseCompletionError(Exception):
 
-    def __init__(self, phase_id):
-        super().__init__(f"Phase '{phase_id}' execution did not complete successfully")
+    def __init__(self, phase_id, reason):
+        super().__init__(reason)
         self.phase_id = phase_id
+
+    def original_message(self) -> Optional[str]:
+        """
+        Walk the chain of PhaseCompletionError causes and return
+        the message from the very first one.
+        """
+        exc = self
+        while isinstance(exc.__cause__, PhaseCompletionError):
+            exc = exc.__cause__
+        return str(exc)
 
 
 class Phase(ABC, Generic[C]):
@@ -113,13 +125,6 @@ class Phase(ABC, Generic[C]):
     @abstractmethod
     def remove_phase_observer(self, observer):
         pass
-
-
-class ExecutionTerminated(Exception):
-    """TODO RunTerminated?"""
-
-    def __init__(self, termination_status: TerminationStatus):
-        self.termination_status = termination_status
 
 
 class BasePhase(Phase[C], ABC):
@@ -227,16 +232,21 @@ class BasePhase(Phase[C], ABC):
         term = None
         try:
             self._run(ctx)
-        except ExecutionTerminated as e:
-            fault = None
-            if e.__cause__:
-                fault = Fault.from_exception("EXECUTION_TERMINATED", e.__cause__)
-            term = TerminationInfo(e.termination_status, utc_now(), fault)
-            # raise PhaseCompletionError(self.id) from e  TODO Why was it here?
+        except TerminateRun as e:
+            if e.termination_status.is_outcome(Outcome.NON_SUCCESS):
+                msg = str(e) if e.args else None
+                stack_trace = None
+                if e.__cause__:
+                    if not msg:
+                        msg = str(e.__cause__)
+                    stack_trace = err.stacktrace_str(e.__cause__)
+                term = TerminationInfo(e.termination_status, utc_now(), msg, stack_trace)
+        except PhaseCompletionError as e:
+            term = TerminationInfo(TerminationStatus.ERROR, utc_now(), e.original_message())
+            raise PhaseCompletionError(self.id, f"{e.phase_id} -> {e}") from e
         except Exception as e:
-            fault = Fault.from_exception(UNCAUGHT_PHASE_EXEC_EXCEPTION, e)
-            term = TerminationInfo(TerminationStatus.FAILED, utc_now(), fault)
-            raise PhaseCompletionError(self.id) from e
+            term = TerminationInfo(TerminationStatus.ERROR, utc_now(), str(e), err.stacktrace_str(e))
+            raise PhaseCompletionError(self.id, str(e)) from e
         except (KeyboardInterrupt, SystemExit) as e:
             self.stop()
             term = TerminationInfo(TerminationStatus.INTERRUPTED, utc_now())
@@ -289,11 +299,11 @@ class SequentialPhase(BasePhase):
                         if self.termination:
                             break
                         else:
-                            raise ExecutionTerminated(TerminationStatus.STOPPED)
+                            raise TerminateRun(TerminationStatus.STOPPED)
                     self._current_child = child
                 child.run(ctx)
                 if child.termination.status != TerminationStatus.COMPLETED:
-                    raise ExecutionTerminated(child.termination.status)
+                    raise TerminateRun(child.termination.status)
         finally:
             self._current_child = None
 

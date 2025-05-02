@@ -8,10 +8,10 @@ from typing import Any, List
 
 from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion, MetadataCriterion, LifecycleCriterion
 from runtools.runcore.job import JobRun, InstanceTransitionEvent
-from runtools.runcore.run import RunState, TerminationStatus, TerminateRun, control_api, Stage
+from runtools.runcore.run import RunState, TerminationStatus, control_api, Stage, TerminateRun
 from runtools.runjob.instance import JobInstanceContext
 from runtools.runjob.output import OutputContext
-from runtools.runjob.phase import BasePhase, ExecutionTerminated, Phase
+from runtools.runjob.phase import BasePhase, Phase
 
 log = logging.getLogger(__name__)
 
@@ -43,10 +43,10 @@ class ApprovalPhase(BasePhase[Any]):
         approved = self._event.wait(self._timeout or None)
         if self._stopped:
             log.debug("[approval_cancelled]")
-            raise ExecutionTerminated(TerminationStatus.STOPPED)
+            raise TerminateRun(TerminationStatus.STOPPED)
         if not approved:
             log.debug('[approval_timeout]')
-            raise ExecutionTerminated(TerminationStatus.TIMEOUT)
+            raise TerminateRun(TerminationStatus.TIMEOUT)
 
         log.debug("[approved]")
 

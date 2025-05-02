@@ -15,9 +15,9 @@ from typing import Union, Tuple, Optional
 import sys
 
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import TerminationStatus, RunState
+from runtools.runcore.run import TerminationStatus, RunState, TerminateRun
 from runtools.runjob.output import OutputContext
-from runtools.runjob.phase import BasePhase, ExecutionTerminated
+from runtools.runjob.phase import BasePhase
 
 log = logging.getLogger(__name__)
 
@@ -53,9 +53,9 @@ class ProcessPhase(BasePhase[OutputContext]):
 
             if self._interrupted or self._process.exitcode == -signal.SIGINT:
                 # Exit code is -SIGINT only when SIGINT handler is set back to DFL (KeyboardInterrupt gets exit code 1)
-                raise ExecutionTerminated(TerminationStatus.INTERRUPTED)
+                raise TerminateRun(TerminationStatus.INTERRUPTED)
             if self._stopped or self._process.exitcode < 0:
-                raise ExecutionTerminated(TerminationStatus.STOPPED)
+                raise TerminateRun(TerminationStatus.STOPPED)
 
             raise NonZeroReturnCodeError(self._process.exitcode)
 

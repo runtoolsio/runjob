@@ -13,9 +13,9 @@ from typing import Union, Optional
 import sys
 
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import TerminationStatus, RunState
+from runtools.runcore.run import TerminationStatus, RunState, TerminateRun
 from runtools.runjob.output import OutputContext
-from runtools.runjob.phase import ExecutionTerminated, BasePhase
+from runtools.runjob.phase import BasePhase
 
 USE_SHELL = False  # For testing only
 
@@ -66,9 +66,9 @@ class ProgramPhase(BasePhase[OutputContext]):
                 raise CommandNotFoundError(str(e)) from e
 
         if self._interrupted or self.ret_code == -signal.SIGINT:
-            raise ExecutionTerminated(TerminationStatus.INTERRUPTED)
+            raise TerminateRun(TerminationStatus.INTERRUPTED)
         if self._stopped or self.ret_code < 0:  # Negative exit code means terminated by a signal
-            raise ExecutionTerminated(TerminationStatus.STOPPED)
+            raise TerminateRun(TerminationStatus.STOPPED)
         raise NonZeroReturnCodeError(self.ret_code)
 
     def _start_output_reader(self, run_ctx, infile, is_err):

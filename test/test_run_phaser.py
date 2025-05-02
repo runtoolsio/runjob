@@ -66,10 +66,10 @@ def test_sequential_stops_on_exception(ctx):
 
     assert exc_info.value.__cause__.__cause__ == exc
     assert seq.children[0].termination.status == TerminationStatus.COMPLETED
-    assert seq.children[1].termination.status == TerminationStatus.FAILED
+    assert seq.children[1].termination.status == TerminationStatus.ERROR
     assert not seq.children[2].termination
 
-    assert seq.termination.status == TerminationStatus.FAILED
+    assert seq.termination.status == TerminationStatus.ERROR
 
 
 def test_interruption(ctx):

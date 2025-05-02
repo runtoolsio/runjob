@@ -8,7 +8,7 @@ import pytest
 from runtools.runcore.job import InstanceStageObserver, iid
 from runtools.runcore.run import TerminationStatus, Stage
 from runtools.runcore.test.observer import TestStageObserver
-from runtools.runjob import instance, phase
+from runtools.runjob import instance
 from runtools.runjob.test.phase import TestPhase
 
 
@@ -32,7 +32,7 @@ def test_raise_exc(observer: TestStageObserver):
         instance.create(iid('j1'), [TestPhase(raise_exc=Exception)], stage_observers=[observer]).run()
 
     assert observer.stages == [Stage.RUNNING, Stage.ENDED]  # TODO CREATED
-    assert observer.job_runs[-1].lifecycle.termination.fault.category == phase.UNCAUGHT_PHASE_EXEC_EXCEPTION
+    assert observer.job_runs[-1].lifecycle.termination.status == TerminationStatus.ERROR
 
 
 def test_raise_exec_terminated(observer: TestStageObserver):

@@ -3,10 +3,10 @@ from typing import Optional
 
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import RunState, TerminationStatus, control_api
+from runtools.runcore.run import RunState, TerminationStatus, control_api, TerminateRun
 from runtools.runjob.instance import JobInstanceContext
 from runtools.runjob.output import OutputSink, OutputContext
-from runtools.runjob.phase import BasePhase, ExecutionTerminated
+from runtools.runjob.phase import BasePhase
 
 
 class FakeContext(OutputContext, OutputSink):
@@ -63,7 +63,7 @@ class TestPhase(BasePhase[JobInstanceContext]):
             raise self.exception
 
         if self.fail:
-            raise ExecutionTerminated(TerminationStatus.FAILED)
+            raise TerminateRun(TerminationStatus.FAILED)
 
         self.completed = True
 
