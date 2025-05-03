@@ -7,7 +7,7 @@ from typing import Optional, Generic, List
 from runtools.runcore import err
 from runtools.runcore.job import Stage
 from runtools.runcore.run import TerminationStatus, TerminationInfo, RunState, C, PhaseControl, \
-    PhaseDetail, PhaseTransitionObserver, PhaseTransitionEvent, TerminateRun, Outcome
+    PhaseDetail, PhaseTransitionObserver, PhaseTransitionEvent, Outcome
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
@@ -17,7 +17,33 @@ UNCAUGHT_PHASE_EXEC_EXCEPTION = "UNCAUGHT_PHASE_RUN_EXCEPTION"
 CHILD_RUN_ERROR = "ERROR"
 
 
+class PhaseTerminated(Exception):
+    """
+    Exception raised to signal that a Phase has been externally terminated.
+
+    This exception is raised within phases to indicate intentional termination.
+    The parent phase's policy determines whether only the current phase stops
+    or if the termination propagates to stop all phases.
+
+    Attributes:
+        termination_status (TerminationStatus): The status code indicating how the phase terminated.
+    """
+
+    def __init__(self, termination_status: TerminationStatus, message=None):
+        super().__init__(message)
+        self.termination_status = termination_status
+
+
 class PhaseCompletionError(Exception):
+    """
+    Represents an error that occurred during phase execution, capturing the phase ID and reason.
+
+    This exception is used to track errors through the phase hierarchy, maintaining a chain
+    of phase IDs that failed during execution.
+
+    Attributes:
+        phase_id (str): ID of the phase where the error occurred.
+    """
 
     def __init__(self, phase_id, reason):
         super().__init__(reason)
@@ -232,7 +258,7 @@ class BasePhase(Phase[C], ABC):
         term = None
         try:
             self._run(ctx)
-        except TerminateRun as e:
+        except PhaseTerminated as e:
             if e.termination_status.is_outcome(Outcome.NON_SUCCESS):
                 msg = str(e) if e.args else None
                 stack_trace = None
@@ -299,11 +325,11 @@ class SequentialPhase(BasePhase):
                         if self.termination:
                             break
                         else:
-                            raise TerminateRun(TerminationStatus.STOPPED)
+                            raise PhaseTerminated(TerminationStatus.STOPPED)
                     self._current_child = child
                 child.run(ctx)
                 if child.termination.status != TerminationStatus.COMPLETED:
-                    raise TerminateRun(child.termination.status)
+                    raise PhaseTerminated(child.termination.status)
         finally:
             self._current_child = None
 

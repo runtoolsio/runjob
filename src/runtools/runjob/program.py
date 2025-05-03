@@ -13,9 +13,9 @@ from typing import Union, Optional
 import sys
 
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import TerminationStatus, RunState, TerminateRun
+from runtools.runcore.run import TerminationStatus, RunState
 from runtools.runjob.output import OutputContext
-from runtools.runjob.phase import BasePhase
+from runtools.runjob.phase import BasePhase, PhaseTerminated
 
 USE_SHELL = False  # For testing only
 
@@ -63,13 +63,14 @@ class ProgramPhase(BasePhase[OutputContext]):
             except FileNotFoundError as e:
                 sys.stderr.write(str(e) + "\n")
                 """TODO Move exception level up"""
-                raise CommandNotFoundError(str(e)) from e
+                raise PhaseTerminated(TerminationStatus.FAILED, str(e)) from e
 
         if self._interrupted or self.ret_code == -signal.SIGINT:
-            raise TerminateRun(TerminationStatus.INTERRUPTED)
+            raise PhaseTerminated(TerminationStatus.INTERRUPTED)
         if self._stopped or self.ret_code < 0:  # Negative exit code means terminated by a signal
-            raise TerminateRun(TerminationStatus.STOPPED)
-        raise NonZeroReturnCodeError(self.ret_code)
+            raise PhaseTerminated(TerminationStatus.STOPPED)
+        raise PhaseTerminated(
+            TerminationStatus.FAILED, f"Program returned non-zero exit code: {self.ret_code}")
 
     def _start_output_reader(self, run_ctx, infile, is_err):
         name = 'Stderr-Reader' if is_err else 'Stdout-Reader'
@@ -100,24 +101,3 @@ class ProgramPhase(BasePhase[OutputContext]):
                 self._status = line_stripped
                 print(line_stripped, file=sys.stderr if is_err else sys.stdout)
                 run_ctx.output_sink.new_output(OutputLine(line_stripped, is_err))
-
-
-class ProgramExecutionError(Exception):
-    """Base exception for program execution related errors."""
-    pass
-
-
-class CommandNotFoundError(ProgramExecutionError):
-    pass
-
-
-class NonZeroReturnCodeError(ProgramExecutionError):
-    """Exception raised when a program returns a non-zero exit code.
-
-    Attributes:
-        exit_code (int): The actual exit code returned by the program
-    """
-
-    def __init__(self, exit_code: int):
-        self.exit_code = exit_code
-        super().__init__(f"Program returned non-zero exit code: {exit_code}")

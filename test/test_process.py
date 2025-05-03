@@ -4,11 +4,9 @@ Tests :mod:`process` module
 from multiprocessing import Pipe
 from threading import Thread
 
-import pytest
 from time import sleep
 
 from runtools.runcore.run import TerminationStatus
-from runtools.runjob.phase import PhaseCompletionError
 from runtools.runjob.process import ProcessPhase
 from runtools.runjob.test.phase import FakeContext
 
@@ -27,8 +25,9 @@ def exec_hello(pipe):
 
 def test_failure_error():
     e = ProcessPhase('failed phase', raise_error, ())
-    with pytest.raises(PhaseCompletionError):
-        e.run(FakeContext())
+    e.run(FakeContext())
+    assert e.termination.status == TerminationStatus.FAILED
+    assert e.termination.message == "Process returned non-zero exit code: 1"
 
 
 def raise_error():
@@ -37,8 +36,9 @@ def raise_error():
 
 def test_failure_exit():
     e = ProcessPhase('error code phase', exec_failure_exit, ())
-    with pytest.raises(PhaseCompletionError):
-        e.run(FakeContext())
+    e.run(FakeContext())
+    assert e.termination.status == TerminationStatus.FAILED
+    assert e.termination.message == "Process returned non-zero exit code: 1"
 
 
 def exec_failure_exit():

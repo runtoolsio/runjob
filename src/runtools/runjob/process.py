@@ -15,9 +15,9 @@ from typing import Union, Tuple, Optional
 import sys
 
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import TerminationStatus, RunState, TerminateRun
+from runtools.runcore.run import TerminationStatus, RunState
 from runtools.runjob.output import OutputContext
-from runtools.runjob.phase import BasePhase
+from runtools.runjob.phase import BasePhase, PhaseTerminated
 
 log = logging.getLogger(__name__)
 
@@ -53,11 +53,12 @@ class ProcessPhase(BasePhase[OutputContext]):
 
             if self._interrupted or self._process.exitcode == -signal.SIGINT:
                 # Exit code is -SIGINT only when SIGINT handler is set back to DFL (KeyboardInterrupt gets exit code 1)
-                raise TerminateRun(TerminationStatus.INTERRUPTED)
+                raise PhaseTerminated(TerminationStatus.INTERRUPTED)
             if self._stopped or self._process.exitcode < 0:
-                raise TerminateRun(TerminationStatus.STOPPED)
+                raise PhaseTerminated(TerminationStatus.STOPPED)
 
-            raise NonZeroReturnCodeError(self._process.exitcode)
+            raise PhaseTerminated(
+                TerminationStatus.FAILED, f"Process returned non-zero exit code: {self._process.exitcode}")
 
     def _exec(self):
         with self._capture_stdout():
@@ -131,20 +132,3 @@ class _CapturingWriter:
 class _QueueStop:
     """Poison object signalizing no more objects will be put in the queue"""
     pass
-
-
-class ProcessExecutionError(Exception):
-    """Base exception for process execution related errors."""
-    pass
-
-
-class NonZeroReturnCodeError(ProcessExecutionError):
-    """Exception raised when a process returns a non-zero exit code.
-
-    Attributes:
-        exit_code (int): The actual exit code returned by the process
-    """
-
-    def __init__(self, exit_code: int):
-        self.exit_code = exit_code
-        super().__init__(f"Process returned non-zero exit code: {exit_code}")

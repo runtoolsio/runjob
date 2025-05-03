@@ -8,10 +8,10 @@ from typing import Any, List
 
 from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion, MetadataCriterion, LifecycleCriterion
 from runtools.runcore.job import JobRun, InstanceTransitionEvent
-from runtools.runcore.run import RunState, TerminationStatus, control_api, Stage, TerminateRun
+from runtools.runcore.run import RunState, TerminationStatus, control_api, Stage
 from runtools.runjob.instance import JobInstanceContext
 from runtools.runjob.output import OutputContext
-from runtools.runjob.phase import BasePhase, Phase
+from runtools.runjob.phase import BasePhase, Phase, PhaseTerminated
 
 log = logging.getLogger(__name__)
 
@@ -43,10 +43,10 @@ class ApprovalPhase(BasePhase[Any]):
         approved = self._event.wait(self._timeout or None)
         if self._stopped:
             log.debug("[approval_cancelled]")
-            raise TerminateRun(TerminationStatus.STOPPED)
+            raise PhaseTerminated(TerminationStatus.STOPPED)
         if not approved:
             log.debug('[approval_timeout]')
-            raise TerminateRun(TerminationStatus.TIMEOUT)
+            raise PhaseTerminated(TerminationStatus.TIMEOUT)
 
         log.debug("[approved]")
 
@@ -109,7 +109,7 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
             excl_runs = ctx.environment.get_active_runs(self._excl_running_job_filter(ctx))
             for exc_run in excl_runs:
                 log.debug(f"[overlap_found]: {exc_run.metadata}")
-                raise TerminateRun(TerminationStatus.OVERLAP)  # TODO Race-condition - set flag before raise
+                raise PhaseTerminated(TerminationStatus.OVERLAP)  # TODO Race-condition - set flag before raise
 
         self._protected_phase.run(ctx)
 
@@ -139,7 +139,7 @@ class DependencyPhase(BasePhase[JobInstanceContext]):
                          r.instance_id != ctx.metadata.instance_id]
         if not matching_runs:
             log.debug(f"[active_dependency_not_found] dependency=[{self._dependency_match}]")
-            raise TerminateRun(TerminationStatus.UNSATISFIED)
+            raise PhaseTerminated(TerminationStatus.UNSATISFIED)
         log.debug(f"[active_dependency_found] instances={[r.instance_id for r in matching_runs]}")
 
     def stop(self):
@@ -173,7 +173,7 @@ class WaitingPhase(BasePhase[OutputContext]):
 
         self._stop_all()
         if self._term_status:
-            raise TerminateRun(self._term_status)
+            raise PhaseTerminated(self._term_status)
 
     def _result_observer(self, *_):
         wait = False
