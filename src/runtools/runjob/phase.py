@@ -27,11 +27,13 @@ class PhaseTerminated(Exception):
 
     Attributes:
         termination_status (TerminationStatus): The status code indicating how the phase terminated.
+        message (Optional[str]): Optional termination message.
     """
 
     def __init__(self, termination_status: TerminationStatus, message=None):
         super().__init__(message)
         self.termination_status = termination_status
+        self.message = message
 
 
 class Phase(ABC, Generic[C]):
@@ -234,7 +236,7 @@ class BasePhase(Phase[C], ABC):
             self._run(ctx)
         except PhaseTerminated as e:
             if e.termination_status.is_outcome(Outcome.NON_SUCCESS):
-                msg = str(e) if e.args else None
+                msg = e.message
                 stack_trace = None
                 if e.__cause__:
                     if not msg:
@@ -303,7 +305,7 @@ class SequentialPhase(BasePhase):
                     self._current_child = child
                 child.run(ctx)
                 if child.termination.status != TerminationStatus.COMPLETED:
-                    raise PhaseTerminated(child.termination.status)
+                    raise PhaseTerminated(child.termination.status, child.termination.message)
         finally:
             self._current_child = None
 
