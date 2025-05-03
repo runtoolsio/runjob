@@ -7,7 +7,7 @@ from typing import Optional, Generic, List
 from runtools.runcore import err
 from runtools.runcore.job import Stage
 from runtools.runcore.run import TerminationStatus, TerminationInfo, RunState, C, PhaseControl, \
-    PhaseDetail, PhaseTransitionObserver, PhaseTransitionEvent, Outcome
+    PhaseDetail, PhaseTransitionObserver, PhaseTransitionEvent, Outcome, RunCompletionError
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
@@ -32,32 +32,6 @@ class PhaseTerminated(Exception):
     def __init__(self, termination_status: TerminationStatus, message=None):
         super().__init__(message)
         self.termination_status = termination_status
-
-
-class PhaseCompletionError(Exception):
-    """
-    Represents an error that occurred during phase execution, capturing the phase ID and reason.
-
-    This exception is used to track errors through the phase hierarchy, maintaining a chain
-    of phase IDs that failed during execution.
-
-    Attributes:
-        phase_id (str): ID of the phase where the error occurred.
-    """
-
-    def __init__(self, phase_id, reason):
-        super().__init__(reason)
-        self.phase_id = phase_id
-
-    def original_message(self) -> Optional[str]:
-        """
-        Walk the chain of PhaseCompletionError causes and return
-        the message from the very first one.
-        """
-        exc = self
-        while isinstance(exc.__cause__, PhaseCompletionError):
-            exc = exc.__cause__
-        return str(exc)
 
 
 class Phase(ABC, Generic[C]):
@@ -267,12 +241,12 @@ class BasePhase(Phase[C], ABC):
                         msg = str(e.__cause__)
                     stack_trace = err.stacktrace_str(e.__cause__)
                 term = TerminationInfo(e.termination_status, utc_now(), msg, stack_trace)
-        except PhaseCompletionError as e:
+        except RunCompletionError as e:
             term = TerminationInfo(TerminationStatus.ERROR, utc_now(), e.original_message())
-            raise PhaseCompletionError(self.id, f"{e.phase_id} -> {e}") from e
+            raise RunCompletionError(self.id, f"{e.phase_id} -> {e}") from e
         except Exception as e:
             term = TerminationInfo(TerminationStatus.ERROR, utc_now(), str(e), err.stacktrace_str(e))
-            raise PhaseCompletionError(self.id, str(e)) from e
+            raise RunCompletionError(self.id, str(e)) from e
         except (KeyboardInterrupt, SystemExit) as e:
             self.stop()
             term = TerminationInfo(TerminationStatus.INTERRUPTED, utc_now())
