@@ -73,21 +73,17 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
     EXCLUSION_ID = 'exclusion_id'
 
     def __init__(self, exclusion_id, protected_phase, *, phase_id=None, phase_name='Mutex Parent'):
-        super().__init__(phase_id or exclusion_id, CoordTypes.NO_OVERLAP.value, RunState.EVALUATING, phase_name)
+        super().__init__(phase_id or exclusion_id, CoordTypes.NO_OVERLAP.value, RunState.EVALUATING,
+                         [protected_phase], phase_name)
         if not exclusion_id:
             raise ValueError("Parameter `exclusion_id` cannot be empty")
         self._exclusion_id = exclusion_id
-        self._protected_phase = protected_phase
         self._attrs = {MutualExclusionPhase.EXCLUSION_ID: self._exclusion_id}
         self._excl_running_phase_filter = PhaseCriterion(
             phase_type=CoordTypes.NO_OVERLAP.value,
             attributes={MutualExclusionPhase.EXCLUSION_ID: self._exclusion_id},
             lifecycle=LifecycleCriterion(stage=Stage.RUNNING)
         )
-
-    @property
-    def children(self) -> List[Phase]:
-        return [self._protected_phase]
 
     @property
     def exclusion_id(self):
@@ -111,7 +107,7 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
                 log.debug(f"[overlap_found]: {exc_run.metadata}")
                 raise PhaseTerminated(TerminationStatus.OVERLAP)  # TODO Race-condition - set flag before raise
 
-        self._protected_phase.run(ctx)
+        self._children[0].run(ctx)
 
     def stop(self):
         pass

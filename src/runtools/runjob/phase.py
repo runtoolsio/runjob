@@ -132,15 +132,19 @@ class Phase(ABC, Generic[C]):
 class BasePhase(Phase[C], ABC):
     """Base implementation providing common functionality for V2 phases"""
 
-    def __init__(self, phase_id: str, phase_type: str, run_state: RunState, name: Optional[str] = None):
+    def __init__(self, phase_id: str, phase_type: str, run_state: RunState, children=(), name: Optional[str] = None):
         self._id = phase_id
         self._type = phase_type
         self._run_state = run_state
+        self._children = list(children)
         self._name = name
         self._created_at: datetime = utc_now()
+        self._ctx = None
         self._started_at: Optional[datetime] = None
         self._termination: Optional[TerminationInfo] = None
         self._notification = ObservableNotification[PhaseTransitionObserver]()
+        for c in children:
+            c.add_phase_observer(self._notification.observer_proxy)
 
     @abstractmethod
     def _run(self, ctx: Optional[C]):
@@ -189,7 +193,7 @@ class BasePhase(Phase[C], ABC):
 
     @property
     def children(self) -> List[Phase]:
-        return []
+        return self._children.copy()
 
     def find_phase_control(self, phase_filter) -> Optional[PhaseControl]:
         """
@@ -231,6 +235,7 @@ class BasePhase(Phase[C], ABC):
         self._notification.observer_proxy.new_phase_transition(
             PhaseTransitionEvent(self.detail(), Stage.RUNNING, self._started_at))
 
+        self._ctx = ctx
         term = None
         try:
             self._run(ctx)
@@ -254,12 +259,26 @@ class BasePhase(Phase[C], ABC):
             term = TerminationInfo(TerminationStatus.INTERRUPTED, utc_now())
             raise e
         finally:
+            self._ctx = None
             if term:
                 self._termination = term
             else:
-                self._termination = TerminationInfo(TerminationStatus.COMPLETED, utc_now())
+                for child in self._children:
+                    if child.termination and child.termination.status != TerminationStatus.COMPLETED:
+                        self._termination = TerminationInfo(child.termination.status, utc_now(), child.termination.message)
+                        break
+                if not self._termination:
+                    self._termination = TerminationInfo(TerminationStatus.COMPLETED, utc_now())
             self._notification.observer_proxy.new_phase_transition(
                 PhaseTransitionEvent(self.detail(), Stage.ENDED, self._termination.terminated_at))
+
+    def run_child(self, child):
+        if self._termination:
+            raise RuntimeError("Parent already terminated")
+        if child not in self._children:
+            self._children.append(child)
+            child.add_phase_observer(self._notification.observer_proxy)
+        child.run(self._ctx)
 
     def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY):
         self._notification.add_observer(observer, priority)
@@ -277,17 +296,10 @@ class SequentialPhase(BasePhase):
     TYPE = 'SEQUENTIAL'
 
     def __init__(self, phase_id: str, children: List[Phase[C]], name: Optional[str] = None):
-        super().__init__(phase_id, SequentialPhase.TYPE, RunState.EXECUTING, name)
-        self._children = children
+        super().__init__(phase_id, SequentialPhase.TYPE, RunState.EXECUTING, children, name)
         self._current_child: Optional[Phase[C]] = None
         self._stop_lock = Lock()
         self._stopped = False
-        for c in children:
-            c.add_phase_observer(self._notification.observer_proxy)
-
-    @property
-    def children(self) -> List[Phase[C]]:
-        return self._children.copy()
 
     def _run(self, ctx: Optional[C]):
         """
@@ -303,7 +315,7 @@ class SequentialPhase(BasePhase):
                         else:
                             raise PhaseTerminated(TerminationStatus.STOPPED)
                     self._current_child = child
-                child.run(ctx)
+                self.run_child(child)
                 if child.termination.status != TerminationStatus.COMPLETED:
                     raise PhaseTerminated(child.termination.status, child.termination.message)
         finally:
