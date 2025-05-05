@@ -106,7 +106,7 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
         with ctx.environment.lock(f"mutex-{self.exclusion_id}"):  # TODO Manage lock names better
             excl_runs = ctx.environment.get_active_runs(self._excl_running_job_filter(ctx))
             for exc_run in excl_runs:
-                log.debug(f"[overlap_found]: {exc_run.metadata}")
+                log.warning(f"[overlap_found]: {exc_run.metadata}")
                 raise PhaseTerminated(TerminationStatus.OVERLAP)  # TODO Race-condition - set flag before raise
 
         with self._state_lock:

@@ -6,11 +6,11 @@ from pathlib import Path
 from threading import Lock, Condition
 from typing import Dict, Optional, List, Callable
 
-from runtools.runcore import plugins, paths, connector, db
+from runtools.runcore import plugins, paths, connector, db, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
 from runtools.runcore.db import sqlite, PersistingObserver, SortCriteria, NullPersistence
-from runtools.runcore.env import DEFAULT_ENVIRONMENT, EnvironmentConfigUnion, LocalEnvironmentConfig, \
+from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
     IsolatedEnvironmentConfig
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, JobInstanceNotifications, InstanceStageEvent, \
@@ -308,20 +308,26 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             raise KeyboardInterrupt
 
 
-def isolated(persistence=None, *, lock_factory=None, features=None, transient=True) -> 'IsolatedEnvironment':
+def isolated(env_id=None, persistence=None, *, lock_factory=None, features=None, transient=True) -> 'IsolatedEnvironment':
+    env_id = env_id or "isolated_" + util.unique_timestamp_hex()
     persistence = persistence or sqlite.create(':memory:')
     lock_factory = lock_factory or lock.default_memory_lock_factory()
-    return IsolatedEnvironment(persistence, lock_factory, to_tuple(features), transient)
+    return IsolatedEnvironment(env_id, persistence, lock_factory, to_tuple(features), transient)
 
 
 class IsolatedEnvironment(JobInstanceNotifications, EnvironmentNodeBase):
 
-    def __init__(self, persistence, lock_factory, features, transient=True):
+    def __init__(self, env_id, persistence, lock_factory, features, transient=True):
         JobInstanceNotifications.__init__(self)
         EnvironmentNodeBase.__init__(self, features, transient=transient)
+        self._env_id = env_id
         self._persistence = persistence
         self._lock_factory = lock_factory
         self._persisting_observer = PersistingObserver(persistence)
+
+    @property
+    def env_id(self):
+        return self._env_id
 
     @property
     def persistence_enabled(self) -> bool:
@@ -499,13 +505,12 @@ def create(env_config: EnvironmentConfigUnion):
         return local(env_config.id, persistence, layout)
 
     if isinstance(env_config, IsolatedEnvironmentConfig):
-        return isolated(persistence)
+        return isolated(env_config.id, persistence)
 
     raise AssertionError(f"Unsupported environment config: {type(env_config)}.")
 
 
-def local(env_id=DEFAULT_ENVIRONMENT, persistence=None, node_layout=None,
-          *, lock_factory=None, features=None, transient=True):
+def local(env_id, persistence=None, node_layout=None, *, lock_factory=None, features=None, transient=True):
     layout = node_layout or StandardLocalNodeLayout.create(env_id)
     persistence = persistence or sqlite.create(str(paths.sqlite_db_path(env_id, create=True)))
     local_connector = connector.local(env_id, persistence, layout)
@@ -535,6 +540,10 @@ class LocalNode(EnvironmentNodeBase):
         self._event_dispatcher = event_dispatcher
         self._lock_factory = lock_factory
         self._persisting_observer = PersistingObserver(persistence)
+
+    @property
+    def env_id(self):
+        return self._env_id
 
     @property
     def persistence_enabled(self) -> bool:

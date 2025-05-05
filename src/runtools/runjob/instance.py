@@ -217,8 +217,8 @@ class _JobInstance(JobInstance):
         self._root_phase.add_phase_observer(self._on_phase_update)
 
     def _log(self, event: str, msg: str = '', *params):
-        return ("[{}] job_run=[{}@{}] " + msg).format(
-            event, self._metadata.job_id, self._metadata.run_id, *params)
+        return ("[{}] env=[{}] job_run=[{}@{}] " + msg).format(
+            event, self._ctx.environment.env_id, self._metadata.job_id, self._metadata.run_id, *params)
 
     @property
     def metadata(self):
@@ -318,13 +318,13 @@ class _JobInstance(JobInstance):
 
         is_root_phase = e.phase_detail.phase_id == ROOT_PHASE_ID
         if is_root_phase:
-            log.debug(self._log('instance_stage_update', "new_stage=[{}]", e.new_stage))
+            log.debug(self._log('instance_lifecycle_update', "new_stage=[{}]", e.new_stage))
 
             if term := e.phase_detail.lifecycle.termination:
                 if term.status.is_outcome(Outcome.NON_SUCCESS):
                     log.warning(self._log('run_unsuccessful', "termination=[{}]", term))
                 else:
-                    log.debug(self._log('run_successful', "termination=[{}]", term))
+                    log.info(self._log('run_successful', "termination=[{}]", term))
 
         snapshot = self.snapshot()
         if is_root_phase:
