@@ -59,7 +59,7 @@ class ApprovalPhase(BasePhase[Any]):
     def approved(self):
         return self._event.is_set() and not self._stopped
 
-    def stop(self):
+    def _stop_run(self):
         self._stopped = True
         self._event.set()
 
@@ -109,7 +109,8 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
 
         self._children[0].run(ctx)
 
-    def stop(self):
+    def _stop_run(self):
+        """TODO Implement"""
         pass
 
     @property
@@ -138,7 +139,7 @@ class DependencyPhase(BasePhase[JobInstanceContext]):
             raise PhaseTerminated(TerminationStatus.UNSATISFIED)
         log.debug(f"[active_dependency_found] instances={[r.instance_id for r in matching_runs]}")
 
-    def stop(self):
+    def _stop_run(self):
         pass
 
     @property
@@ -185,7 +186,7 @@ class WaitingPhase(BasePhase[OutputContext]):
         if not wait:
             self._event.set()
 
-    def stop(self):
+    def _stop_run(self):
         self._stop_all()
         self._event.set()
 
@@ -393,7 +394,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
 
         self._limited_phase.run(ctx)
 
-    def stop(self):
+    def _stop_run(self):
         with self._queue_change_condition:
             if self._state.dequeued:
                 self._limited_phase.stop()

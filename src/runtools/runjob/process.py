@@ -91,7 +91,7 @@ class ProcessPhase(BasePhase[OutputContext]):
     def parameters(self):
         return ('execution', 'process'),
 
-    def stop(self):
+    def _stop_run(self):
         self._stopped = True
         self.output_queue.put_nowait((_QueueStop(), False))
         if self._process:

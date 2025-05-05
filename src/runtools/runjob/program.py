@@ -82,7 +82,7 @@ class ProgramPhase(BasePhase[OutputContext]):
     def parameters(self):
         return ('execution', 'program'),
 
-    def stop(self):
+    def _stop_run(self):
         self._stopped = True
         if self._popen:
             self._popen.terminate()

@@ -95,7 +95,7 @@ class Phase(ABC, Generic[C]):
         pass
 
     def find_phase_control_by_id(self, phase_id: str) -> Optional[PhaseControl]:
-        self.find_phase_control(lambda phase: phase.id == phase_id)
+        return self.find_phase_control(lambda phase: phase.id == phase_id)
 
     @abstractmethod
     def run(self, ctx: Optional[C]):
@@ -142,6 +142,7 @@ class BasePhase(Phase[C], ABC):
         self._ctx = None
         self._started_at: Optional[datetime] = None
         self._termination: Optional[TerminationInfo] = None
+        self._state_lock = Lock()
         self._notification = ObservableNotification[PhaseTransitionObserver]()
         for c in children:
             c.add_phase_observer(self._notification.observer_proxy)
@@ -231,7 +232,10 @@ class BasePhase(Phase[C], ABC):
         return PhaseDetail.from_phase(self)
 
     def run(self, ctx: Optional[C]):
-        self._started_at = utc_now()
+        with self._state_lock:
+            if self.termination:
+                return
+            self._started_at = utc_now()
         self._notification.observer_proxy.new_phase_transition(
             PhaseTransitionEvent(self.detail(), Stage.RUNNING, self._started_at))
 
@@ -265,7 +269,8 @@ class BasePhase(Phase[C], ABC):
             else:
                 for child in self._children:
                     if child.termination and child.termination.status != TerminationStatus.COMPLETED:
-                        self._termination = TerminationInfo(child.termination.status, utc_now(), child.termination.message)
+                        self._termination = TerminationInfo(child.termination.status, utc_now(),
+                                                            child.termination.message)
                         break
                 if not self._termination:
                     self._termination = TerminationInfo(TerminationStatus.COMPLETED, utc_now())
@@ -279,6 +284,21 @@ class BasePhase(Phase[C], ABC):
             self._children.append(child)
             child.add_phase_observer(self._notification.observer_proxy)
         child.run(self._ctx)
+
+    @abstractmethod
+    def _stop_run(self):
+        pass
+
+    def stop(self):
+        with self._state_lock:
+            if self.termination:
+                return
+            if not self._started_at:
+                self._termination = TerminationInfo(TerminationStatus.STOPPED, utc_now())
+                self._notification.observer_proxy.new_phase_transition(
+                    PhaseTransitionEvent(self.detail(), Stage.ENDED, self._termination.terminated_at))
+                return
+        self._stop_run()
 
     def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY):
         self._notification.add_observer(observer, priority)
@@ -310,10 +330,7 @@ class SequentialPhase(BasePhase):
             for child in self._children:
                 with self._stop_lock:
                     if self._stopped:
-                        if self.termination:
-                            break
-                        else:
-                            raise PhaseTerminated(TerminationStatus.STOPPED)
+                        raise PhaseTerminated(TerminationStatus.STOPPED)
                     self._current_child = child
                 self.run_child(child)
                 if child.termination.status != TerminationStatus.COMPLETED:
@@ -321,7 +338,7 @@ class SequentialPhase(BasePhase):
         finally:
             self._current_child = None
 
-    def stop(self):
+    def _stop_run(self):
         """
         Stop the current child phase if one is executing
         """
@@ -329,5 +346,3 @@ class SequentialPhase(BasePhase):
             self._stopped = True
             if self._current_child:
                 self._current_child.stop()
-            else:
-                self._termination = TerminationInfo(TerminationStatus.STOPPED, utc_now())
