@@ -84,6 +84,8 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
             attributes={MutualExclusionPhase.EXCLUSION_ID: self._exclusion_id},
             lifecycle=LifecycleCriterion(stage=Stage.RUNNING)
         )
+        self._state_lock = Lock()
+        self._state = 0  # -1 = stopped, 1 = proceeded
 
     @property
     def exclusion_id(self):
@@ -107,11 +109,20 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
                 log.debug(f"[overlap_found]: {exc_run.metadata}")
                 raise PhaseTerminated(TerminationStatus.OVERLAP)  # TODO Race-condition - set flag before raise
 
+        with self._state_lock:
+            if self._state == -1:
+                raise PhaseTerminated(TerminationStatus.STOPPED)
+            self._state = 1
+
         self._children[0].run(ctx)
 
     def _stop_run(self):
-        """TODO Implement"""
-        pass
+        with self._state_lock:
+            if self._state == 1:
+                self._children[0].stop()
+            else:
+                self._state = -1
+
 
     @property
     def stop_status(self):
