@@ -217,7 +217,7 @@ class _JobInstance(JobInstance):
         self._root_phase.add_phase_observer(self._on_phase_update)
 
     def _log(self, event: str, msg: str = '', *params):
-        return ("[{}] instance=[{}] env=[{}] " + msg).format(
+        return ("{} instance=[{}] env=[{}] " + msg).format(
             event, self._metadata.instance_id, self._ctx.environment.env_id, *params)
 
     @property
