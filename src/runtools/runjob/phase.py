@@ -132,7 +132,7 @@ class Phase(ABC, Generic[C]):
 class BasePhase(Phase[C], ABC):
     """Base implementation providing common functionality for V2 phases"""
 
-    def __init__(self, phase_id: str, phase_type: str, run_state: RunState, children=(), name: Optional[str] = None):
+    def __init__(self, phase_id: str, phase_type: str, run_state: RunState, name: Optional[str] = None, children=()):
         self._id = phase_id
         self._type = phase_type
         self._run_state = run_state
@@ -316,7 +316,7 @@ class SequentialPhase(BasePhase):
     TYPE = 'SEQUENTIAL'
 
     def __init__(self, phase_id: str, children: List[Phase[C]], name: Optional[str] = None):
-        super().__init__(phase_id, SequentialPhase.TYPE, RunState.EXECUTING, children, name)
+        super().__init__(phase_id, SequentialPhase.TYPE, RunState.EXECUTING, name, children)
         self._current_child: Optional[Phase[C]] = None
         self._stop_lock = Lock()
         self._stopped = False

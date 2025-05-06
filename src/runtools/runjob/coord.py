@@ -30,7 +30,7 @@ class ApprovalPhase(BasePhase[Any]):
     TODO: parameters
     """
 
-    def __init__(self, phase_id='approval', phase_name='Approval', *, timeout=0):
+    def __init__(self, phase_id, phase_name='Approval', *, timeout=0):
         super().__init__(phase_id, CoordTypes.APPROVAL.value, RunState.PENDING, phase_name)
         self._timeout = timeout
         self._event = Event()
@@ -73,8 +73,8 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
     EXCLUSION_ID = 'exclusion_id'
 
     def __init__(self, exclusion_id, protected_phase, *, phase_id=None, phase_name='Mutex Parent'):
-        super().__init__(phase_id or exclusion_id, CoordTypes.NO_OVERLAP.value, RunState.EVALUATING,
-                         [protected_phase], phase_name)
+        super().__init__(phase_id or exclusion_id, CoordTypes.NO_OVERLAP.value, RunState.EVALUATING, phase_name,
+                         [protected_phase])
         if not exclusion_id:
             raise ValueError("Parameter `exclusion_id` cannot be empty")
         self._exclusion_id = exclusion_id
