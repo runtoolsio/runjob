@@ -123,7 +123,6 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
             else:
                 self._state = -1
 
-
     @property
     def stop_status(self):
         return TerminationStatus.CANCELLED
@@ -428,7 +427,8 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
         runs: List[JobRun] = ctx.environment.get_active_runs(JobRunCriteria(phase_criteria=self._phase_filter_running))
         runs_sorted = sorted(runs, key=lambda run: run.find_phase(self._phase_filter).lifecycle.created_at)
         ids_dispatched = {r.instance_id for r in runs_sorted if
-                      r.find_phase(self._phase_filter).variables[ExecutionQueue.STATE] == QueuedState.DISPATCHED.name}
+                          r.find_phase(self._phase_filter).variables[
+                              ExecutionQueue.STATE] == QueuedState.DISPATCHED.name}
         free_slots = self._execution_group.max_executions - len(ids_dispatched)
 
         if free_slots <= 0:
@@ -441,7 +441,8 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
             if next_dispatch.instance_id in ids_dispatched:
                 continue
             dispatched = (
-                ctx.environment.get_instance(next_dispatch.instance_id).find_phase_control(self._phase_filter).signal_dispatch())
+                ctx.environment.get_instance(next_dispatch.instance_id).find_phase_control(
+                    self._phase_filter).signal_dispatch())
             if dispatched:
                 log.debug("event[dispatched] run=[%s]", next_dispatch.metadata)
                 free_slots -= 1
