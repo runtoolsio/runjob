@@ -53,7 +53,7 @@ from runtools.runcore.job import (JobInstance, JobRun, InstanceOutputObserver, J
                                   InstanceTransitionEvent, InstanceOutputEvent, InstanceStageObserver,
                                   InstanceStageEvent)
 from runtools.runcore.output import Output, TailNotSupportedError, Mode
-from runtools.runcore.run import Outcome, Fault, PhaseTransitionEvent
+from runtools.runcore.run import Outcome, Fault, PhaseTransitionEvent, Stage
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer
@@ -217,8 +217,8 @@ class _JobInstance(JobInstance):
         self._root_phase.add_phase_observer(self._on_phase_update)
 
     def _log(self, event: str, msg: str = '', *params):
-        return ("[{}] env=[{}] job_run=[{}@{}] " + msg).format(
-            event, self._ctx.environment.env_id, self._metadata.job_id, self._metadata.run_id, *params)
+        return ("[{}] instance=[{}] env=[{}] " + msg).format(
+            event, self._metadata.instance_id, self._ctx.environment.env_id, *params)
 
     @property
     def metadata(self):
@@ -318,6 +318,8 @@ class _JobInstance(JobInstance):
 
         is_root_phase = e.phase_detail.phase_id == ROOT_PHASE_ID
         if is_root_phase:
+            if e.new_stage == Stage.RUNNING:
+                log.info(self._log('run_started'))
             log.debug(self._log('instance_lifecycle_update', "new_stage=[{}]", e.new_stage))
 
             if term := e.phase_detail.lifecycle.termination:
