@@ -11,7 +11,7 @@ from runtools.runcore.job import JobRun, InstanceTransitionEvent
 from runtools.runcore.run import RunState, TerminationStatus, control_api, Stage
 from runtools.runjob.instance import JobInstanceContext
 from runtools.runjob.output import OutputContext
-from runtools.runjob.phase import BasePhase, Phase, PhaseTerminated
+from runtools.runjob.phase import BasePhase, PhaseTerminated
 
 log = logging.getLogger(__name__)
 
@@ -321,13 +321,13 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
     MAX_EXEC = "max_exec"
     STATE = "state"
 
-    def __init__(self, execution_group, limited_phase, phase_id=None, phase_name=None):
-        super().__init__(phase_id or execution_group.group_id, CoordTypes.QUEUE.value, RunState.IN_QUEUE, phase_name)
+    def __init__(self, phase_id, execution_group, limited_phase, phase_name=None):
+        super().__init__(phase_id or execution_group.group_id, CoordTypes.QUEUE.value, RunState.IN_QUEUE, phase_name,
+                         [limited_phase])
         if not execution_group:
             raise ValueError('Execution group must be specified')
 
         self._execution_group = execution_group
-        self._limited_phase = limited_phase
         self._attrs = {
             ExecutionQueue.GROUP_ID: execution_group.group_id,
             ExecutionQueue.MAX_EXEC: execution_group.max_executions,
@@ -348,10 +348,6 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
     def _lock_name(self):
         # TODO Modifiable (inheritance?)
         return f"eq-{self.execution_group}.lock"
-
-    @property
-    def children(self) -> List[Phase]:
-        return [self._limited_phase]
 
     @property
     def attributes(self):
@@ -402,12 +398,12 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
         finally:
             ctx.environment.remove_observer_transition(self._new_instance_transition)
 
-        self._limited_phase.run(ctx)
+        self._children[0].run(ctx)
 
     def _stop_run(self):
         with self._queue_change_condition:
             if self._state.dequeued:
-                self._limited_phase.stop()
+                self._children[0].stop()
                 return
 
             self._state = QueuedState.CANCELLED
