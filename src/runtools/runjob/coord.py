@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 
 class CoordTypes(Enum):
     APPROVAL = 'APPROVAL'
-    NO_OVERLAP = 'NO_OVERLAP'
+    MUTEX = 'MUTEX'
     DEPENDENCY = 'DEPENDENCY'
     WAITING = 'WAITING'
     QUEUE = 'QUEUE'
@@ -70,44 +70,46 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
     1. Set continue flag to be checked
     Note: Current implementation doesn't implement a fair strategy for phases executed at nearly the same time
     """
-    EXCLUSION_ID = 'exclusion_id'
+    running_mutex_filter = PhaseCriterion(
+        phase_type=CoordTypes.MUTEX.value,
+        lifecycle=LifecycleCriterion(stage=Stage.RUNNING)
+    )
 
-    def __init__(self, exclusion_id, protected_phase, *, phase_id=None, phase_name='Mutex Parent'):
-        super().__init__(phase_id or exclusion_id, CoordTypes.NO_OVERLAP.value, RunState.EVALUATING, phase_name,
-                         [protected_phase])
-        if not exclusion_id:
-            raise ValueError("Parameter `exclusion_id` cannot be empty")
-        self._exclusion_id = exclusion_id
-        self._attrs = {MutualExclusionPhase.EXCLUSION_ID: self._exclusion_id}
-        self._excl_running_phase_filter = PhaseCriterion(
-            phase_type=CoordTypes.NO_OVERLAP.value,
-            attributes={MutualExclusionPhase.EXCLUSION_ID: self._exclusion_id},
-            lifecycle=LifecycleCriterion(stage=Stage.RUNNING)
-        )
+    def __init__(self, phase_id, protected_phase, *, exclusion_group=None, phase_name=None):
+        super().__init__(phase_id, CoordTypes.MUTEX.value, RunState.EVALUATING, phase_name, [protected_phase])
+        self._exclusion_group = exclusion_group
+        self._attrs = {'exclusion_group': self._exclusion_group}
         self._state_lock = Lock()
         self._state = 0  # -1 = stopped, 1 = proceeded
 
     @property
-    def exclusion_id(self):
-        return self._exclusion_id
+    @control_api
+    def exclusion_group(self):
+        return self._exclusion_group
 
     @property
     def attributes(self):
         return self._attrs
 
-    def _excl_running_job_filter(self, ctx):
-        c = JobRunCriteria()
-        c += MetadataCriterion.all_except(ctx.metadata.instance_id)  # Excl self
-        c += self._excl_running_phase_filter
-        return c
+    @staticmethod
+    def _excl_running_job_filter(ctx):
+        return JobRunCriteria(
+            metadata_criteria=MetadataCriterion.all_except(ctx.metadata.instance_id),  # Excl self
+            phase_criteria=MutualExclusionPhase.running_mutex_filter
+        )
 
     def _run(self, ctx: JobInstanceContext):
-        log.debug("[mutex_check_started] exclusion_id=[%s]", self.exclusion_id)
-        with ctx.environment.lock(f"mutex-{self.exclusion_id}"):  # TODO Manage lock names better
-            excl_runs = ctx.environment.get_active_runs(self._excl_running_job_filter(ctx))
-            for exc_run in excl_runs:
-                log.warning(f"[overlap_found]: {exc_run.metadata}")
-                raise PhaseTerminated(TerminationStatus.OVERLAP)  # TODO Race-condition - set flag before raise
+        excl_group = self.exclusion_group or ctx.metadata.job_id
+        log.debug("[mutex_check_started] exclusion_group=[%s]", self.exclusion_group)
+        with ctx.environment.lock(f"mutex-{excl_group}"):  # TODO Manage lock names better
+            excl_runs: List[JobRun] = ctx.environment.get_active_runs(self._excl_running_job_filter(ctx))
+            for excl_run in excl_runs:
+                for mutex_phase in excl_run.search_phases(MutualExclusionPhase.running_mutex_filter):
+                    phase_excl_group = mutex_phase.attributes.get('exclusion_group') or excl_run.job_id
+                    if phase_excl_group == excl_group:
+                        log.warning(f"mutex_overlap_found instance=[{excl_run.instance_id}] "
+                                    f"phase=[{mutex_phase.phase_id}] exclusion_group=[{excl_group}]")
+                        raise PhaseTerminated(TerminationStatus.OVERLAP)  # TODO Race-condition - set flag before raise
 
         with self._state_lock:
             if self._state == -1:
@@ -421,9 +423,9 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
 
     def _dispatch_next(self, ctx):
         runs: List[JobRun] = ctx.environment.get_active_runs(JobRunCriteria(phase_criteria=self._phase_filter_running))
-        runs_sorted = sorted(runs, key=lambda run: run.find_phase(self._phase_filter).lifecycle.created_at)
+        runs_sorted = sorted(runs, key=lambda run: run.find_first_phase(self._phase_filter).lifecycle.created_at)
         ids_dispatched = {r.instance_id for r in runs_sorted if
-                          r.find_phase(self._phase_filter).variables[
+                          r.find_first_phase(self._phase_filter).variables[
                               ExecutionQueue.STATE] == QueuedState.DISPATCHED.name}
         free_slots = self._execution_group.max_executions - len(ids_dispatched)
 
