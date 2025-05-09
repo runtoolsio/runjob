@@ -309,7 +309,7 @@ class QueuedState(Enum):
 
 
 @dataclass(frozen=True)
-class ExecutionGroup:
+class ConcurrencyGroup:
     group_id: str
     max_executions: int
 
@@ -323,16 +323,16 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
     MAX_EXEC = "max_exec"
     STATE = "state"
 
-    def __init__(self, phase_id, execution_group, limited_phase, phase_name=None):
-        super().__init__(phase_id or execution_group.group_id, CoordTypes.QUEUE.value, RunState.IN_QUEUE, phase_name,
+    def __init__(self, phase_id, concurrency_group, limited_phase, phase_name=None):
+        super().__init__(phase_id or concurrency_group.group_id, CoordTypes.QUEUE.value, RunState.IN_QUEUE, phase_name,
                          [limited_phase])
-        if not execution_group:
-            raise ValueError('Execution group must be specified')
+        if not concurrency_group:
+            raise ValueError('Concurrency group must be specified')
 
-        self._execution_group = execution_group
+        self._group = concurrency_group
         self._attrs = {
-            ExecutionQueue.GROUP_ID: execution_group.group_id,
-            ExecutionQueue.MAX_EXEC: execution_group.max_executions,
+            ExecutionQueue.GROUP_ID: concurrency_group.group_id,
+            ExecutionQueue.MAX_EXEC: concurrency_group.max_executions,
         }
 
         self._phase_filter = PhaseCriterion(
@@ -371,7 +371,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
     @property
     @control_api
     def execution_group(self):
-        return self._execution_group
+        return self._group
 
     def _run(self, ctx):
         try:
@@ -427,11 +427,11 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
         ids_dispatched = {r.instance_id for r in runs_sorted if
                           r.find_first_phase(self._phase_filter).variables[
                               ExecutionQueue.STATE] == QueuedState.DISPATCHED.name}
-        free_slots = self._execution_group.max_executions - len(ids_dispatched)
+        free_slots = self._group.max_executions - len(ids_dispatched)
 
         if free_slots <= 0:
             log.debug("event[exec_limit_reached] slots=[%d] dispatched=[%d]",
-                      self._execution_group.max_executions, len(ids_dispatched))
+                      self._group.max_executions, len(ids_dispatched))
             return False
 
         log.debug("event[dispatching_from_queue] free_slots=[%d]", free_slots)
