@@ -15,7 +15,7 @@ from typing import Union, Tuple, Optional
 import sys
 
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import TerminationStatus, RunState
+from runtools.runcore.run import TerminationStatus, RunState, StopReason
 from runtools.runjob.output import OutputContext
 from runtools.runjob.phase import BasePhase, PhaseTerminated
 
@@ -34,11 +34,10 @@ class ProcessPhase(BasePhase[OutputContext]):
         self.output_id = output_id
         self.output_queue: Queue[Tuple[Union[str, _QueueStop], bool]] = Queue(maxsize=2048)
         self._process: Optional[Process] = None
-        self._stopped: bool = False
-        self._interrupted: bool = False
+        self._stop_reason: Optional[StopReason] = None
 
     def _run(self, ctx):
-        if not self._stopped and not self._interrupted:
+        if not self._stop_reason:
             self._process = Process(target=self._exec)
 
             try:
@@ -51,10 +50,12 @@ class ProcessPhase(BasePhase[OutputContext]):
             if self._process.exitcode == 0:
                 return
 
-            if self._interrupted or self._process.exitcode == -signal.SIGINT:
+            if self._process.exitcode == -signal.SIGINT:
                 # Exit code is -SIGINT only when SIGINT handler is set back to DFL (KeyboardInterrupt gets exit code 1)
                 raise PhaseTerminated(TerminationStatus.INTERRUPTED)
-            if self._stopped or self._process.exitcode < 0:
+            if self._stop_reason:
+                raise PhaseTerminated(self._stop_reason.termination_status)
+            if self._process.exitcode < 0:
                 raise PhaseTerminated(TerminationStatus.STOPPED)
 
             raise PhaseTerminated(
@@ -91,14 +92,11 @@ class ProcessPhase(BasePhase[OutputContext]):
     def parameters(self):
         return ('execution', 'process'),
 
-    def _stop_run(self):
-        self._stopped = True
+    def _stop_run(self, reason):
+        self._stop_reason = reason
         self.output_queue.put_nowait((_QueueStop(), False))
         if self._process:
             self._process.terminate()
-
-    def interrupted(self):
-        self._interrupted = True
 
     def _read_output(self, output_sink):
         while self._process.is_alive():

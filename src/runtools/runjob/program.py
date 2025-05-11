@@ -13,7 +13,7 @@ from typing import Union, Optional
 import sys
 
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import TerminationStatus, RunState
+from runtools.runcore.run import TerminationStatus, RunState, StopReason
 from runtools.runjob.output import OutputContext
 from runtools.runjob.phase import BasePhase, PhaseTerminated
 
@@ -31,8 +31,7 @@ class ProgramPhase(BasePhase[OutputContext]):
         self.read_output: bool = read_output
         self._popen: Union[Popen, None] = None
         self._status = None
-        self._stopped: bool = False
-        self._interrupted: bool = False
+        self._stop_reason: Optional[StopReason] = None
 
     @property
     def ret_code(self) -> Optional[int]:
@@ -42,7 +41,7 @@ class ProgramPhase(BasePhase[OutputContext]):
         return self._popen.returncode
 
     def _run(self, run_ctx):
-        if not self._stopped and not self._interrupted:
+        if not self._stop_reason:
             stdout = PIPE if self.read_output else None
             stderr = PIPE if self.read_output else None
             try:
@@ -65,9 +64,11 @@ class ProgramPhase(BasePhase[OutputContext]):
                 """TODO Move exception level up"""
                 raise PhaseTerminated(TerminationStatus.FAILED, str(e)) from e
 
-        if self._interrupted or self.ret_code == -signal.SIGINT:
+        if self.ret_code == -signal.SIGINT:
             raise PhaseTerminated(TerminationStatus.INTERRUPTED)
-        if self._stopped or self.ret_code < 0:  # Negative exit code means terminated by a signal
+        if self._stop_reason:
+            raise PhaseTerminated(self._stop_reason.termination_status)
+        if self.ret_code < 0:  # Negative exit code means terminated by a signal
             raise PhaseTerminated(TerminationStatus.STOPPED)
         raise PhaseTerminated(
             TerminationStatus.FAILED, f"Program returned non-zero exit code: {self.ret_code}")
@@ -82,17 +83,10 @@ class ProgramPhase(BasePhase[OutputContext]):
     def parameters(self):
         return ('execution', 'program'),
 
-    def _stop_run(self):
-        self._stopped = True
+    def _stop_run(self, reason):
+        self._stop_reason = reason
         if self._popen:
             self._popen.terminate()
-
-    def interrupted(self):
-        """
-        Call this if the execution was possibly interrupted externally (Ctrl+C) to set the correct final state.
-        On windows might be needed to send a signal?
-        """
-        self._interrupted = True
 
     def _process_output(self, run_ctx, infile, is_err):
         with infile:

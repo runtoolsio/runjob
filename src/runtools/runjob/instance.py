@@ -53,7 +53,7 @@ from runtools.runcore.job import (JobInstance, JobRun, InstanceOutputObserver, J
                                   InstanceTransitionEvent, InstanceOutputEvent, InstanceStageObserver,
                                   InstanceStageEvent)
 from runtools.runcore.output import Output, TailNotSupportedError, Mode
-from runtools.runcore.run import Outcome, Fault, PhaseTransitionEvent, Stage
+from runtools.runcore.run import Outcome, Fault, PhaseTransitionEvent, Stage, StopReason
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer
@@ -218,7 +218,8 @@ class _JobInstance(JobInstance):
 
     def _log(self, event: str, msg: str = '', *params):
         return ("{} instance=[{}] env=[{}] " + msg).format(
-            event, self._metadata.instance_id, self._ctx.environment.env_id, *params)
+            event, self._metadata.instance_id, self._ctx.environment.env_id if self._ctx.environment else 'N/A',
+            *params)
 
     @property
     def metadata(self):
@@ -238,7 +239,8 @@ class _JobInstance(JobInstance):
     def snapshot(self) -> JobRun:
         root_phase_detail = self._root_phase.detail()
         status = self._ctx.status_tracker.to_status() if self.status_tracker else None
-        return JobRun(self.metadata, root_phase_detail.lifecycle, root_phase_detail.children, tuple(self._faults), status)
+        return JobRun(self.metadata, root_phase_detail.lifecycle, root_phase_detail.children, tuple(self._faults),
+                      status)
 
     @contextmanager
     def _job_instance_context(self):
@@ -283,21 +285,13 @@ class _JobInstance(JobInstance):
         t = Thread(target=self.run, daemon=daemon)
         t.start()
 
-    def stop(self):
+    def stop(self, reason=StopReason.STOPPED):
         """
         Cancel not yet started execution or stop started execution.
         Due to synchronous design there is a small window when an execution can be stopped before it is started.
         All execution implementations must cope with such scenario.
         """
-        self._root_phase.stop()
-
-    def interrupted(self):
-        """
-        Cancel not yet started execution or interrupt started execution.
-        Due to synchronous design there is a small window when an execution can be interrupted before it is started.
-        All execution implementations must cope with such scenario.
-        """
-        self._root_phase.stop()  # TODO Interrupt
+        self._root_phase.stop(reason)
 
     def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
         self._lifecycle_notification.add_observer(observer, priority)

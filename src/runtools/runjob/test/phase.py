@@ -24,13 +24,14 @@ class TestPhase(BasePhase[JobInstanceContext]):
     Test implementation of a V2 Phase for use in testing scenarios.
     Supports waiting, output generation, and various failure modes.
     """
+
     TYPE = 'TEST'
 
     def __init__(self, phase_id: str = 'test_phase', *,
                  wait: bool = False,
                  output_text: Optional[str] = None,
-                 raise_exc = None,
-                 fail = False,
+                 raise_exc=None,
+                 fail=False,
                  name: Optional[str] = None):
         super().__init__(phase_id, TestPhase.TYPE, RunState.PENDING if wait else RunState.EXECUTING, name)
         self.wait: Optional[Event] = Event() if wait else None
@@ -67,7 +68,7 @@ class TestPhase(BasePhase[JobInstanceContext]):
 
         self.completed = True
 
-    def stop(self):
+    def _stop_run(self, reason):
         """Stop the phase execution by setting the wait event if present"""
         if self.wait:
             self.wait.set()

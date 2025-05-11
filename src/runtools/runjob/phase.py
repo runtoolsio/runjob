@@ -7,7 +7,7 @@ from typing import Optional, Generic, List
 from runtools.runcore import err
 from runtools.runcore.job import Stage
 from runtools.runcore.run import TerminationStatus, TerminationInfo, RunState, C, PhaseControl, \
-    PhaseDetail, PhaseTransitionObserver, PhaseTransitionEvent, Outcome, RunCompletionError
+    PhaseDetail, PhaseTransitionObserver, PhaseTransitionEvent, Outcome, RunCompletionError, StopReason
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
@@ -102,7 +102,7 @@ class Phase(ABC, Generic[C]):
         pass
 
     @abstractmethod
-    def stop(self):
+    def stop(self, reason=StopReason.STOPPED):
         pass
 
     @property
@@ -286,19 +286,19 @@ class BasePhase(Phase[C], ABC):
         child.run(self._ctx)
 
     @abstractmethod
-    def _stop_run(self):
+    def _stop_run(self, reason):
         pass
 
-    def stop(self):
+    def stop(self, reason=StopReason.STOPPED):
         with self._state_lock:
             if self.termination:
                 return
             if not self._started_at:
-                self._termination = TerminationInfo(TerminationStatus.STOPPED, utc_now())
+                self._termination = TerminationInfo(reason.termination_status, utc_now())
                 self._notification.observer_proxy.new_phase_transition(
                     PhaseTransitionEvent(self.detail(), Stage.ENDED, self._termination.terminated_at))
                 return
-        self._stop_run()
+        self._stop_run(reason)
 
     def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY):
         self._notification.add_observer(observer, priority)
@@ -319,7 +319,7 @@ class SequentialPhase(BasePhase):
         super().__init__(phase_id, SequentialPhase.TYPE, RunState.EXECUTING, name, children)
         self._current_child: Optional[Phase[C]] = None
         self._stop_lock = Lock()
-        self._stopped = False
+        self._stop_reason: Optional[StopReason] = None
 
     def _run(self, ctx: Optional[C]):
         """
@@ -329,8 +329,8 @@ class SequentialPhase(BasePhase):
         try:
             for child in self._children:
                 with self._stop_lock:
-                    if self._stopped:
-                        raise PhaseTerminated(TerminationStatus.STOPPED)
+                    if self._stop_reason:
+                        raise PhaseTerminated(self._stop_reason.termination_status)
                     self._current_child = child
                 self.run_child(child)
                 if child.termination.status != TerminationStatus.COMPLETED:
@@ -338,11 +338,11 @@ class SequentialPhase(BasePhase):
         finally:
             self._current_child = None
 
-    def _stop_run(self):
+    def _stop_run(self, reason):
         """
         Stop the current child phase if one is executing
         """
         with self._stop_lock:
-            self._stopped = True
+            self._stop_reason = reason
             if self._current_child:
-                self._current_child.stop()
+                self._current_child.stop(reason)
