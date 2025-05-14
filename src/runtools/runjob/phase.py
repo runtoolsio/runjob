@@ -2,6 +2,7 @@ import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from multiprocessing import Lock  # TODO
+from threading import Timer
 from typing import Optional, Generic, List
 
 from runtools.runcore import err
@@ -127,6 +128,108 @@ class Phase(ABC, Generic[C]):
     @abstractmethod
     def remove_phase_observer(self, observer):
         pass
+
+
+class PhaseDelegate(Phase[C], Generic[C]):
+    """
+    A generic delegation wrapper for Phase implementations.
+
+    This class implements all Phase methods by forwarding calls to the
+    wrapped instance, allowing subclasses to selectively override behaviors
+    without duplicating code.
+    """
+
+    def __init__(self, wrapped: Phase[C]):
+        """
+        Initialize with a delegate Phase.
+
+        Args:
+            wrapped: The Phase implementation to wrap
+        """
+        self._wrapped = wrapped
+
+    @property
+    def id(self) -> str:
+        """Delegates to the wrapped phase's id property"""
+        return self._wrapped.id
+
+    @property
+    def type(self) -> str:
+        """Delegates to the wrapped phase's type property"""
+        return self._wrapped.type
+
+    @property
+    def run_state(self) -> RunState:
+        """Delegates to the wrapped phase's run_state property"""
+        return self._wrapped.run_state
+
+    @property
+    def name(self) -> Optional[str]:
+        """Delegates to the wrapped phase's name property"""
+        return self._wrapped.name
+
+    @property
+    def attributes(self):
+        """Delegates to the wrapped phase's attributes property"""
+        return self._wrapped.attributes
+
+    @property
+    def variables(self):
+        """Delegates to the wrapped phase's variables property"""
+        return self._wrapped.variables
+
+    def detail(self) -> PhaseDetail:
+        """Delegates to the wrapped phase's detail method"""
+        return self._wrapped.detail()
+
+    @property
+    def control(self) -> PhaseControl:
+        """Delegates to the wrapped phase's control property"""
+        return self._wrapped.control
+
+    @property
+    def children(self) -> List[Phase]:
+        """Delegates to the wrapped phase's children property"""
+        return self._wrapped.children
+
+    def find_phase_control(self, phase_filter) -> Optional[PhaseControl]:
+        """Delegates to the wrapped phase's find_phase_control method"""
+        return self._wrapped.find_phase_control(phase_filter)
+
+    def find_phase_control_by_id(self, phase_id: str) -> Optional[PhaseControl]:
+        """Delegates to the wrapped phase's find_phase_control_by_id method"""
+        return self._wrapped.find_phase_control_by_id(phase_id)
+
+    def run(self, ctx: Optional[C]):
+        """Delegates to the wrapped phase's run method"""
+        return self._wrapped.run(ctx)
+
+    def stop(self, reason=StopReason.STOPPED):
+        """Delegates to the wrapped phase's stop method"""
+        return self._wrapped.stop(reason)
+
+    @property
+    def created_at(self):
+        """Delegates to the wrapped phase's created_at property"""
+        return self._wrapped.created_at
+
+    @property
+    def started_at(self):
+        """Delegates to the wrapped phase's started_at property"""
+        return self._wrapped.started_at
+
+    @property
+    def termination(self):
+        """Delegates to the wrapped phase's termination property"""
+        return self._wrapped.termination
+
+    def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY):
+        """Delegates to the wrapped phase's add_phase_observer method"""
+        self._wrapped.add_phase_observer(observer, priority=priority)
+
+    def remove_phase_observer(self, observer):
+        """Delegates to the wrapped phase's remove_phase_observer method"""
+        self._wrapped.remove_phase_observer(observer)
 
 
 class BasePhase(Phase[C], ABC):
@@ -346,3 +449,70 @@ class SequentialPhase(BasePhase):
             self._stop_reason = reason
             if self._current_child:
                 self._current_child.stop(reason)
+
+
+class TimeoutExtension(PhaseDelegate[C], Generic[C]):
+    """
+    A phase delegate that adds timeout functionality to any phase.
+
+    If the wrapped phase doesn't complete within the specified timeout period,
+    it will be stopped and marked as timed out.
+
+    Attributes:
+        timeout_sec: Maximum time in seconds to allow the phase to run
+    """
+
+    def __init__(self, wrapped: Phase[C], timeout_sec: float):
+        """
+        Initialize with a delegate phase and timeout value.
+
+        Args:
+            wrapped: The Phase implementation to wrap
+            timeout_sec: Maximum time in seconds to allow the phase to run
+        """
+        if timeout_sec <= 0:
+            raise ValueError("Timeout seconds value must be positive")
+        super().__init__(wrapped)
+        self.timeout_sec = timeout_sec
+        self._timer = None
+
+    def run(self, ctx: Optional[C]):
+        """
+        Run the wrapped phase with timeout control.
+
+        If the phase doesn't complete within the specified timeout,
+        it will be stopped and a PhaseTerminated exception with
+        TerminationStatus.TIMEOUT will be raised.
+
+        Args:
+            ctx: The execution context to pass to the wrapped phase
+        """
+        self._timer = Timer(self.timeout_sec, self._on_timeout)
+        self._timer.daemon = True
+        self._timer.start()
+
+        try:
+            return super().run(ctx)
+        finally:
+            self._cancel_timer()
+
+    def _on_timeout(self):
+        """Handle the timeout by stopping the wrapped phase."""
+        log.warning(f"timeout after_sec=[{self.timeout_sec}] phase=[{super().id}]")
+        self.stop(reason=StopReason.TIMEOUT)
+
+    def stop(self, reason=StopReason.STOPPED):
+        """
+        Stop the phase execution and cancel the timeout timer.
+
+        Args:
+            reason: The reason for stopping the phase
+        """
+        self._cancel_timer()
+        super().stop(reason)
+
+    def _cancel_timer(self):
+        """Cancel the timeout timer if it's running."""
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None

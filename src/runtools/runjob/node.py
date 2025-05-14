@@ -150,7 +150,8 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         for feature in self._features:
             feature.on_open()
 
-    def create_instance(self, instance_id, phases, status_tracker=None, *, tail_buffer=None,
+    def create_instance(self, instance_id, root_phase=None,
+                        *, phases=None, status_tracker=None, tail_buffer=None,
                         pre_run_hook: Optional[JobInstanceHook] = None,
                         post_run_hook: Optional[JobInstanceHook] = None,
                         user_params=None) -> JobInstanceManaged:
@@ -159,6 +160,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
         Args:
             instance_id (InstanceID): Instance identifier
+            root_phase: Explicit root phase to set
             phases: Job execution phases to run
             status_tracker: Optional status tracker for the job
             tail_buffer: Optional buffer for output tailing
@@ -176,6 +178,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         inst = instance.create(
             instance_id=instance_id,
             environment=self,
+            root_phase=root_phase,
             phases=phases,
             status_tracker=status_tracker,
             tail_buffer=tail_buffer,

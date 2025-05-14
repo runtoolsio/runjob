@@ -80,8 +80,8 @@ class ProgramPhase(BasePhase[OutputContext]):
         return t
 
     @property
-    def parameters(self):
-        return ('execution', 'program'),
+    def attributes(self):
+        return {'args': self.args, 'output_read': self.read_output}
 
     def _stop_run(self, reason):
         self._stop_reason = reason
