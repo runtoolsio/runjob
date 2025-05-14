@@ -1,11 +1,90 @@
 import re
-from threading import Timer
 from typing import Sequence
+
+import logging
+from threading import Timer
+from typing import Generic, Optional
 
 from runtools.runcore import util
 from runtools.runcore.job import (JobInstance, InstanceOutputObserver, InstanceStageObserver, InstanceStageEvent,
                                   InstanceOutputEvent)
-from runtools.runcore.run import Stage
+from runtools.runcore.run import Stage, C, StopReason
+from runtools.runjob.phase import PhaseDelegate
+
+log = logging.getLogger(__name__)
+
+
+class TimeWarningExtension(PhaseDelegate[C], Generic[C]):
+    """
+    A phase decorator that adds a single warning threshold to any phase.
+
+    This extension monitors the execution time of the wrapped phase and triggers
+    a warning when the specified time threshold is exceeded.
+    """
+
+    def __init__(self, wrapped, warning_seconds: float, warning_text: str = None):
+        """
+        Initialize with a delegate phase and a single warning threshold.
+
+        Args:
+            wrapped: The Phase implementation to wrap
+            warning_seconds: Time in seconds at which to issue a warning
+            warning_text: Text for the warning; if None, a default is generated
+        """
+        super().__init__(wrapped)
+        if warning_seconds <= 0:
+            raise ValueError("Warning threshold must be positive")
+
+        self.warning_seconds = warning_seconds
+        self.warning_text = warning_text or f"Run time exceeded {warning_seconds}s for phase `{wrapped.id}`"
+        self._timer = None
+
+    def run(self, ctx: Optional[C]):
+        """
+        Run the wrapped phase with a warning timer.
+
+        Args:
+            ctx: The execution context to pass to the wrapped phase
+        """
+        if not ctx or not hasattr(ctx, 'status_tracker') or not ctx.status_tracker:
+            log.warning(
+                f"status_tracker_unavailable phase=[{super().id}] result=[Time warning {self.warning_seconds}s ignored]")
+        else:
+            self._timer = Timer(self.warning_seconds, self._trigger_warning, args=[ctx])
+            self._timer.daemon = True
+            self._timer.start()
+
+        try:
+            return super().run(ctx)
+        finally:
+            self._cancel_timer()
+
+    def _trigger_warning(self, ctx):
+        """
+        Trigger a warning when the time threshold is reached.
+
+        Args:
+            ctx: The execution context, used to access the status tracker
+        """
+        log.warning(
+            f"time_warning warn_sec=[{self.warning_seconds}] warn_text=[{self.warning_text}] phase=[{super().id}]")
+        ctx.status_tracker.warning(self.warning_text)
+
+    def _cancel_timer(self):
+        """Cancel the warning timer if it's running."""
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+
+    def stop(self, reason=StopReason.STOPPED):
+        """
+        Stop the phase execution and cancel the warning timer.
+
+        Args:
+            reason: The reason for stopping the phase
+        """
+        self._cancel_timer()
+        super().stop(reason)
 
 
 def exec_time_exceeded(job_instance: JobInstance, warning_name: str, time: float):
