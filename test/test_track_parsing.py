@@ -16,10 +16,10 @@ def test_parse_event():
     assert tracker.to_status().last_event is None
 
     parser.new_output(OutputLine('event=[eventim_apollo] in hammersmith'))
-    assert tracker.to_status().last_event.text == 'eventim_apollo'
+    assert tracker.to_status().last_event.message == 'eventim_apollo'
 
     parser.new_output(OutputLine('second follows: event=[event_horizon]'))
-    assert tracker.to_status().last_event.text == 'event_horizon'
+    assert tracker.to_status().last_event.message == 'event_horizon'
 
 
 def test_operation_without_name():
@@ -69,7 +69,7 @@ def test_multiple_parsers_and_tasks():
     sut.new_output(OutputLine('task:task1'))
     sut.new_output(OutputLine('?time=2.3&task=task2&event=e1'))
     status = tracker.to_status()
-    assert status.last_event.text == 'e1'
+    assert status.last_event.message == 'e1'
     assert str(status.last_event.timestamp) == '2020-10-01 10:30:30'
 
 
@@ -79,7 +79,7 @@ def test_operation_when_progress():
     sut.new_output(OutputLine("event=[upload]"))
     sut.new_output(OutputLine("event=[decoding] completed=[10]"))
 
-    assert tracker.to_status().last_event.text == 'upload'
+    assert tracker.to_status().last_event.message == 'upload'
 
 
 def test_event_deactivate_completed_operation():
@@ -124,7 +124,7 @@ def test_result():
 
     sut.new_output(OutputLine('2020-10-01 10:30:30 event=[e1]'))
     sut.new_output(OutputLine('result=[res]'))
-    assert tracker.to_status().result.text == 'res'
+    assert tracker.to_status().result.message == 'res'
 
 
 def test_error_output():
@@ -132,7 +132,7 @@ def test_error_output():
     sut = OutputToStatusTransformer(tracker, parsers=[KVParser()])
 
     sut.new_output(OutputLine('event=[normal_event]', is_error=False))
-    assert tracker.to_status().last_event.text == 'normal_event'
+    assert tracker.to_status().last_event.message == 'normal_event'
 
     sut.new_output(OutputLine('event=[error_event]', is_error=True))
-    assert tracker.to_status().last_event.text == 'error_event'
+    assert tracker.to_status().last_event.message == 'error_event'

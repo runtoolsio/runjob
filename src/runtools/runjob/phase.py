@@ -130,13 +130,11 @@ class Phase(ABC, Generic[C]):
         pass
 
 
-class PhaseDelegate(Phase[C], Generic[C]):
+class PhaseDecorator(Phase[C], Generic[C]):
     """
-    A generic delegation wrapper for Phase implementations.
-
-    This class implements all Phase methods by forwarding calls to the
-    wrapped instance, allowing subclasses to selectively override behaviors
-    without duplicating code.
+    A generic base class for Phase decorators.
+    This class implements all Phase methods by forwarding calls to the wrapped instance,
+    allowing subclasses (concrete decorators) to selectively override behaviors to add new functionality.
     """
 
     def __init__(self, wrapped: Phase[C]):
@@ -451,7 +449,7 @@ class SequentialPhase(BasePhase):
                 self._current_child.stop(reason)
 
 
-class TimeoutExtension(PhaseDelegate[C], Generic[C]):
+class TimeoutExtension(PhaseDecorator[C], Generic[C]):
     """
     A phase delegate that adds timeout functionality to any phase.
 

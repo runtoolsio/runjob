@@ -9,12 +9,12 @@ from runtools.runcore import util
 from runtools.runcore.job import (JobInstance, InstanceOutputObserver, InstanceStageObserver, InstanceStageEvent,
                                   InstanceOutputEvent)
 from runtools.runcore.run import Stage, C, StopReason
-from runtools.runjob.phase import PhaseDelegate
+from runtools.runjob.phase import PhaseDecorator
 
 log = logging.getLogger(__name__)
 
 
-class TimeWarningExtension(PhaseDelegate[C], Generic[C]):
+class TimeWarningExtension(PhaseDecorator[C], Generic[C]):
     """
     A phase decorator that adds a single warning threshold to any phase.
 

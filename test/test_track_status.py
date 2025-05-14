@@ -9,7 +9,7 @@ def test_add_event():
     tracker.event('e1')
     tracker.event('e2')
 
-    assert tracker.to_status().last_event.text == 'e2'
+    assert tracker.to_status().last_event.message == 'e2'
 
 
 def test_operation_updates():
@@ -58,12 +58,12 @@ def test_result_handling():
 
     # Result can be set and retrieved
     tracker.result("Success")
-    assert tracker.to_status().result.text == "Success"
+    assert tracker.to_status().result.message == "Success"
 
     # Result persists after new operations/events
     tracker.operation("test").update(1, 10)
     tracker.event("Still working")
-    assert tracker.to_status().result.text == "Success"
+    assert tracker.to_status().result.message == "Success"
 
 
 def test_multiple_operations_same_name():
@@ -101,12 +101,12 @@ def test_tracker_warnings():
     # Test adding single warning
     tracker.warning("Low disk space")
     assert len(tracker.to_status().warnings) == 1
-    assert tracker.to_status().warnings[0].text == "Low disk space"
+    assert tracker.to_status().warnings[0].message == "Low disk space"
 
     # Test adding multiple warnings
     tracker.warning("Network unstable")
     assert len(tracker.to_status().warnings) == 2
-    assert tracker.to_status().warnings[1].text == "Network unstable"
+    assert tracker.to_status().warnings[1].message == "Network unstable"
 
     # Test warnings persist with other updates
     tracker.event("Processing")
