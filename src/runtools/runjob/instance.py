@@ -155,8 +155,9 @@ class JobInstanceContext(OutputContext):
 JobInstanceHook = Callable[[JobInstanceContext], None]
 
 
-def create(instance_id, phases, environment=None,
-           *, tail_buffer=None, status_tracker=None,
+def create(instance_id, environment, root_phase=None,
+           *, phases=None,
+           tail_buffer=None, status_tracker=None,
            pre_run_hook: Optional[JobInstanceHook] = None,
            post_run_hook: Optional[JobInstanceHook] = None,
            stage_observers: Iterable[InstanceStageObserver] = (),
@@ -175,8 +176,13 @@ def create(instance_id, phases, environment=None,
     """
     if not instance_id:
         raise ValueError("Instance ID is mandatory")
+    if phases is not None and root_phase is not None:
+        raise ValueError("Cannot provide both 'phases' and 'root_phase'. They are mutually exclusive.")
+    if phases is None and root_phase is None:
+        raise ValueError("Must provide either 'phases' (for a sequential job) or a 'root_phase'.")
 
-    root_phase = SequentialPhase(ROOT_PHASE_ID, phases)
+    if phases:
+        root_phase = SequentialPhase(ROOT_PHASE_ID, phases)
     tail_buffer = tail_buffer or InMemoryTailBuffer(max_capacity=10)
     status_tracker = status_tracker or StatusTracker()
     inst = _JobInstance(instance_id, root_phase, environment, tail_buffer, status_tracker,
@@ -310,7 +316,7 @@ class _JobInstance(JobInstance):
     def _on_phase_update(self, e: PhaseTransitionEvent):
         log.debug(self._log('instance_phase_update', "event=[{}]", e))
 
-        is_root_phase = e.phase_detail.phase_id == ROOT_PHASE_ID
+        is_root_phase = e.phase_detail.phase_id == self._root_phase.id
         if is_root_phase:
             if e.new_stage == Stage.RUNNING:
                 log.info(self._log('run_started'))

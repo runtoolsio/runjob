@@ -175,8 +175,8 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         """
         inst = instance.create(
             instance_id=instance_id,
-            phases=phases,
             environment=self,
+            phases=phases,
             status_tracker=status_tracker,
             tail_buffer=tail_buffer,
             pre_run_hook=pre_run_hook,

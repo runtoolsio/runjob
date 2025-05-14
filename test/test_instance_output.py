@@ -22,7 +22,7 @@ def print_countdown():
 
 def test_output_observer():
     exec_phase = ProcessPhase('Printing', print_hello)
-    i = instance.create(iid('j1', 'i1'), [exec_phase])
+    i = instance.create(iid('j1', 'i1'), None, phases=[exec_phase])
     observer = TestOutputObserver()
     i.add_observer_output(observer)
 
@@ -33,7 +33,7 @@ def test_output_observer():
 
 def test_last_output():
     exec_phase = ProcessPhase('Printing', print_countdown)
-    i = instance.create(iid('j1', 'i1'), [exec_phase])
+    i = instance.create(iid('j1', 'i1'), None, phases=[exec_phase])
     i.run()
     assert ([line.text for line in i.output.tail(max_lines=10)] ==
             "1 everyone in the world is doing something without me".split())
