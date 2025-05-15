@@ -111,7 +111,7 @@ class OutputWarningExtension(PhaseDecorator[C], Generic[C]):
         if not patterns:
             raise ValueError("At least one pattern must be provided")
 
-        self.patterns = [re.compile(pattern) for pattern in patterns]
+        self.patterns = [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
         self.warning_template = warning_template or "$LINE"
 
     def run(self, ctx: Optional[C]):
