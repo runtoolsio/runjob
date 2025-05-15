@@ -1,14 +1,15 @@
-import re
-from typing import Sequence
-
 import logging
+import re
 from threading import Timer
 from typing import Generic, Optional
+from typing import Sequence, List
 
 from runtools.runcore import util
 from runtools.runcore.job import (JobInstance, InstanceOutputObserver, InstanceStageObserver, InstanceStageEvent,
                                   InstanceOutputEvent)
+from runtools.runcore.output import OutputLine
 from runtools.runcore.run import Stage, C, StopReason
+from runtools.runjob.output import OutputContext
 from runtools.runjob.phase import PhaseDecorator
 
 log = logging.getLogger(__name__)
@@ -85,6 +86,63 @@ class TimeWarningExtension(PhaseDecorator[C], Generic[C]):
         """
         self._cancel_timer()
         super().stop(reason)
+
+
+class OutputWarningExtension(PhaseDecorator[C], Generic[C]):
+    """
+    A phase decorator that monitors output for patterns and triggers warnings.
+    This extension observes the output of the wrapped phase and generates a warning
+    when output matching any of the specified patterns is detected.
+    """
+
+    def __init__(self, wrapped, patterns: List[str], warning_template: str = None):
+        """
+        Initialize the extension with output patterns to monitor.
+
+        Args:
+            wrapped: The Phase implementation which output will be monitored
+            patterns: List of regex patterns to match against output
+            warning_template: Custom warning message (default: "$LINE")
+                              Available placeholders:
+                              - $MATCH: The specific text that matched the pattern
+                              - $LINE: The entire output line where the match was found
+        """
+        super().__init__(wrapped)
+        if not patterns:
+            raise ValueError("At least one pattern must be provided")
+
+        self.patterns = [re.compile(pattern) for pattern in patterns]
+        self.warning_template = warning_template or "$LINE"
+
+    def run(self, ctx: Optional[C]):
+        """
+        Run the wrapped phase with output monitoring.
+
+        Args:
+            ctx: The execution context to pass to the wrapped phase
+        """
+        if not ctx or not hasattr(ctx, 'status_tracker') or not ctx.status_tracker or not isinstance(ctx,
+                                                                                                     OutputContext):
+            log.warning(f"incompatible_run_context phase=[{super().id}] result=[Output warning ignored]")
+            return super().run(ctx)
+
+        def pattern_output_observer(output_line: OutputLine):
+            for pattern in self.patterns:
+                match = pattern.search(output_line.text)
+                if match:
+                    warning_text = self.warning_template
+                    if "$MATCH" in warning_text:
+                        warning_text = warning_text.replace("$MATCH", match.group(0))
+                    if "$LINE" in warning_text:
+                        warning_text = warning_text.replace("$LINE", output_line.text)
+
+                    log.warning(
+                        f"output_warning pattern=[{pattern.pattern}] match=[{match.group(0)}] line=[{output_line.text}] phase=[{self.id}]")
+                    ctx.status_tracker.warning(warning_text)
+                    # break  # Stop after first match to avoid multiple warnings for one line
+
+        with ctx.output_sink.observer_context(pattern_output_observer):
+            return super().run(ctx)
 
 
 def exec_time_exceeded(job_instance: JobInstance, warning_name: str, time: float):
