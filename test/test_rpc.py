@@ -70,7 +70,7 @@ def test_active_runs(client, server):
 
 def test_stop(job_instances, client, server):
     j1, j2 = job_instances
-    client.stop_instance(server.address, j1.instance_id)
+    client.stop_instance(server.address, j1.id)
 
     assert j1.snapshot().lifecycle.termination.status == TerminationStatus.STOPPED
     assert not j2.snapshot().lifecycle.termination
@@ -78,7 +78,7 @@ def test_stop(job_instances, client, server):
 
 def test_phase_op_release(job_instances, client, server):
     _, j2 = job_instances
-    client.exec_phase_op(server.address, j2.instance_id, APPROVAL, 'release')
+    client.exec_phase_op(server.address, j2.id, APPROVAL, 'release')
 
     assert j2.find_phase_control_by_id(APPROVAL).is_released
 
@@ -89,11 +89,11 @@ def test_tail(job_instances, client, server):
     j2.output.new_output(OutputLine('Escape...', True, 'EXEC2'))
     j2.output.new_output(OutputLine('...samsara!', True, 'EXEC2'))
 
-    output_lines = client.get_output_tail(server.address, j1.instance_id)
+    output_lines = client.get_output_tail(server.address, j1.id)
     assert output_lines == [OutputLine('Meditate, do not delay, lest you later regret it.', False, 'EXEC1')]
 
-    output_lines = client.get_output_tail(server.address, j2.instance_id)
+    output_lines = client.get_output_tail(server.address, j2.id)
     assert output_lines == [OutputLine('Escape...', True, 'EXEC2'), OutputLine('...samsara!', True, 'EXEC2')]
 
-    output_lines = client.get_output_tail(server.address, j2.instance_id, max_lines=1)
+    output_lines = client.get_output_tail(server.address, j2.id, max_lines=1)
     assert output_lines == [OutputLine('...samsara!', True, 'EXEC2')]

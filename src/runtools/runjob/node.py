@@ -97,7 +97,7 @@ class JobInstanceManaged(JobInstanceDelegate):
         try:
             return super().run()
         finally:
-            self._env._detach_instance(self.instance_id, self._env._transient)
+            self._env._detach_instance(self.id, self._env._transient)
 
     def _allows_env_closing(self):
         return self._state in (_InstanceState.NONE, _InstanceState.DETACHED)
@@ -219,11 +219,11 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
                 raise InvalidStateError("Cannot add job instance: environment container not opened")
             if self._closing:
                 raise InvalidStateError("Cannot add job instance: environment container already closed")
-            if job_instance.instance_id in self._managed_instances:
+            if job_instance.id in self._managed_instances:
                 raise ValueError("Instance with ID already exists in environment")
 
             job_instance = JobInstanceManaged(self, job_instance)
-            self._managed_instances[job_instance.instance_id] = job_instance
+            self._managed_instances[job_instance.id] = job_instance
 
         # TODO Exception must be caught here to prevent inconsistent state and possibility in get stuck in close method:
         self._on_added(job_instance)
@@ -565,7 +565,7 @@ class LocalNode(EnvironmentNodeBase):
 
     def get_instance(self, instance_id):
         for inst in self.instances:
-            if inst.instance_id == instance_id:
+            if inst.id == instance_id:
                 return inst
 
         return self._connector.get_instance(instance_id)

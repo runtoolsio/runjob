@@ -271,10 +271,10 @@ class RemoteCallServer(SocketServer, JobInstanceManager):
         self._job_instances = {}
 
     def register_instance(self, job_instance):
-        self._job_instances[job_instance.instance_id] = job_instance
+        self._job_instances[job_instance.id] = job_instance
 
     def unregister_instance(self, job_instance):
-        del self._job_instances[job_instance.instance_id]
+        del self._job_instances[job_instance.id]
 
     def handle(self, req: str) -> str:
         try:

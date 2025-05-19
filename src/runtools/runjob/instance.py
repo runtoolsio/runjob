@@ -259,7 +259,7 @@ class _JobInstance(JobInstance):
     def run(self):
         with self._job_instance_context():
             with self._output.capture_logs_from(logging.getLogger(),
-                                                log_filter=_JobInstanceLogFilter(self.instance_id)):
+                                                log_filter=_JobInstanceLogFilter(self.id)):
                 try:
                     self._exec_pre_run_hook()
                     self._root_phase.run(self._ctx)

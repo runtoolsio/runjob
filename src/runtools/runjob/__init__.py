@@ -10,7 +10,6 @@ from typing import List
 
 from runtools.runcore.util.socket import SocketClient
 from runtools.runjob import instance
-from runtools.runjob.featurize import FeaturedContextBuilder
 from runtools.runjob.instance import _JobInstance, JobInstanceHook
 
 __version__ = "0.11.0"
