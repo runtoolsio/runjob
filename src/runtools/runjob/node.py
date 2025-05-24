@@ -364,6 +364,9 @@ class IsolatedEnvironment(JobInstanceNotifications, EnvironmentNodeBase):
     def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._persistence.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
+    def iter_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._persistence.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+
     def read_history_stats(self, run_match=None):
         return self._persistence.read_history_stats(run_match)
 
@@ -572,6 +575,9 @@ class LocalNode(EnvironmentNodeBase):
 
     def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._connector.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+
+    def iter_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._connector.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
     def read_history_stats(self, run_match=None):
         return self._connector.read_history_stats(run_match)
