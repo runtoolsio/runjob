@@ -9,7 +9,7 @@ from typing import Dict, Optional, List, Callable
 from runtools.runcore import plugins, paths, connector, db, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
-from runtools.runcore.db import sqlite, PersistingObserver, SortCriteria, NullPersistence
+from runtools.runcore.db import sqlite, PersistingObserver, SortOption, NullPersistence
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
     IsolatedEnvironmentConfig
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
@@ -361,10 +361,10 @@ class IsolatedEnvironment(JobInstanceNotifications, EnvironmentNodeBase):
     def get_instances(self, run_match=None) -> List[JobInstance]:
         return [i for i in self.instances if not run_match or run_match(i.snapshot())]
 
-    def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+    def read_history_runs(self, run_match, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._persistence.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
-    def iter_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+    def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._persistence.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
     def read_history_stats(self, run_match=None):
@@ -573,10 +573,10 @@ class LocalNode(EnvironmentNodeBase):
 
         return self._connector.get_instance(instance_id)
 
-    def read_history_runs(self, run_match, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+    def read_history_runs(self, run_match, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._connector.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
-    def iter_history_runs(self, run_match=None, sort=SortCriteria.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+    def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._connector.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
     def read_history_stats(self, run_match=None):
