@@ -9,7 +9,8 @@ from typing import Dict, Optional, List, Callable
 from runtools.runcore import plugins, paths, connector, db, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
-from runtools.runcore.db import sqlite, PersistingObserver, SortOption, NullPersistence
+from runtools.runcore.criteria import SortOption
+from runtools.runcore.db import sqlite, PersistingObserver, NullPersistence
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
     IsolatedEnvironmentConfig
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
