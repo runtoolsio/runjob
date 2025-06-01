@@ -3,7 +3,7 @@ from typing import Optional
 
 from runtools.runcore.err import InvalidStateError
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import RunState, TerminationStatus, control_api
+from runtools.runcore.run import TerminationStatus, control_api
 from runtools.runjob.instance import JobInstanceContext
 from runtools.runjob.output import OutputSink, OutputContext
 from runtools.runjob.phase import BasePhase, PhaseTerminated
@@ -33,7 +33,7 @@ class TestPhase(BasePhase[JobInstanceContext]):
                  raise_exc=None,
                  fail=False,
                  name: Optional[str] = None):
-        super().__init__(phase_id, TestPhase.TYPE, RunState.PENDING if wait else RunState.EXECUTING, name)
+        super().__init__(phase_id, TestPhase.TYPE, name)
         self.wait: Optional[Event] = Event() if wait else None
         self.output_text = output_text
         self.exception = raise_exc

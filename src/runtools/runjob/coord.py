@@ -8,7 +8,7 @@ from typing import Any, List, Optional
 
 from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion, MetadataCriterion, LifecycleCriterion
 from runtools.runcore.job import JobRun, InstanceTransitionEvent
-from runtools.runcore.run import RunState, TerminationStatus, control_api, Stage, StopReason
+from runtools.runcore.run import TerminationStatus, control_api, Stage, StopReason
 from runtools.runjob.instance import JobInstanceContext
 from runtools.runjob.output import OutputContext
 from runtools.runjob.phase import BasePhase, PhaseTerminated
@@ -31,7 +31,7 @@ class ApprovalPhase(BasePhase[Any]):
     """
 
     def __init__(self, phase_id, phase_name=None, *, timeout=0):
-        super().__init__(phase_id, CoordTypes.APPROVAL.value, RunState.PENDING, phase_name)
+        super().__init__(phase_id, CoordTypes.APPROVAL.value, phase_name)
         self._timeout = timeout
         self._event = Event()
         self._stop_reason: Optional[StopReason] = None
@@ -74,7 +74,7 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
     )
 
     def __init__(self, phase_id, protected_phase, *, exclusion_group=None, phase_name=None):
-        super().__init__(phase_id, CoordTypes.MUTEX.value, RunState.EVALUATING, phase_name, [protected_phase])
+        super().__init__(phase_id, CoordTypes.MUTEX.value, phase_name, [protected_phase])
         self._exclusion_group = exclusion_group
         self._attrs = {'exclusion_group': self._exclusion_group}
         self._state_lock = Lock()
@@ -131,8 +131,7 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
 class DependencyPhase(BasePhase[JobInstanceContext]):
 
     def __init__(self, dependency_match, phase_id=None, phase_name='Active dependency check'):
-        super().__init__(phase_id or str(dependency_match), CoordTypes.DEPENDENCY.value, RunState.EVALUATING,
-                         phase_name)
+        super().__init__(phase_id or str(dependency_match), CoordTypes.DEPENDENCY.value, phase_name)
         self._dependency_match = dependency_match
 
     @property
@@ -162,7 +161,7 @@ class WaitingPhase(BasePhase[OutputContext]):
     """
 
     def __init__(self, phase_id, observable_conditions, timeout=0):
-        super().__init__(phase_id, CoordTypes.WAITING.value, RunState.WAITING)
+        super().__init__(phase_id, CoordTypes.WAITING.value)
         self._observable_conditions = observable_conditions
         self._timeout = timeout
         self._conditions_lock = Lock()
@@ -318,8 +317,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
     STATE = "state"
 
     def __init__(self, phase_id, concurrency_group, limited_phase, phase_name=None):
-        super().__init__(phase_id or concurrency_group.group_id, CoordTypes.QUEUE.value, RunState.IN_QUEUE, phase_name,
-                         [limited_phase])
+        super().__init__(phase_id or concurrency_group.group_id, CoordTypes.QUEUE.value, phase_name, [limited_phase])
         if not concurrency_group:
             raise ValueError('Concurrency group must be specified')
 

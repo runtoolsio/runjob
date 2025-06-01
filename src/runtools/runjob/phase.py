@@ -7,7 +7,7 @@ from typing import Optional, Generic, List
 
 from runtools.runcore import err
 from runtools.runcore.job import Stage
-from runtools.runcore.run import TerminationStatus, TerminationInfo, RunState, C, PhaseControl, \
+from runtools.runcore.run import TerminationStatus, TerminationInfo, C, PhaseControl, \
     PhaseDetail, PhaseTransitionObserver, PhaseTransitionEvent, Outcome, RunCompletionError, StopReason
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
@@ -53,12 +53,11 @@ class Phase(ABC, Generic[C]):
         pass
 
     @property
-    @abstractmethod
-    def run_state(self) -> RunState:
+    def is_idle(self) -> bool:
         """
-        The run state of this phase. Should be defined as a constant value in each implementing class.
+        TODO
         """
-        pass
+        return False
 
     @property
     def name(self) -> Optional[str]:
@@ -157,9 +156,9 @@ class PhaseDecorator(Phase[C], Generic[C]):
         return self._wrapped.type
 
     @property
-    def run_state(self) -> RunState:
-        """Delegates to the wrapped phase's run_state property"""
-        return self._wrapped.run_state
+    def is_idle(self) -> bool:
+        """Delegates to the wrapped phase's is_idle property"""
+        return self._wrapped.is_idle
 
     @property
     def name(self) -> Optional[str]:
@@ -233,10 +232,9 @@ class PhaseDecorator(Phase[C], Generic[C]):
 class BasePhase(Phase[C], ABC):
     """Base implementation providing common functionality for V2 phases"""
 
-    def __init__(self, phase_id: str, phase_type: str, run_state: RunState, name: Optional[str] = None, children=()):
+    def __init__(self, phase_id: str, phase_type: str, name: Optional[str] = None, children=()):
         self._id = phase_id
         self._type = phase_type
-        self._run_state = run_state
         self._children = list(children)
         self._name = name
         self._created_at: datetime = utc_now()
@@ -259,10 +257,6 @@ class BasePhase(Phase[C], ABC):
     @property
     def type(self) -> str:
         return self._type
-
-    @property
-    def run_state(self) -> RunState:
-        return self._run_state
 
     @property
     def name(self) -> Optional[str]:
@@ -417,7 +411,7 @@ class SequentialPhase(BasePhase):
     TYPE = 'SEQUENTIAL'
 
     def __init__(self, phase_id: str, children: List[Phase[C]], name: Optional[str] = None):
-        super().__init__(phase_id, SequentialPhase.TYPE, RunState.EXECUTING, name, children)
+        super().__init__(phase_id, SequentialPhase.TYPE, name, children)
         self._current_child: Optional[Phase[C]] = None
         self._stop_lock = Lock()
         self._stop_reason: Optional[StopReason] = None

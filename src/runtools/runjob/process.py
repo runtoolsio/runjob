@@ -15,7 +15,7 @@ from typing import Union, Tuple, Optional
 import sys
 
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import TerminationStatus, RunState, StopReason
+from runtools.runcore.run import TerminationStatus, StopReason
 from runtools.runjob.output import OutputContext
 from runtools.runjob.phase import BasePhase, PhaseTerminated
 
@@ -28,7 +28,7 @@ class ProcessPhase(BasePhase[OutputContext]):
     TYPE = 'PROCESS'
 
     def __init__(self, phase_id: str, target, args=(), *, output_id=None):
-        super().__init__(phase_id, ProcessPhase.TYPE, RunState.EXECUTING)
+        super().__init__(phase_id, ProcessPhase.TYPE)
         self.target = target
         self.args = args
         self.output_id = output_id

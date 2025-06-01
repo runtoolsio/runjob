@@ -13,7 +13,7 @@ from typing import Union, Optional
 import sys
 
 from runtools.runcore.output import OutputLine
-from runtools.runcore.run import TerminationStatus, RunState, StopReason
+from runtools.runcore.run import TerminationStatus, StopReason
 from runtools.runjob.output import OutputContext
 from runtools.runjob.phase import BasePhase, PhaseTerminated
 
@@ -25,8 +25,8 @@ log = logging.getLogger(__name__)
 class ProgramPhase(BasePhase[OutputContext]):
     TYPE = 'PROGRAM'
 
-    def __init__(self, phase_id, *args, read_output: bool = True):
-        super().__init__(phase_id, ProgramPhase.TYPE, RunState.EXECUTING)
+    def __init__(self, phase_id, *args, name=None, read_output: bool = True):
+        super().__init__(phase_id, ProgramPhase.TYPE, name)
         self.args = args
         self.read_output: bool = read_output
         self._popen: Union[Popen, None] = None
