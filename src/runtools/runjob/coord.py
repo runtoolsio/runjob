@@ -49,6 +49,11 @@ class ApprovalPhase(BasePhase[Any]):
         log.info("approved phase=[%s]", self.id)
 
     @control_api
+    @property
+    def is_idle(self):
+        return self.stage == Stage.RUNNING and not self._event.is_set()
+
+    @control_api
     def approve(self):
         self._event.set()
 

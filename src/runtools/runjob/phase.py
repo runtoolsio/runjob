@@ -120,6 +120,15 @@ class Phase(ABC, Generic[C]):
     def termination(self):
         pass
 
+    @property
+    def stage(self) -> Stage:
+        """Determines the current stage of the phase in its lifecycle."""
+        if self.termination:
+            return Stage.ENDED
+        if self.started_at:
+            return Stage.RUNNING
+        return Stage.CREATED
+
     @abstractmethod
     def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY):
         pass
