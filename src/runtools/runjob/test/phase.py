@@ -68,7 +68,7 @@ class TestPhase(BasePhase[JobInstanceContext]):
 
         self.completed = True
 
-    def _stop_run(self, reason):
+    def _stop_started_run(self, reason):
         """Stop the phase execution by setting the wait event if present"""
         if self.wait:
             self.wait.set()

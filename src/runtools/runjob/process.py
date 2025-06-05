@@ -88,7 +88,7 @@ class ProcessPhase(BasePhase[OutputContext]):
             sys.stdout = original_stdout
             sys.stderr = original_stderr
 
-    def _stop_run(self, reason):
+    def _stop_started_run(self, reason):
         self._stop_reason = reason
         self.output_queue.put_nowait((_QueueStop(), False))
         if self._process:

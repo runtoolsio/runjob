@@ -247,11 +247,12 @@ class BasePhase(Phase[C], ABC):
         self._children = list(children)
         self._name = name
         self._created_at: datetime = utc_now()
+        self._state_lock = Lock()
+        self._notification = ObservableNotification[PhaseTransitionObserver]()
         self._ctx = None
         self._started_at: Optional[datetime] = None
         self._termination: Optional[TerminationInfo] = None
-        self._state_lock = Lock()
-        self._notification = ObservableNotification[PhaseTransitionObserver]()
+        self._stop_reason: Optional[StopReason] = None
         for c in children:
             c.add_phase_observer(self._notification.observer_proxy)
 
@@ -382,27 +383,37 @@ class BasePhase(Phase[C], ABC):
                 PhaseTransitionEvent(self.detail(), Stage.ENDED, self._termination.terminated_at))
 
     def run_child(self, child):
-        if self._termination:
+        if self._termination:  # TODO Do we need to also check whether the phase is started
             raise RuntimeError("Parent already terminated")
         if child not in self._children:
             self._children.append(child)
             child.add_phase_observer(self._notification.observer_proxy)
         child.run(self._ctx)
 
+    def run_children(self):
+        for child in self._children:
+            self.run_child(child)
+
     @abstractmethod
-    def _stop_run(self, reason):
+    def _stop_started_run(self, reason):
         pass
+
+    def _stop_children(self, reason):
+        for child in self._children:
+            child.stop(reason)
 
     def stop(self, reason=StopReason.STOPPED):
         with self._state_lock:
             if self.termination:
                 return
+            self._stop_reason = reason
             if not self._started_at:
                 self._termination = TerminationInfo(reason.termination_status, utc_now())
                 self._notification.observer_proxy.new_phase_transition(
                     PhaseTransitionEvent(self.detail(), Stage.ENDED, self._termination.terminated_at))
                 return
-        self._stop_run(reason)
+        self._stop_children(reason)  # TODO Swap stop propagation order
+        self._stop_started_run(reason)
 
     def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY):
         self._notification.add_observer(observer, priority)
@@ -421,35 +432,21 @@ class SequentialPhase(BasePhase):
 
     def __init__(self, phase_id: str, children: List[Phase[C]], name: Optional[str] = None):
         super().__init__(phase_id, SequentialPhase.TYPE, name, children)
-        self._current_child: Optional[Phase[C]] = None
-        self._stop_lock = Lock()
-        self._stop_reason: Optional[StopReason] = None
 
     def _run(self, ctx: Optional[C]):
         """
         Execute child phases in sequence.
         If any phase fails, execution is terminated.
         """
-        try:
-            for child in self._children:
-                with self._stop_lock:
-                    if self._stop_reason:
-                        raise PhaseTerminated(self._stop_reason.termination_status)
-                    self._current_child = child
-                self.run_child(child)
-                if child.termination.status != TerminationStatus.COMPLETED:
-                    raise PhaseTerminated(child.termination.status, child.termination.message)
-        finally:
-            self._current_child = None
+        for child in self._children:
+            if self._stop_reason:
+                raise PhaseTerminated(self._stop_reason.termination_status)
+            self.run_child(child)
+            if child.termination.status != TerminationStatus.COMPLETED:
+                raise PhaseTerminated(child.termination.status, child.termination.message)
 
-    def _stop_run(self, reason):
-        """
-        Stop the current child phase if one is executing
-        """
-        with self._stop_lock:
-            self._stop_reason = reason
-            if self._current_child:
-                self._current_child.stop(reason)
+    def _stop_started_run(self, reason):
+        pass
 
 
 class TimeoutExtension(PhaseDecorator[C], Generic[C]):

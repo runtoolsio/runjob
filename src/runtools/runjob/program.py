@@ -83,7 +83,7 @@ class ProgramPhase(BasePhase[OutputContext]):
     def attributes(self):
         return {'args': self.args, 'output_read': self.read_output}
 
-    def _stop_run(self, reason):
+    def _stop_started_run(self, reason):
         self._stop_reason = reason
         if self._popen:
             self._popen.terminate()

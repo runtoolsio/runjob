@@ -4,11 +4,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 from threading import Condition, Event, Lock
-from typing import Any, List, Optional
+from typing import Any, List
 
 from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion, MetadataCriterion, LifecycleCriterion
 from runtools.runcore.job import JobRun, InstanceTransitionEvent
-from runtools.runcore.run import TerminationStatus, control_api, Stage, StopReason
+from runtools.runcore.run import TerminationStatus, control_api, Stage
 from runtools.runjob.instance import JobInstanceContext
 from runtools.runjob.output import OutputContext
 from runtools.runjob.phase import BasePhase, PhaseTerminated
@@ -30,11 +30,10 @@ class ApprovalPhase(BasePhase[Any]):
     TODO: parameters
     """
 
-    def __init__(self, phase_id, phase_name=None, *, timeout=0):
-        super().__init__(phase_id, CoordTypes.APPROVAL.value, phase_name)
+    def __init__(self, phase_id, phase_name=None, *, children=(), timeout=0):
+        super().__init__(phase_id, CoordTypes.APPROVAL.value, phase_name, children)
         self._timeout = timeout
         self._event = Event()
-        self._stop_reason: Optional[StopReason] = None
 
     def _run(self, _: OutputContext):
         # TODO Add support for denial request (rejection)
@@ -47,6 +46,7 @@ class ApprovalPhase(BasePhase[Any]):
             raise PhaseTerminated(TerminationStatus.TIMEOUT)
 
         log.info("approved phase=[%s]", self.id)
+        self.run_children()
 
     @control_api
     @property
@@ -62,8 +62,7 @@ class ApprovalPhase(BasePhase[Any]):
     def approved(self):
         return self._event.is_set() and not self._stop_reason
 
-    def _stop_run(self, reason):
-        self._stop_reason = reason
+    def _stop_started_run(self, reason):
         self._event.set()
 
 
@@ -121,7 +120,7 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
 
         self._children[0].run(ctx)
 
-    def _stop_run(self, reason):
+    def _stop_started_run(self, reason):
         with self._state_lock:
             if self._state == 1:
                 self._children[0].stop(reason)
@@ -153,7 +152,7 @@ class DependencyPhase(BasePhase[JobInstanceContext]):
             raise PhaseTerminated(TerminationStatus.UNSATISFIED)
         log.debug(f"[active_dependency_found] instances={[r.instance_id for r in matching_runs]}")
 
-    def _stop_run(self, reason):
+    def _stop_started_run(self, reason):
         pass
 
     @property
@@ -200,7 +199,7 @@ class WaitingPhase(BasePhase[OutputContext]):
         if not wait:
             self._event.set()
 
-    def _stop_run(self, reason):
+    def _stop_started_run(self, reason):
         self._stop_all()
         self._event.set()
 
@@ -399,7 +398,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
 
         self._children[0].run(ctx)
 
-    def _stop_run(self, reason):
+    def _stop_started_run(self, reason):
         with self._queue_change_condition:
             if self._state.dequeued:
                 self._children[0].stop(reason)
