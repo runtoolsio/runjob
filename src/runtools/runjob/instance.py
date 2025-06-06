@@ -155,8 +155,8 @@ class JobInstanceContext(OutputContext):
 JobInstanceHook = Callable[[JobInstanceContext], None]
 
 
-def create(instance_id, environment, root_phase=None,
-           *, phases=None,
+def create(instance_id, environment, phases=None,
+           *, root_phase=None,
            tail_buffer=None, status_tracker=None,
            pre_run_hook: Optional[JobInstanceHook] = None,
            post_run_hook: Optional[JobInstanceHook] = None,

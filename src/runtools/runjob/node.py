@@ -151,8 +151,8 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         for feature in self._features:
             feature.on_open()
 
-    def create_instance(self, instance_id, root_phase=None,
-                        *, phases=None, status_tracker=None, tail_buffer=None,
+    def create_instance(self, instance_id, phases=None,
+                        *, root_phase=None, status_tracker=None, tail_buffer=None,
                         pre_run_hook: Optional[JobInstanceHook] = None,
                         post_run_hook: Optional[JobInstanceHook] = None,
                         user_params=None) -> JobInstanceManaged:
