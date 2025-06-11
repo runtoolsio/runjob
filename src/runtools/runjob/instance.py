@@ -50,8 +50,8 @@ from typing import Callable, Optional, List, Iterable
 
 from runtools.runcore.job import (JobInstance, JobRun, InstanceOutputObserver, JobInstanceMetadata,
                                   InstanceTransitionObserver,
-                                  InstanceTransitionEvent, InstanceOutputEvent, InstanceStageObserver,
-                                  InstanceStageEvent)
+                                  InstanceTransitionEvent, InstanceOutputEvent, InstanceLifecycleObserver,
+                                  InstanceLifecycleEvent)
 from runtools.runcore.output import Output, TailNotSupportedError, Mode
 from runtools.runcore.run import Outcome, Fault, PhaseTransitionEvent, Stage, StopReason
 from runtools.runcore.util import utc_now
@@ -160,7 +160,7 @@ def create(instance_id, environment, phases=None,
            tail_buffer=None, status_tracker=None,
            pre_run_hook: Optional[JobInstanceHook] = None,
            post_run_hook: Optional[JobInstanceHook] = None,
-           stage_observers: Iterable[InstanceStageObserver] = (),
+           stage_observers: Iterable[InstanceLifecycleObserver] = (),
            transition_observer_error_handler: Optional[TransitionObserverErrorHandler] = None,
            output_observer_error_handler: Optional[OutputObserverErrorHandler] = None,
            **user_params) -> JobInstance:
@@ -210,8 +210,8 @@ class _JobInstance(JobInstance):
         self._post_run_hook = post_run_hook
 
         self._lifecycle_notification = (
-            ObservableNotification[InstanceStageObserver](error_hook=phase_update_observer_err_hook,
-                                                          force_reraise=True))
+            ObservableNotification[InstanceLifecycleObserver](error_hook=phase_update_observer_err_hook,
+                                                              force_reraise=True))
         self._transition_notification = (
             ObservableNotification[InstanceTransitionObserver](error_hook=phase_update_observer_err_hook,
                                                                force_reraise=True))
@@ -331,8 +331,8 @@ class _JobInstance(JobInstance):
         snapshot = self.snapshot()
         if is_root_phase:
             try:
-                event = InstanceStageEvent(self.metadata, snapshot, e.new_stage, e.timestamp)
-                self._lifecycle_notification.observer_proxy.new_instance_stage(event)
+                event = InstanceLifecycleEvent(self.metadata, snapshot, e.new_stage, e.timestamp)
+                self._lifecycle_notification.observer_proxy.instance_lifecycle_update(event)
             except ExceptionGroup as eg:
                 log.error("[stage_observer_error]", exc_info=eg)
                 for exc in eg.exceptions:

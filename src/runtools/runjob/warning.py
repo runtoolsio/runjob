@@ -5,7 +5,7 @@ from typing import Generic, Optional
 from typing import Sequence, List
 
 from runtools.runcore import util
-from runtools.runcore.job import (JobInstance, InstanceOutputObserver, InstanceStageObserver, InstanceStageEvent,
+from runtools.runcore.job import (JobInstance, InstanceOutputObserver, InstanceLifecycleObserver, InstanceLifecycleEvent,
                                   InstanceOutputEvent)
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import Stage, C, StopReason
@@ -162,7 +162,7 @@ def register(job_instance: JobInstance, *, warn_times: Sequence[str] = (), warn_
         output_matches(job_instance, f"output=~{warn_output}", warn_output)
 
 
-class _ExecTimeWarning(InstanceStageObserver):
+class _ExecTimeWarning(InstanceLifecycleObserver):
 
     def __init__(self, job_instance, text, time: float):
         self.job_instance = job_instance
@@ -170,7 +170,7 @@ class _ExecTimeWarning(InstanceStageObserver):
         self.time = time
         self.timer = None
 
-    def new_instance_stage(self, event: InstanceStageEvent):
+    def instance_lifecycle_update(self, event: InstanceLifecycleEvent):
         if event.new_stage == Stage.ENDED:
             if self.timer is not None:
                 self.timer.cancel()

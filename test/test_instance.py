@@ -5,29 +5,29 @@ Tests that :mod:`runjob` sends correct notification to state observers.
 
 import pytest
 
-from runtools.runcore.job import InstanceStageObserver, iid
+from runtools.runcore.job import InstanceLifecycleObserver, iid
 from runtools.runcore.run import TerminationStatus, Stage
-from runtools.runcore.test.observer import TestStageObserver
+from runtools.runcore.test.observer import TestLifecycleObserver
 from runtools.runjob import instance
 from runtools.runjob.test.phase import TestPhase
 
 
 @pytest.fixture
 def observer():
-    return TestStageObserver()
+    return TestLifecycleObserver()
 
 
 EXEC = 'j1'
 
 
-def test_passed_args(observer: TestStageObserver):
+def test_passed_args(observer: TestLifecycleObserver):
     instance.create(iid('j1'), None, root_phase=TestPhase(EXEC), stage_observers=[observer]).run()
 
     assert observer.job_runs[0].metadata.job_id == 'j1'
     assert observer.stages == [Stage.RUNNING, Stage.ENDED]  # TODO CREATED
 
 
-def test_raise_exc(observer: TestStageObserver):
+def test_raise_exc(observer: TestLifecycleObserver):
     with pytest.raises(Exception):
         instance.create(iid('j1'), None, root_phase=TestPhase(raise_exc=Exception), stage_observers=[observer]).run()
 
@@ -35,7 +35,7 @@ def test_raise_exc(observer: TestStageObserver):
     assert observer.job_runs[-1].lifecycle.termination.status == TerminationStatus.ERROR
 
 
-def test_raise_exec_terminated(observer: TestStageObserver):
+def test_raise_exec_terminated(observer: TestLifecycleObserver):
     (instance.create(iid('j1'), None, root_phase=TestPhase(fail=True), stage_observers=[observer])
      .run())
 
@@ -56,10 +56,10 @@ def test_observer_raises_exception():
     assert job_instance.snapshot().faults[0].category == instance.LIFECYCLE_OBSERVER_ERROR
 
 
-class ExceptionRaisingObserver(InstanceStageObserver):
+class ExceptionRaisingObserver(InstanceLifecycleObserver):
 
     def __init__(self, raise_exc: Exception):
         self.raise_exc = raise_exc
 
-    def new_instance_stage(self, e):
+    def instance_lifecycle_update(self, e):
         raise self.raise_exc

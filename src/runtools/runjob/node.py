@@ -14,7 +14,7 @@ from runtools.runcore.db import sqlite, PersistingObserver, NullPersistence
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
     IsolatedEnvironmentConfig
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
-from runtools.runcore.job import JobRun, JobInstance, JobInstanceNotifications, InstanceStageEvent, \
+from runtools.runcore.job import JobRun, JobInstance, JobInstanceNotifications, InstanceLifecycleEvent, \
     InstanceTransitionEvent, \
     InstanceOutputEvent, JobInstanceDelegate
 from runtools.runcore.plugins import Plugin
@@ -524,7 +524,7 @@ def local(env_id, persistence=None, node_layout=None, *, lock_factory=None, feat
 
     api = RemoteCallServer(layout.server_socket_path)
     event_dispatcher = EventDispatcher(SocketClient(), {
-        InstanceStageEvent.EVENT_TYPE: layout.listener_lifecycle_sockets_provider,
+        InstanceLifecycleEvent.EVENT_TYPE: layout.listener_lifecycle_sockets_provider,
         InstanceTransitionEvent.EVENT_TYPE: layout.listener_phase_sockets_provider,
         InstanceOutputEvent.EVENT_TYPE: layout.listener_output_sockets_provider,
     })
