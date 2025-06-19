@@ -95,7 +95,7 @@ class _JobOutput(Output, OutputSink):
             if self.tail_buffer:
                 self.tail_buffer.add_line(output_line)
             # noinspection PyProtectedMember
-            self.instance._output_notification.observer_proxy.new_instance_output(
+            self.instance._output_notification.observer_proxy.instance_output_update(
                 InstanceOutputEvent(self.instance.metadata, output_line, utc_now()))
         except ExceptionGroup as eg:
             log.error("[output_observer_error]", exc_info=eg)

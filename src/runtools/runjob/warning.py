@@ -195,7 +195,7 @@ class _OutputMatchesWarning(InstanceOutputObserver):
         self.text = text
         self.regex = re.compile(regex)
 
-    def new_instance_output(self, event: InstanceOutputEvent):
+    def instance_output_update(self, event: InstanceOutputEvent):
         m = self.regex.search(event.output_line.text)
         if m:
             self.job_instance.status_tracker.warning(self.text)
