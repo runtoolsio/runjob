@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from collections import deque
 from typing import Optional, Callable, List, Iterable
 
-from runtools.runcore.output import OutputLine, OutputObserver, TailBuffer, Mode
+from runtools.runcore.output import OutputLine, OutputObserver, TailBuffer, Mode, OutputLineFactory
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY, ObserverContext
 
 
@@ -60,11 +60,12 @@ class OutputSink(ABC):
             def __init__(self, sink):
                 super().__init__()
                 self.sink = sink
+                self._output_line_fact = OutputLineFactory()
 
             def emit(self, record):
                 output = self.format(record) if format_record else record.getMessage()
                 is_error = record.levelno >= logging.ERROR
-                self.sink.new_output(OutputLine(output, is_error))
+                self.sink.new_output(self._output_line_fact(output, is_error))
 
         handler = InternalHandler(self)
         if log_filter:

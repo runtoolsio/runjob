@@ -14,7 +14,7 @@ from typing import Union, Tuple, Optional
 
 import sys
 
-from runtools.runcore.output import OutputLine
+from runtools.runcore.output import OutputLine, OutputLineFactory
 from runtools.runcore.run import TerminationStatus, StopReason
 from runtools.runjob.output import OutputContext
 from runtools.runjob.phase import BasePhase, PhaseTerminated
@@ -31,7 +31,7 @@ class ProcessPhase(BasePhase[OutputContext]):
         super().__init__(phase_id, ProcessPhase.TYPE)
         self.target = target
         self.args = args
-        self.output_id = output_id
+        self._output_line_fact = OutputLineFactory(output_id)
         self.output_queue: Queue[Tuple[Union[str, _QueueStop], bool]] = Queue(maxsize=2048)
         self._process: Optional[Process] = None
         self._stop_reason: Optional[StopReason] = None
@@ -100,7 +100,7 @@ class ProcessPhase(BasePhase[OutputContext]):
                 output_text, is_err = self.output_queue.get(timeout=2)
                 if isinstance(output_text, _QueueStop):
                     break
-                output_sink.new_output(OutputLine(output_text, is_err, self.output_id))
+                output_sink.new_output(self._output_line_fact(output_text, is_err))
             except Empty:
                 pass
 

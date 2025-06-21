@@ -12,7 +12,7 @@ from typing import Union, Optional
 
 import sys
 
-from runtools.runcore.output import OutputLine
+from runtools.runcore.output import OutputLine, OutputLineFactory
 from runtools.runcore.run import TerminationStatus, StopReason
 from runtools.runjob.output import OutputContext
 from runtools.runjob.phase import BasePhase, PhaseTerminated
@@ -29,6 +29,7 @@ class ProgramPhase(BasePhase[OutputContext]):
         super().__init__(phase_id, ProgramPhase.TYPE, name)
         self.args = args
         self.read_output: bool = read_output
+        self._output_line_fact = OutputLineFactory()
         self._popen: Union[Popen, None] = None
         self._status = None
         self._stop_reason: Optional[StopReason] = None
@@ -94,4 +95,4 @@ class ProgramPhase(BasePhase[OutputContext]):
                 line_stripped = line.rstrip()
                 self._status = line_stripped
                 print(line_stripped, file=sys.stderr if is_err else sys.stdout)
-                run_ctx.output_sink.new_output(OutputLine(line_stripped, is_err))
+                run_ctx.output_sink.new_output(self._output_line_fact(line_stripped, is_err))
