@@ -1,11 +1,13 @@
 import logging
 from abc import ABC, abstractmethod
 from collections import deque
+from threading import local
 from typing import Optional, Callable, List, Iterable
 
 from runtools.runcore.output import OutputLine, OutputObserver, TailBuffer, Mode, OutputLineFactory
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY, ObserverContext
 
+_thread_local = local()
 
 class LogHandlerContext:
 
@@ -35,11 +37,18 @@ class OutputSink(ABC):
         pass
 
     def new_output(self, output_line):
-        if self.preprocessing:
-            output_line = self.preprocessing(output_line)
+        if getattr(_thread_local, 'processing_output', False):
+            return
+        _thread_local.processing_output = True
 
-        self._process_output(output_line)
-        self._output_notification.observer_proxy.new_output(output_line)
+        try:
+            if self.preprocessing:
+                output_line = self.preprocessing(output_line)
+
+            self._process_output(output_line)
+            self._output_notification.observer_proxy.new_output(output_line)
+        finally:
+            _thread_local.processing_output = False
 
     def add_observer(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY) -> None:
         self._output_notification.add_observer(observer, priority)

@@ -73,37 +73,17 @@ OutputObserverErrorHandler = Callable[[InstanceOutputObserver, InstanceOutputEve
 
 current_job_instance: ContextVar[Optional[JobInstanceMetadata]] = ContextVar('current_job_instance', default=None)
 
-_thread_local = local()
-
 
 class _JobOutput(Output, OutputSink):
 
-    def __init__(self, instance, tail_buffer, output_observer_err_hook):
+    def __init__(self, tail_buffer):
         super().__init__()
-        self.instance = instance
         self.tail_buffer = tail_buffer
         self._notifying_observers = False
 
     def _process_output(self, output_line):
-        # Check if we're already processing output in this thread to prevent the recursion cycle
-        if getattr(_thread_local, 'processing_output', False):
-            return
-
-        _thread_local.processing_output = True
-
-        try:
-            if self.tail_buffer:
-                self.tail_buffer.add_line(output_line)
-            # noinspection PyProtectedMember
-            self.instance._output_notification.observer_proxy.instance_output_update(
-                InstanceOutputEvent(self.instance.metadata, output_line, utc_now()))
-        except ExceptionGroup as eg:
-            log.error("[output_observer_error]", exc_info=eg)
-            for e in eg.exceptions:
-                # noinspection PyProtectedMember
-                self.instance._faults.append(Fault.from_exception(OUTPUT_OBSERVER_ERROR, e))
-        finally:
-            _thread_local.processing_output = False
+        if self.tail_buffer:
+            self.tail_buffer.add_line(output_line)
 
     def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
         if not self.tail_buffer:
@@ -204,7 +184,7 @@ class _JobInstance(JobInstance):
                  user_params):
         self._metadata = JobInstanceMetadata(instance_id, user_params)
         self._root_phase: SequentialPhase = root_phase
-        self._output = _JobOutput(self, tail_buffer, output_observer_err_hook)
+        self._output = _JobOutput(tail_buffer)
         self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output)
         self._pre_run_hook = pre_run_hook
         self._post_run_hook = post_run_hook
@@ -256,15 +236,25 @@ class _JobInstance(JobInstance):
         finally:
             current_job_instance.reset(token)
 
+    def _process_output(self, output_line):
+        event = InstanceOutputEvent(self._metadata, output_line, utc_now())
+        try:
+            self._output_notification.observer_proxy.instance_output_update(event)
+        except ExceptionGroup as eg:
+            log.error("[output_observer_error]", exc_info=eg)
+            for e in eg.exceptions:
+                self._faults.append(Fault.from_exception(OUTPUT_OBSERVER_ERROR, e))
+
     def run(self):
         with self._job_instance_context():
-            with self._output.capture_logs_from(logging.getLogger(),
-                                                log_filter=_JobInstanceLogFilter(self.id)):
-                try:
-                    self._exec_pre_run_hook()
-                    self._root_phase.run(self._ctx)
-                finally:
-                    self._exec_post_run_hook()
+            with self._output.observer_context(self._process_output):
+                with self._output.capture_logs_from(
+                        logging.getLogger(), log_filter=_JobInstanceLogFilter(self.id)):
+                    try:
+                        self._exec_pre_run_hook()
+                        self._root_phase.run(self._ctx)
+                    finally:
+                        self._exec_post_run_hook()
 
     def _exec_pre_run_hook(self):
         if self._pre_run_hook:
