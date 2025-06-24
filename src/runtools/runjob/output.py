@@ -1,13 +1,16 @@
 import logging
+import os
 from abc import ABC, abstractmethod
 from collections import deque
 from threading import local
 from typing import Optional, Callable, List, Iterable
 
-from runtools.runcore.output import OutputLine, OutputObserver, TailBuffer, Mode, OutputLineFactory
+from runtools.runcore.output import OutputLine, OutputObserver, TailBuffer, Mode, OutputLineFactory, Output, \
+    TailNotSupportedError, OutputLocation
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY, ObserverContext
 
 _thread_local = local()
+
 
 class LogHandlerContext:
 
@@ -113,8 +116,122 @@ class InMemoryTailBuffer(TailBuffer):
         if not max_lines:
             return output
 
-        if mode == Mode.TAIL:
-            return output[-max_lines:]
+        match mode:
+            case Mode.TAIL:
+                return output[-max_lines:]
+            case Mode.HEAD:
+                return output[:max_lines]
+            case _:
+                assert False, f"Unhandled mode: {mode}"  # Should never happen
 
-        if mode == Mode.HEAD:
-            return output[:max_lines]
+
+class OutputStorage(ABC):
+
+    @property
+    @abstractmethod
+    def location(self):
+        pass
+
+    @abstractmethod
+    def store_line(self, line: OutputLine):
+        """Store a single output line. Optional for flush-only storages."""
+        pass
+
+    def store_lines(self, lines: List[OutputLine]):
+        """Optional bulk insert method. Default: loop over store_line."""
+        for line in lines:
+            self.store_line(line)
+
+    @property
+    def batch_size(self) -> Optional[int]:
+        """Return preferred batch size, if any."""
+        return None
+
+
+class FileOutputStorage(OutputStorage):
+    def __init__(self, file_path: str, append: bool = True, encoding: str = "utf-8"):
+        self.file_path = file_path
+        self._mode = "a" if append else "w"
+        self._encoding = encoding
+
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        self._file = open(file_path, self._mode, encoding=encoding)
+
+    @property
+    def location(self):
+        return OutputLocation(type="file", source=self.file_path)
+
+    def store_line(self, line: OutputLine):
+        formatted = self._format_line(line)
+        self._file.write(formatted + "\n")
+        self._file.flush()  # or buffer and batch flush if needed
+
+    def store_lines(self, lines: List[OutputLine]):
+        for line in lines:
+            self._file.write(self._format_line(line) + "\n")
+        self._file.flush()
+
+    def _format_line(self, line: OutputLine) -> str:
+        return line.text
+
+    def close(self):
+        self._file.close()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+
+class OutputRouter(Output, OutputSink):
+    """
+    Routes OutputLine instances to multiple storages and an optional tail buffer,
+    supporting both immediate and batched writes.
+    """
+
+    def __init__(self, *, tail_buffer=None, storages=(), max_batch: int = 100):
+        super().__init__()
+        self.tail_buffer = tail_buffer
+        self.storages = list(storages)
+        self.realtime_storages: List[OutputStorage] = [s for s in self.storages if not s.batch_size]
+        self.batch_storages: List[OutputStorage] = [s for s in self.storages if s.batch_size]
+        self.max_batch = max_batch
+        self._batch_buffer: List[OutputLine] = []
+        self._locations = [storage.location for storage in self.storages]
+
+    @property
+    def locations(self):
+        return self._locations
+
+    def _process_output(self, output_line: OutputLine):
+        # 1) tail buffering
+        if self.tail_buffer:
+            self.tail_buffer.add_line(output_line)
+
+        # 2) immediate stores
+        for storage in self.realtime_storages:
+            storage.store_line(output_line)
+
+        # 3) buffer for batch stores
+        if self.batch_storages:
+            self._batch_buffer.append(output_line)
+            if (
+                    len(self._batch_buffer) >= self.max_batch
+                    or any(len(self._batch_buffer) >= s.batch_size for s in self.batch_storages)
+            ):
+                self._flush_batch_buffer()
+
+    def _flush_batch_buffer(self):
+        lines_to_flush, self._batch_buffer = self._batch_buffer, []
+        for storage in self.batch_storages:
+            batch_sz = storage.batch_size or len(lines_to_flush)
+            for i in range(0, len(lines_to_flush), batch_sz):
+                chunk = lines_to_flush[i: i + batch_sz]
+                storage.store_lines(chunk)
+
+    def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
+        if not self.tail_buffer:
+            raise TailNotSupportedError
+        return self.tail_buffer.get_lines(mode, max_lines)

@@ -45,18 +45,17 @@ State lock
 import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
-from threading import local, Thread
+from threading import Thread
 from typing import Callable, Optional, List, Iterable
 
 from runtools.runcore.job import (JobInstance, JobRun, InstanceOutputObserver, JobInstanceMetadata,
                                   InstanceTransitionObserver,
                                   InstanceTransitionEvent, InstanceOutputEvent, InstanceLifecycleObserver,
                                   InstanceLifecycleEvent)
-from runtools.runcore.output import Output, TailNotSupportedError, Mode
 from runtools.runcore.run import Outcome, Fault, PhaseTransitionEvent, Stage, StopReason
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
-from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer
+from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer, OutputRouter
 from runtools.runjob.phase import SequentialPhase
 from runtools.runjob.track import StatusTracker
 
@@ -72,24 +71,6 @@ TransitionObserverErrorHandler = Callable[[InstanceTransitionObserver, InstanceT
 OutputObserverErrorHandler = Callable[[InstanceOutputObserver, InstanceOutputEvent, Exception], None]
 
 current_job_instance: ContextVar[Optional[JobInstanceMetadata]] = ContextVar('current_job_instance', default=None)
-
-
-class _JobOutput(Output, OutputSink):
-
-    def __init__(self, tail_buffer):
-        super().__init__()
-        self.tail_buffer = tail_buffer
-        self._notifying_observers = False
-
-    def _process_output(self, output_line):
-        if self.tail_buffer:
-            self.tail_buffer.add_line(output_line)
-
-    def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
-        if not self.tail_buffer:
-            raise TailNotSupportedError
-
-        return self.tail_buffer.get_lines(mode, max_lines)
 
 
 class _JobInstanceLogFilter(logging.Filter):
@@ -137,7 +118,7 @@ JobInstanceHook = Callable[[JobInstanceContext], None]
 
 def create(instance_id, environment, phases=None,
            *, root_phase=None,
-           tail_buffer=None, status_tracker=None,
+           output_router=None, status_tracker=None,
            pre_run_hook: Optional[JobInstanceHook] = None,
            post_run_hook: Optional[JobInstanceHook] = None,
            stage_observers: Iterable[InstanceLifecycleObserver] = (),
@@ -163,9 +144,9 @@ def create(instance_id, environment, phases=None,
 
     if phases:
         root_phase = SequentialPhase(ROOT_PHASE_ID, phases)
-    tail_buffer = tail_buffer or InMemoryTailBuffer(max_capacity=10)
+    output_router = output_router or OutputRouter(tail_buffer=InMemoryTailBuffer(max_capacity=50))
     status_tracker = status_tracker or StatusTracker()
-    inst = _JobInstance(instance_id, root_phase, environment, tail_buffer, status_tracker,
+    inst = _JobInstance(instance_id, root_phase, environment, output_router, status_tracker,
                         pre_run_hook, post_run_hook,
                         transition_observer_error_handler, output_observer_error_handler,
                         user_params)
@@ -178,14 +159,14 @@ def create(instance_id, environment, phases=None,
 
 class _JobInstance(JobInstance):
 
-    def __init__(self, instance_id, root_phase, env, tail_buffer, status_tracker,
+    def __init__(self, instance_id, root_phase, env, output_router, status_tracker,
                  pre_run_hook, post_run_hook,
                  phase_update_observer_err_hook, output_observer_err_hook,
                  user_params):
         self._metadata = JobInstanceMetadata(instance_id, user_params)
         self._root_phase: SequentialPhase = root_phase
-        self._output = _JobOutput(tail_buffer)
-        self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output)
+        self._output_router = output_router
+        self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output_router)
         self._pre_run_hook = pre_run_hook
         self._post_run_hook = post_run_hook
 
@@ -247,8 +228,8 @@ class _JobInstance(JobInstance):
 
     def run(self):
         with self._job_instance_context():
-            with self._output.observer_context(self._process_output):
-                with self._output.capture_logs_from(
+            with self._output_router.observer_context(self._process_output):
+                with self._output_router.capture_logs_from(
                         logging.getLogger(), log_filter=_JobInstanceLogFilter(self.id)):
                     try:
                         self._exec_pre_run_hook()
