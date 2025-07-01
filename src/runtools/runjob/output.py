@@ -29,15 +29,14 @@ class LogHandlerContext:
                 logger.removeHandler(handler)
 
 
-class OutputSink(ABC):
+OutputPreprocessing = Callable[[OutputLine], OutputLine]
 
-    def __init__(self):
-        self.preprocessing: Optional[Callable[[OutputLine], OutputLine]] = None
+
+class OutputSink:
+
+    def __init__(self, output_preprocessing: Optional[OutputPreprocessing] = None):
+        self.preprocessing: Optional[OutputPreprocessing] = output_preprocessing
         self._output_notification = ObservableNotification[OutputObserver]()
-
-    @abstractmethod
-    def _process_output(self, output_line):
-        pass
 
     def new_output(self, output_line):
         if getattr(_thread_local, 'processing_output', False):
@@ -47,8 +46,6 @@ class OutputSink(ABC):
         try:
             if self.preprocessing:
                 output_line = self.preprocessing(output_line)
-
-            self._process_output(output_line)
             self._output_notification.observer_proxy.new_output(output_line)
         finally:
             _thread_local.processing_output = False
@@ -59,13 +56,14 @@ class OutputSink(ABC):
     def remove_observer(self, observer) -> None:
         self._output_notification.remove_observer(observer)
 
-    def observer_context(self, observer, priority: int = DEFAULT_OBSERVER_PRIORITY) -> ObserverContext[OutputObserver]:
-        return self._output_notification.observer_context(observer, priority)
+    def observer_context(self, *observers, priority: int = DEFAULT_OBSERVER_PRIORITY) -> ObserverContext[
+        OutputObserver]:
+        return self._output_notification.observer_context(*observers, priority=priority)
 
     def capturing_log_handler(self, log_filter: Optional[logging.Filter] = None, *, format_record=True):
         """
         Creates and returns a logging.Handler instance that forwards log records to this sink.
-        TODO source
+        TODO source (probably in init)
         """
 
         class InternalHandler(logging.Handler):
@@ -147,8 +145,12 @@ class OutputStorage(ABC):
         """Return preferred batch size, if any."""
         return None
 
+    def close(self):
+        pass
+
 
 class FileOutputStorage(OutputStorage):
+
     def __init__(self, file_path: str, append: bool = True, encoding: str = "utf-8"):
         self.file_path = file_path
         self._mode = "a" if append else "w"
@@ -185,7 +187,7 @@ class FileOutputStorage(OutputStorage):
             pass
 
 
-class OutputRouter(Output, OutputSink):
+class OutputRouter(OutputObserver, Output):
     """
     Routes OutputLine instances to multiple storages and an optional tail buffer,
     supporting both immediate and batched writes.
@@ -201,11 +203,18 @@ class OutputRouter(Output, OutputSink):
         self._batch_buffer: List[OutputLine] = []
         self._locations = [storage.location for storage in self.storages]
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False  # Don't suppress exceptions
+
     @property
     def locations(self):
         return self._locations
 
-    def _process_output(self, output_line: OutputLine):
+    def new_output(self, output_line: OutputLine):
         # 1) tail buffering
         if self.tail_buffer:
             self.tail_buffer.add_line(output_line)
@@ -235,3 +244,12 @@ class OutputRouter(Output, OutputSink):
         if not self.tail_buffer:
             raise TailNotSupportedError
         return self.tail_buffer.get_lines(mode, max_lines)
+
+    def close(self):
+        # Flush any remaining batched data
+        if self._batch_buffer:
+            self._flush_batch_buffer()
+
+        # Close all storages
+        for storage in self.storages:
+            storage.close()

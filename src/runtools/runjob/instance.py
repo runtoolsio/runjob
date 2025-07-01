@@ -56,7 +56,7 @@ from runtools.runcore.run import Outcome, Fault, PhaseTransitionEvent, Stage, St
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer, OutputRouter
-from runtools.runjob.phase import SequentialPhase
+from runtools.runjob.phase import SequentialPhase, Phase
 from runtools.runjob.track import StatusTracker
 
 log = logging.getLogger(__name__)
@@ -118,7 +118,7 @@ JobInstanceHook = Callable[[JobInstanceContext], None]
 
 def create(instance_id, environment, phases=None,
            *, root_phase=None,
-           output_router=None, status_tracker=None,
+           output_sink=None, output_router=None, status_tracker=None,
            pre_run_hook: Optional[JobInstanceHook] = None,
            post_run_hook: Optional[JobInstanceHook] = None,
            stage_observers: Iterable[InstanceLifecycleObserver] = (),
@@ -144,9 +144,10 @@ def create(instance_id, environment, phases=None,
 
     if phases:
         root_phase = SequentialPhase(ROOT_PHASE_ID, phases)
+    output_sink = output_sink or OutputSink()
     output_router = output_router or OutputRouter(tail_buffer=InMemoryTailBuffer(max_capacity=50))
     status_tracker = status_tracker or StatusTracker()
-    inst = _JobInstance(instance_id, root_phase, environment, output_router, status_tracker,
+    inst = _JobInstance(instance_id, root_phase, environment, output_sink, output_router, status_tracker,
                         pre_run_hook, post_run_hook,
                         transition_observer_error_handler, output_observer_error_handler,
                         user_params)
@@ -159,14 +160,15 @@ def create(instance_id, environment, phases=None,
 
 class _JobInstance(JobInstance):
 
-    def __init__(self, instance_id, root_phase, env, output_router, status_tracker,
+    def __init__(self, instance_id, root_phase, env, output_sink, output_router, status_tracker,
                  pre_run_hook, post_run_hook,
                  phase_update_observer_err_hook, output_observer_err_hook,
                  user_params):
         self._metadata = JobInstanceMetadata(instance_id, user_params)
-        self._root_phase: SequentialPhase = root_phase
+        self._root_phase: Phase = root_phase
+        self._output_sink: OutputSink = output_sink
         self._output_router = output_router
-        self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output_router)
+        self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output_sink)
         self._pre_run_hook = pre_run_hook
         self._post_run_hook = post_run_hook
 
@@ -201,7 +203,7 @@ class _JobInstance(JobInstance):
 
     @property
     def output(self):
-        return self._ctx.output_sink
+        return self._output_router
 
     def snapshot(self) -> JobRun:
         root_phase_detail = self._root_phase.detail()
@@ -228,14 +230,14 @@ class _JobInstance(JobInstance):
 
     def run(self):
         with self._job_instance_context():
-            with self._output_router.observer_context(self._process_output):
-                with self._output_router.capture_logs_from(
-                        logging.getLogger(), log_filter=_JobInstanceLogFilter(self.id)):
-                    try:
-                        self._exec_pre_run_hook()
-                        self._root_phase.run(self._ctx)
-                    finally:
-                        self._exec_post_run_hook()
+            with self._output_router as router:
+                with self._output_sink.observer_context(self._process_output, router):
+                    with self._output_sink.capture_logs_from(logging.getLogger(), log_filter=_JobInstanceLogFilter(self.id)):
+                        try:
+                            self._exec_pre_run_hook()
+                            self._root_phase.run(self._ctx)
+                        finally:
+                            self._exec_post_run_hook()
 
     def _exec_pre_run_hook(self):
         if self._pre_run_hook:
