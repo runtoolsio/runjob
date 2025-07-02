@@ -208,8 +208,14 @@ class _JobInstance(JobInstance):
     def snapshot(self) -> JobRun:
         root_phase_detail = self._root_phase.detail()
         status = self._ctx.status_tracker.to_status() if self.status_tracker else None
-        return JobRun(self.metadata, root_phase_detail.lifecycle, root_phase_detail.children, tuple(self._faults),
-                      status)
+        return JobRun(
+            self.metadata,
+            root_phase_detail.lifecycle,
+            root_phase_detail.children,
+            self._output_router.locations if self._output_router else None,
+            tuple(self._faults),
+            status
+        )
 
     @contextmanager
     def _job_instance_context(self):
