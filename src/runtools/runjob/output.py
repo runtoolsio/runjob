@@ -162,7 +162,7 @@ class FileOutputStorage(OutputStorage):
 
     @property
     def location(self):
-        return OutputLocation(type="file", source=self.file_path)
+        return OutputLocation(type="file", source=str(self.file_path))
 
     def store_line(self, line: OutputLine):
         formatted = self._format_line(line)
