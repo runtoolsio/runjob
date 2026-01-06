@@ -1,46 +1,15 @@
 """
-This module contains the default implementation of the `RunnableJobInstance` interface from the `inst` module.
-A job instance is executed by calling the `run` method. The method call returns after the instance terminates.
-It is possible to register observers directly in the module. These are then notified about events from all
-job instances. An alternative for multi-observing is to use the featured context from the `featurize` module.
+Default implementation of the JobInstance interface from runcore.
 
-This implementation adds a few features not explicitly defined in the interface:
+This module provides:
+- _JobInstance: Concrete implementation that wraps a root phase with lifecycle management
+- JobInstanceContext: Runtime context passed to phases (metadata, environment, status, output)
+- create(): Factory function for creating job instances
 
-Coordination
-------------
-Job instances can be coordinated with each other or with any external logic. Coordinated instances are typically
-affected in ways that might require them to wait for a condition, or they might be discarded if necessary. The
-coordination logic heavily relies on global synchronization.
-
-Some examples of coordination include:
-  - Pending latch:
-    Several instances can be started simultaneously by sending a release request to the corresponding group.
-  - Serial execution:
-    Instances of the same job or group execute sequentially.
-  - Parallel execution limit:
-    Only N number of instances can execute in parallel.
-  - Overlap forbidden:
-    Parallel execution of instances of the same job can be restricted.
-  - Dependency:
-    An instance can start only if another specific instance is active.
-
-Global Synchronization
-----------------------
-For coordination to function correctly, a mechanism that allows the coordinator to utilize some form of
-shared lock is often essential. Job instances attempt to acquire this lock each time the coordination logic runs.
-The lock remains held when the execution state changes. This is crucial because the current state of coordinated
-instances often dictates the coordination action, and using a lock ensures that the 'check-then-act' sequence
-on the execution states is atomic, preventing race conditions.
-
-
-IMPLEMENTATION NOTES
-
-State lock
-----------
-1. Atomic update of the job instance state (i.e. error object + failure state)
-2. Consistent execution state notification order
-3. No race condition on state observer notify on register
-
+Job instances execute by calling run(), which:
+1. Sets up the execution context (current instance, output routing, log capture)
+2. Executes the root phase
+3. Notifies observers of lifecycle and transition events
 """
 import logging
 from contextlib import contextmanager
@@ -121,7 +90,7 @@ def create(instance_id, environment, phases=None,
            output_sink=None, output_router=None, status_tracker=None,
            pre_run_hook: Optional[JobInstanceHook] = None,
            post_run_hook: Optional[JobInstanceHook] = None,
-           stage_observers: Iterable[InstanceLifecycleObserver] = (),
+           lifecycle_observers: Iterable[InstanceLifecycleObserver] = (),
            transition_observer_error_handler: Optional[TransitionObserverErrorHandler] = None,
            output_observer_error_handler: Optional[OutputObserverErrorHandler] = None,
            **user_params) -> JobInstance:
@@ -151,7 +120,7 @@ def create(instance_id, environment, phases=None,
                         pre_run_hook, post_run_hook,
                         transition_observer_error_handler, output_observer_error_handler,
                         user_params)
-    for so in stage_observers:
+    for so in lifecycle_observers:
         inst.add_observer_lifecycle(so)
     # noinspection PyProtectedMember
     inst._post_created()
@@ -218,7 +187,7 @@ class _JobInstance(JobInstance):
         )
 
     @contextmanager
-    def _job_instance_context(self):
+    def _instance_scope(self):
         token = current_job_instance.set(self.metadata)
         try:
             yield
@@ -235,7 +204,7 @@ class _JobInstance(JobInstance):
                 self._faults.append(Fault.from_exception(OUTPUT_OBSERVER_ERROR, e))
 
     def run(self):
-        with self._job_instance_context():
+        with self._instance_scope():
             with self._output_router as router:
                 with self._output_sink.observer_context(self._process_output, router):
                     with self._output_sink.capture_logs_from(logging.getLogger(), log_filter=_JobInstanceLogFilter(self.id)):
