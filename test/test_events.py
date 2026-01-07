@@ -50,7 +50,7 @@ def test_output_dispatching():
 
     event = InstanceOutputEvent(
         instance=(JobInstanceMetadata(InstanceID('j1', 'r1'), {})),
-        output_line=(OutputLine("Fucking voodoo magic, man!", True, "5555")),
+        output_line=(OutputLine("Fucking voodoo magic, man!", 1, is_error=True, source="5555")),
         timestamp=utc_now()
     )
 

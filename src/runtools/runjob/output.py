@@ -63,19 +63,36 @@ class OutputSink:
     def capturing_log_handler(self, log_filter: Optional[logging.Filter] = None, *, format_record=True):
         """
         Creates and returns a logging.Handler instance that forwards log records to this sink.
-        TODO source (probably in init)
+        Extracts structured fields from LogRecord extras for structured logging support.
         """
 
         class InternalHandler(logging.Handler):
+            # Built-in LogRecord attributes to exclude when extracting extras
+            _BUILTIN_ATTRS = {
+                'name', 'msg', 'args', 'created', 'filename', 'funcName', 'levelname',
+                'levelno', 'lineno', 'module', 'msecs', 'pathname', 'process',
+                'processName', 'relativeCreated', 'stack_info', 'exc_info', 'exc_text',
+                'thread', 'threadName', 'taskName', 'message',
+            }
+
             def __init__(self, sink):
                 super().__init__()
                 self.sink = sink
                 self._output_line_fact = OutputLineFactory()
 
             def emit(self, record):
-                output = self.format(record) if format_record else record.getMessage()
+                message = self.format(record) if format_record else record.getMessage()
                 is_error = record.levelno >= logging.ERROR
-                self.sink.new_output(self._output_line_fact(output, is_error))
+                fields = self._extract_extras(record)
+                self.sink.new_output(self._output_line_fact(message, is_error, fields=fields))
+
+            def _extract_extras(self, record):
+                """Extract user-defined extras from LogRecord."""
+                extras = {
+                    k: v for k, v in record.__dict__.items()
+                    if k not in self._BUILTIN_ATTRS and not k.startswith('_')
+                }
+                return extras if extras else None
 
         handler = InternalHandler(self)
         if log_filter:
@@ -175,7 +192,7 @@ class FileOutputStorage(OutputStorage):
         self._file.flush()
 
     def _format_line(self, line: OutputLine) -> str:
-        return line.text
+        return line.message
 
     def close(self):
         self._file.close()

@@ -58,7 +58,7 @@ class TestPhase(BasePhase[JobInstanceContext]):
             self.wait.wait(2)
 
         if ctx and self.output_text and isinstance(ctx, OutputContext):
-            ctx.output_sink.new_output(OutputLine(self.output_text, False))
+            ctx.output_sink.new_output(OutputLine(self.output_text, ordinal=1, is_error=False))
 
         if self.exception:
             raise self.exception

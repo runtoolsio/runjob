@@ -100,4 +100,4 @@ def test_output_observer(env):
 
     env.add_observer_output(observer)
     env.create_instance(iid("test_job"), root_phase=TestPhase(output_text='hey more')).run()
-    assert outputs[0].output_line.text == 'hey more'
+    assert outputs[0].output_line.message == 'hey more'

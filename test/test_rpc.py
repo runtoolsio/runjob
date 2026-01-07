@@ -85,15 +85,15 @@ def test_phase_op_release(job_instances, client, server):
 
 def test_tail(job_instances, client, server):
     j1, j2 = job_instances
-    j1.output.new_output(OutputLine('Meditate, do not delay, lest you later regret it.', False, 'EXEC1'))
-    j2.output.new_output(OutputLine('Escape...', True, 'EXEC2'))
-    j2.output.new_output(OutputLine('...samsara!', True, 'EXEC2'))
+    j1.output.new_output(OutputLine('Meditate, do not delay, lest you later regret it.', 1, is_error=False, source='EXEC1'))
+    j2.output.new_output(OutputLine('Escape...', 1, is_error=True, source='EXEC2'))
+    j2.output.new_output(OutputLine('...samsara!', 2, is_error=True, source='EXEC2'))
 
     output_lines = client.get_output_tail(server.address, j1.id)
-    assert output_lines == [OutputLine('Meditate, do not delay, lest you later regret it.', False, 'EXEC1')]
+    assert output_lines == [OutputLine('Meditate, do not delay, lest you later regret it.', 1, is_error=False, source='EXEC1')]
 
     output_lines = client.get_output_tail(server.address, j2.id)
-    assert output_lines == [OutputLine('Escape...', True, 'EXEC2'), OutputLine('...samsara!', True, 'EXEC2')]
+    assert output_lines == [OutputLine('Escape...', 1, is_error=True, source='EXEC2'), OutputLine('...samsara!', 2, is_error=True, source='EXEC2')]
 
     output_lines = client.get_output_tail(server.address, j2.id, max_lines=1)
-    assert output_lines == [OutputLine('...samsara!', True, 'EXEC2')]
+    assert output_lines == [OutputLine('...samsara!', 2, is_error=True, source='EXEC2')]

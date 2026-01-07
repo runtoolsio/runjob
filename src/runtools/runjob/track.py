@@ -50,20 +50,34 @@ def field_conversion(parsed: dict) -> dict:
 
 
 class OutputToStatusTransformer:
+    """
+    Transforms output lines into status updates.
 
-    def __init__(self, status_tracker, *, parsers, conversion=field_conversion):
+    Supports two modes:
+    - Structured: Uses fields directly from OutputLine (from logging extras)
+    - Text parsing: Falls back to parsers when fields not present (for external programs)
+    """
+
+    def __init__(self, status_tracker, *, parsers=None, conversion=field_conversion):
         self.status_tracker = status_tracker
-        self.parsers = list(parsers)
+        self.parsers = list(parsers) if parsers else []
         self.conversion = conversion
 
     def __call__(self, output_line):
         self.new_output(output_line)
 
     def new_output(self, output_line):
-        parsed = {}
-        for parser in self.parsers:
-            if parsed_kv := parser(output_line.text):
-                parsed.update(parsed_kv)
+        # Prefer structured fields when available
+        if output_line.fields:
+            parsed = output_line.fields
+        elif self.parsers:
+            # Fall back to text parsing for external programs
+            parsed = {}
+            for parser in self.parsers:
+                if parsed_kv := parser(output_line.message):
+                    parsed.update(parsed_kv)
+        else:
+            return
 
         if not parsed:
             return

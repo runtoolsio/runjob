@@ -128,16 +128,16 @@ class OutputWarningExtension(PhaseDecorator[C], Generic[C]):
 
         def pattern_output_observer(output_line: OutputLine):
             for pattern in self.patterns:
-                match = pattern.search(output_line.text)
+                match = pattern.search(output_line.message)
                 if match:
                     warning_text = self.warning_template
                     if "$MATCH" in warning_text:
                         warning_text = warning_text.replace("$MATCH", match.group(0))
                     if "$LINE" in warning_text:
-                        warning_text = warning_text.replace("$LINE", output_line.text)
+                        warning_text = warning_text.replace("$LINE", output_line.message)
 
                     log.warning(
-                        f"output_warning pattern=[{pattern.pattern}] match=[{match.group(0)}] line=[{output_line.text}] phase=[{self.id}]")
+                        f"output_warning pattern=[{pattern.pattern}] match=[{match.group(0)}] line=[{output_line.message}] phase=[{self.id}]")
                     ctx.status_tracker.warning(warning_text)
                     # break  # Stop after first match to avoid multiple warnings for one line
 
@@ -196,6 +196,6 @@ class _OutputMatchesWarning(InstanceOutputObserver):
         self.regex = re.compile(regex)
 
     def instance_output_update(self, event: InstanceOutputEvent):
-        m = self.regex.search(event.output_line.text)
+        m = self.regex.search(event.output_line.message)
         if m:
             self.job_instance.status_tracker.warning(self.text)

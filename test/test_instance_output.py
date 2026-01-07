@@ -28,12 +28,12 @@ def test_output_observer():
 
     i.run()
 
-    assert observer.last_text == "Hello, lucky boy. Where are you today?"
+    assert observer.last_message == "Hello, lucky boy. Where are you today?"
 
 
 def test_last_output():
     exec_phase = ProcessPhase('Printing', print_countdown)
     i = instance.create(iid('j1', 'i1'), None, phases=[exec_phase])
     i.run()
-    assert ([line.text for line in i.output.tail(max_lines=10)] ==
+    assert ([line.message for line in i.output.tail(max_lines=10)] ==
             "1 everyone in the world is doing something without me".split())
