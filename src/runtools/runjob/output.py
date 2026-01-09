@@ -32,6 +32,28 @@ class LogHandlerContext:
 OutputPreprocessing = Callable[[OutputLine], OutputLine]
 
 
+class ParsingPreprocessor:
+    """Preprocessor that parses output text into structured fields using provided parsers."""
+
+    def __init__(self, parsers):
+        self.parsers = parsers
+
+    def __call__(self, output_line: OutputLine) -> OutputLine:
+        if output_line.fields:  # Already has fields (e.g., from structured logging)
+            return output_line
+
+        fields = {}
+        for parser in self.parsers:
+            if parsed := parser(output_line.message):
+                fields.update(parsed)
+
+        if not fields:
+            return output_line
+
+        return OutputLine(output_line.message, output_line.ordinal,
+                          output_line.is_error, output_line.source, fields)
+
+
 class OutputSink:
 
     def __init__(self, output_preprocessing: Optional[OutputPreprocessing] = None):

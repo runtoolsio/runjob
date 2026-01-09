@@ -1,114 +1,11 @@
 import re
 from datetime import datetime, UTC
-from enum import Enum
-from typing import Set, Optional, List
+from typing import Optional, List
 
 from runtools.runcore import util
+from runtools.runcore.output import OutputLine, OutputObserver
 from runtools.runcore.status import Event, Operation, Status
 from runtools.runcore.util import convert_if_number
-
-
-class Fields(Enum):
-    EVENT = {'event', 'message', 'msg'}
-    OPERATION = {'operation', 'op', 'task'}
-    TIMESTAMP = {'timestamp', 'time', 'ts'}
-    COMPLETED = {'completed', 'done', 'processed', 'count', 'increment', 'incr', 'added'}
-    TOTAL = {'total', 'max', 'target'}
-    UNIT = {'unit'}
-    RESULT = {'result', 'status'}
-
-    def __init__(self, aliases: Set[str]):
-        self.aliases = aliases
-
-    @classmethod
-    def find_field(cls, key: str) -> 'Fields | None':
-        """Find field enum by any of its aliases"""
-        key = key.lower()
-        for field in cls:
-            if key in field.aliases:
-                return field
-        return None
-
-
-DEFAULT_PATTERN = ''
-
-
-def field_conversion(parsed: dict) -> dict:
-    """Convert parsed fields with alias support"""
-    converted = {}
-
-    for key, value in parsed.items():
-        if field := Fields.find_field(key):
-            if field == Fields.TIMESTAMP:
-                value = util.parse_datetime(value)
-            elif field in {Fields.COMPLETED, Fields.TOTAL}:
-                value = convert_if_number(value)
-            if value:
-                converted[field] = value
-
-    return converted
-
-
-class OutputToStatusTransformer:
-    """
-    Transforms output lines into status updates.
-
-    Supports two modes:
-    - Structured: Uses fields directly from OutputLine (from logging extras)
-    - Text parsing: Falls back to parsers when fields not present (for external programs)
-    """
-
-    def __init__(self, status_tracker, *, parsers=None, conversion=field_conversion):
-        self.status_tracker = status_tracker
-        self.parsers = list(parsers) if parsers else []
-        self.conversion = conversion
-
-    def __call__(self, output_line):
-        self.new_output(output_line)
-
-    def new_output(self, output_line):
-        # Prefer structured fields when available
-        if output_line.fields:
-            parsed = output_line.fields
-        elif self.parsers:
-            # Fall back to text parsing for external programs
-            parsed = {}
-            for parser in self.parsers:
-                if parsed_kv := parser(output_line.message):
-                    parsed.update(parsed_kv)
-        else:
-            return
-
-        if not parsed:
-            return
-
-        kv = self.conversion(parsed)
-        if not kv:
-            return
-
-        self._update_status(kv)
-
-    def _update_status(self, fields):
-        is_op = self._update_operation(fields)
-        if not is_op and (event := fields.get(Fields.EVENT)):
-            self.status_tracker.event(event, timestamp=fields.get(Fields.TIMESTAMP))
-
-        if result := fields.get(Fields.RESULT):
-            self.status_tracker.result(result)
-
-    def _update_operation(self, fields):
-        op_name = fields.get(Fields.OPERATION) or fields.get(Fields.EVENT)
-        ts = fields.get(Fields.TIMESTAMP)
-        completed = fields.get(Fields.COMPLETED)
-        total = fields.get(Fields.TOTAL)
-        unit = fields.get(Fields.UNIT)
-
-        if not any((completed, total, unit)):
-            return False
-
-        op = self.status_tracker.operation(op_name, timestamp=ts)
-        op.update(completed, total, unit, ts)
-        return True
 
 
 class OperationTracker:
@@ -180,13 +77,45 @@ def ts_or_now(timestamp):
     return timestamp or datetime.now(UTC).replace(tzinfo=None)
 
 
-class StatusTracker:
+class StatusTracker(OutputObserver):
 
     def __init__(self):
         self._last_event: Optional[Event] = None
         self._operations: List[OperationTracker] = []
         self._warnings: List[Event] = []
         self._result: Optional[Event] = None
+
+    def new_output(self, output_line: OutputLine):
+        """Process OutputLine fields directly.
+
+        Expects field names: event, completed, total, unit, result, timestamp, operation.
+        String values are converted to appropriate types (numbers, timestamps).
+        """
+        if not output_line.fields:
+            return
+
+        fields = output_line.fields
+        timestamp = self._parse_timestamp(fields.get('timestamp'))
+        completed = convert_if_number(fields.get('completed'))
+        total = convert_if_number(fields.get('total'))
+
+        # Handle operation updates (completed/total/unit present)
+        if any(v is not None for v in (completed, total, fields.get('unit'))):
+            op_name = fields.get('operation') or fields.get('event')
+            if op_name:
+                op = self.operation(op_name, timestamp)
+                op.update(completed, total, fields.get('unit'), timestamp)
+        elif event := fields.get('event'):
+            self.event(event, timestamp)
+
+        if result := fields.get('result'):
+            self.result(result, timestamp)
+
+    @staticmethod
+    def _parse_timestamp(value):
+        if value is None or isinstance(value, datetime):
+            return value
+        return util.parse_datetime(value)
 
     def event(self, text: str, timestamp=None) -> None:
         timestamp = ts_or_now(timestamp)

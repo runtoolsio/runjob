@@ -152,7 +152,8 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             feature.on_open()
 
     def create_instance(self, instance_id, phases=None,
-                        *, root_phase=None, status_tracker=None, output_router=None,
+                        *, root_phase=None,
+                        output_sink=None, output_router=None, status_tracker=None,
                         pre_run_hook: Optional[JobInstanceHook] = None,
                         post_run_hook: Optional[JobInstanceHook] = None,
                         user_params=None) -> JobInstanceManaged:
@@ -163,8 +164,9 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             instance_id (InstanceID): Instance identifier
             root_phase: Explicit root phase to set
             phases: Job execution phases to run
-            status_tracker: Optional status tracker for the job
+            output_sink: Optional output sink (for text parsing, use OutputSink with ParsingPreprocessor)
             output_router: Optional buffer for output tailing
+            status_tracker: Optional status tracker for the job
             pre_run_hook: Optional hook called before running the instance
             post_run_hook: Optional hook called after running the instance
             user_params: Optional user-defined parameters
@@ -181,8 +183,9 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             environment=self,
             root_phase=root_phase,
             phases=phases,
-            status_tracker=status_tracker,
+            output_sink=output_sink,
             output_router=output_router,
+            status_tracker=status_tracker,
             pre_run_hook=pre_run_hook,
             post_run_hook=post_run_hook,
             **(user_params or {})

@@ -94,15 +94,23 @@ def create(instance_id, environment, phases=None,
            transition_observer_error_handler: Optional[TransitionObserverErrorHandler] = None,
            output_observer_error_handler: Optional[OutputObserverErrorHandler] = None,
            **user_params) -> JobInstance:
-    """
+    """Create a job instance.
 
-    Example of pre_run_hook:
-        ```
-        def output_to_status_setup_hook(ctx: JobInstanceContext):
-            parsers = [IndexParser({'event': 0})]
-            ctx.output_sink.add_observer(OutputToStatusTransformer(ctx.status_tracker, parsers=parsers))
-        ```
-    :return:
+    Args:
+        instance_id: Unique identifier for this instance
+        environment: Environment configuration
+        phases: List of phases for sequential execution (mutually exclusive with root_phase)
+        root_phase: Custom root phase (mutually exclusive with phases)
+        output_sink: Custom output sink (created automatically if not provided).
+                     For text parsing, provide OutputSink(ParsingPreprocessor([KVParser()])).
+        output_router: Custom output router (created automatically if not provided)
+        status_tracker: Custom status tracker (created automatically if not provided)
+        pre_run_hook: Hook called before execution starts
+        post_run_hook: Hook called after execution completes
+        lifecycle_observers: Observers for lifecycle events
+        transition_observer_error_handler: Error handler for transition observers
+        output_observer_error_handler: Error handler for output observers
+        **user_params: Additional user-defined parameters stored in metadata
     """
     if not instance_id:
         raise ValueError("Instance ID is mandatory")
@@ -116,6 +124,10 @@ def create(instance_id, environment, phases=None,
     output_sink = output_sink or OutputSink()
     output_router = output_router or OutputRouter(tail_buffer=InMemoryTailBuffer(max_capacity=50))
     status_tracker = status_tracker or StatusTracker()
+
+    # Auto-wire status tracker as output observer
+    output_sink.add_observer(status_tracker)
+
     inst = _JobInstance(instance_id, root_phase, environment, output_sink, output_router, status_tracker,
                         pre_run_hook, post_run_hook,
                         transition_observer_error_handler, output_observer_error_handler,

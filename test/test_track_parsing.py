@@ -1,138 +1,179 @@
+"""Tests for the new output-to-status tracking architecture.
+
+The new architecture:
+1. ParsingPreprocessor parses text into OutputLine.fields
+2. StatusTracker.new_output() reads fields directly
+"""
 from datetime import datetime
 
 from runtools.runcore.output import OutputLine
 from runtools.runcore.util import KVParser, iso_date_time_parser
-from runtools.runjob.track import OutputToStatusTransformer, StatusTracker
+from runtools.runjob.output import ParsingPreprocessor
+from runtools.runjob.track import StatusTracker
 
 
-def test_parse_event():
+def test_parsing_preprocessor_extracts_fields():
+    """ParsingPreprocessor extracts fields from text using parsers."""
+    preprocessor = ParsingPreprocessor([KVParser()])
+
+    line = OutputLine('event=[downloading] completed=[5]', 1)
+    processed = preprocessor(line)
+
+    assert processed.fields == {'event': 'downloading', 'completed': '5'}
+    assert processed.message == line.message  # Original message preserved
+
+
+def test_parsing_preprocessor_skips_if_fields_exist():
+    """ParsingPreprocessor doesn't overwrite existing fields (struct logging)."""
+    preprocessor = ParsingPreprocessor([KVParser()])
+
+    # Simulate structured logging - fields already set
+    line = OutputLine('some message', 1, fields={'event': 'upload'})
+    processed = preprocessor(line)
+
+    assert processed.fields == {'event': 'upload'}  # Unchanged
+
+
+def test_parsing_preprocessor_returns_unchanged_if_no_match():
+    """ParsingPreprocessor returns original line if parsers find nothing."""
+    preprocessor = ParsingPreprocessor([KVParser()])
+
+    line = OutputLine('no key-value pairs here', 1)
+    processed = preprocessor(line)
+
+    assert processed is line  # Same object, no change
+
+
+def test_status_tracker_event_from_fields():
+    """StatusTracker extracts event from OutputLine fields."""
     tracker = StatusTracker()
-    parser = OutputToStatusTransformer(tracker, parsers=[KVParser()])
 
-    parser.new_output(OutputLine('no events here', 1))
+    # No fields - no event
+    tracker.new_output(OutputLine('no fields', 1))
     assert tracker.to_status().last_event is None
 
-    parser.new_output(OutputLine('non_existing_field=[huh]', 2))
+    # Fields without 'event' - no event
+    tracker.new_output(OutputLine('msg', 2, fields={'other': 'value'}))
     assert tracker.to_status().last_event is None
 
-    parser.new_output(OutputLine('event=[eventim_apollo] in hammersmith', 3))
-    assert tracker.to_status().last_event.message == 'eventim_apollo'
-
-    parser.new_output(OutputLine('second follows: event=[event_horizon]', 4))
-    assert tracker.to_status().last_event.message == 'event_horizon'
+    # Fields with 'event' - event set
+    tracker.new_output(OutputLine('msg', 3, fields={'event': 'downloading'}))
+    assert tracker.to_status().last_event.message == 'downloading'
 
 
-def test_operation_without_name():
+def test_status_tracker_operation_from_fields():
+    """StatusTracker extracts operation progress from OutputLine fields."""
     tracker = StatusTracker()
-    sut = OutputToStatusTransformer(tracker, parsers=[KVParser()])
 
-    sut.new_output(OutputLine('operation without name completed=[5]', 1))
-    assert tracker.to_status().last_event is None
-    assert tracker.to_status().operations[0].completed == 5
+    tracker.new_output(OutputLine('msg', 1, fields={
+        'event': 'processing',
+        'completed': 10,
+        'total': 100,
+        'unit': 'files'
+    }))
 
-
-def test_event_timestamps():
-    tracker = StatusTracker()
-    sut = OutputToStatusTransformer(tracker, parsers=[iso_date_time_parser('timestamp'), KVParser()])
-
-    sut.new_output(OutputLine('2020-10-01 10:30:30 event=[e1]', 1))
-    assert tracker.to_status().last_event.timestamp == datetime.strptime('2020-10-01 10:30:30', "%Y-%m-%d %H:%M:%S")
-
-    sut.new_output(OutputLine('2020-10-01T10:30:30.543 event=[e1]', 2))
-    assert tracker.to_status().last_event.timestamp == datetime.strptime('2020-10-01 10:30:30.543',
-                                                                         "%Y-%m-%d %H:%M:%S.%f")
-
-
-def test_parse_progress():
-    tracker = StatusTracker()
-    sut = OutputToStatusTransformer(tracker, parsers=[KVParser(aliases={'count': 'completed'})])
-
-    sut.new_output(OutputLine("event=[downloaded] count=[10] total=[100] unit=[files]", 1))
-    task = tracker.to_status()
-    op = task.operations[0]
-
-    assert op.name == 'downloaded'
+    op = tracker.to_status().operations[0]
+    assert op.name == 'processing'
     assert op.completed == 10
     assert op.total == 100
     assert op.unit == 'files'
 
 
-def test_multiple_parsers_and_tasks():
-    def fake_parser(_):
-        return {'timestamp': '2020-10-01 10:30:30'}
-
+def test_status_tracker_result_from_fields():
+    """StatusTracker extracts result from OutputLine fields."""
     tracker = StatusTracker()
-    # Test multiple parsers can be used together to parse the same input
-    sut = OutputToStatusTransformer(tracker,
-                                    parsers=[KVParser(value_split=":"), KVParser(field_split="&"), fake_parser])
 
-    sut.new_output(OutputLine('task:task1', 1))
-    sut.new_output(OutputLine('?time=2.3&task=task2&event=e1', 2))
-    status = tracker.to_status()
-    assert status.last_event.message == 'e1'
-    assert str(status.last_event.timestamp) == '2020-10-01 10:30:30'
+    tracker.new_output(OutputLine('msg', 1, fields={'result': 'success'}))
+    assert tracker.to_status().result.message == 'success'
 
 
-def test_operation_when_progress():
+def test_end_to_end_text_parsing():
+    """Full flow: text → ParsingPreprocessor → StatusTracker."""
+    preprocessor = ParsingPreprocessor([KVParser()])
     tracker = StatusTracker()
-    sut = OutputToStatusTransformer(tracker, parsers=[KVParser()])
-    sut.new_output(OutputLine("event=[upload]", 1))
-    sut.new_output(OutputLine("event=[decoding] completed=[10]", 2))
 
-    assert tracker.to_status().last_event.message == 'upload'
+    def process(text, ordinal):
+        line = OutputLine(text, ordinal)
+        processed = preprocessor(line)
+        tracker.new_output(processed)
+
+    process('event=[downloading]', 1)
+    assert tracker.to_status().last_event.message == 'downloading'
+
+    process('event=[processing] completed=[5] total=[10]', 2)
+    op = tracker.to_status().operations[0]
+    assert op.name == 'processing'
+    assert op.completed == 5
 
 
-def test_event_deactivate_completed_operation():
+def test_kv_parser_aliases():
+    """KVParser aliases convert parsed keys to canonical names."""
+    preprocessor = ParsingPreprocessor([KVParser(aliases={'count': 'completed'})])
     tracker = StatusTracker()
-    sut = OutputToStatusTransformer(tracker, parsers=[KVParser()])
 
-    sut.new_output(OutputLine("event=[encoding] completed=[10] total=[10]", 1))
+    line = OutputLine('event=[download] count=[50] total=[100]', 1)
+    processed = preprocessor(line)
+    tracker.new_output(processed)
+
+    op = tracker.to_status().operations[0]
+    assert op.completed == 50  # 'count' was aliased to 'completed'
+
+
+def test_timestamp_parsing():
+    """Timestamp parser extracts datetime from text."""
+    preprocessor = ParsingPreprocessor([iso_date_time_parser('timestamp'), KVParser()])
+    tracker = StatusTracker()
+
+    line = OutputLine('2020-10-01 10:30:30 event=[started]', 1)
+    processed = preprocessor(line)
+    tracker.new_output(processed)
+
+    event = tracker.to_status().last_event
+    assert event.message == 'started'
+    assert event.timestamp == datetime(2020, 10, 1, 10, 30, 30)
+
+
+def test_multiple_parsers():
+    """Multiple parsers can be chained."""
+    preprocessor = ParsingPreprocessor([
+        KVParser(value_split=":"),  # Parses "task:value"
+        KVParser(field_split="&"),  # Parses "key1=v1&key2=v2"
+    ])
+    tracker = StatusTracker()
+
+    line = OutputLine('task:mytask', 1)
+    processed = preprocessor(line)
+    # 'task' should be parsed but it's not a recognized field for StatusTracker
+    assert processed.fields.get('task') == 'mytask'
+
+
+def test_operation_lifecycle():
+    """Operations track progress and can be marked finished."""
+    tracker = StatusTracker()
+
+    # Start operation
+    tracker.new_output(OutputLine('msg', 1, fields={
+        'event': 'encoding', 'completed': 5, 'total': 10
+    }))
+    assert not tracker.to_status().operations[0].finished
+
+    # Complete operation
+    tracker.new_output(OutputLine('msg', 2, fields={
+        'event': 'encoding', 'completed': 10, 'total': 10
+    }))
     assert tracker.to_status().operations[0].finished
+
+
+def test_event_deactivates_finished_operation():
+    """New event deactivates finished operations."""
+    tracker = StatusTracker()
+
+    # Complete an operation
+    tracker.new_output(OutputLine('msg', 1, fields={
+        'event': 'op1', 'completed': 10, 'total': 10
+    }))
     assert tracker.to_status().operations[0].is_active
 
-    sut.new_output(OutputLine("event=[new_event]", 1))
-    assert tracker.to_status().operations[0].finished
+    # New event should deactivate completed operations
+    tracker.new_output(OutputLine('msg', 2, fields={'event': 'next_event'}))
     assert not tracker.to_status().operations[0].is_active
-
-
-def test_task_started_and_updated_on_operation():
-    tracker = StatusTracker()
-    sut = OutputToStatusTransformer(tracker, parsers=[KVParser(), iso_date_time_parser('timestamp')])
-
-    sut.new_output(OutputLine('2020-10-01 14:40:00 event=[op1] completed=[200]', 1))
-    sut.new_output(OutputLine('2020-10-01 15:30:30 event=[op1] completed=[400]', 2))
-
-    op = tracker.to_status().find_operation('op1')
-    assert op.created_at == datetime(2020, 10, 1, 14, 40, 0)
-    assert op.updated_at == datetime(2020, 10, 1, 15, 30, 30)
-
-
-def test_op_end_date():
-    tracker = StatusTracker()
-    sut = OutputToStatusTransformer(tracker, parsers=[KVParser(), iso_date_time_parser('timestamp')])
-    sut.new_output(OutputLine('2020-10-01 14:40:00 event=[op1] completed=[5] total=[10]', 1))
-    assert not tracker.to_status().find_operation('op1').finished
-
-    sut.new_output(OutputLine('2020-10-01 15:30:30 event=[op1] completed=[10] total=[10]', 1))
-    assert tracker.to_status().find_operation('op1').updated_at == datetime(2020, 10, 1, 15, 30, 30)
-    assert tracker.to_status().find_operation('op1').finished
-
-
-def test_result():
-    tracker = StatusTracker()
-    sut = OutputToStatusTransformer(tracker, parsers=[KVParser()])
-
-    sut.new_output(OutputLine('2020-10-01 10:30:30 event=[e1]', 1))
-    sut.new_output(OutputLine('result=[res]', 2))
-    assert tracker.to_status().result.message == 'res'
-
-
-def test_error_output():
-    tracker = StatusTracker()
-    sut = OutputToStatusTransformer(tracker, parsers=[KVParser()])
-
-    sut.new_output(OutputLine('event=[normal_event]', 1, is_error=False))
-    assert tracker.to_status().last_event.message == 'normal_event'
-
-    sut.new_output(OutputLine('event=[error_event]', 2, is_error=True))
-    assert tracker.to_status().last_event.message == 'error_event'
