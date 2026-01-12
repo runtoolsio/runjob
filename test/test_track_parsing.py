@@ -9,7 +9,7 @@ from datetime import datetime
 from runtools.runcore.output import OutputLine
 from runtools.runcore.util import KVParser, iso_date_time_parser
 from runtools.runjob.output import ParsingPreprocessor
-from runtools.runjob.track import StatusTracker
+from runtools.runjob.track import StatusTracker, field_based_handler
 
 
 def test_parsing_preprocessor_extracts_fields():
@@ -45,8 +45,8 @@ def test_parsing_preprocessor_returns_unchanged_if_no_match():
 
 
 def test_status_tracker_event_from_fields():
-    """StatusTracker extracts event from OutputLine fields."""
-    tracker = StatusTracker()
+    """StatusTracker with field_based_handler extracts event from OutputLine fields."""
+    tracker = StatusTracker(output_handler=field_based_handler)
 
     # No fields - no event
     tracker.new_output(OutputLine('no fields', 1))

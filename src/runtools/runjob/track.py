@@ -1,11 +1,13 @@
 import re
 from datetime import datetime, UTC
-from typing import Optional, List
+from typing import Optional, List, Callable
 
 from runtools.runcore import util
 from runtools.runcore.output import OutputLine, OutputObserver
 from runtools.runcore.status import Event, Operation, Status
 from runtools.runcore.util import convert_if_number
+
+OutputHandler = Callable[[OutputLine, 'StatusTracker'], None]
 
 
 class OperationTracker:
@@ -77,45 +79,62 @@ def ts_or_now(timestamp):
     return timestamp or datetime.now(UTC).replace(tzinfo=None)
 
 
+def _parse_timestamp(value):
+    if value is None or isinstance(value, datetime):
+        return value
+    return util.parse_datetime(value)
+
+
+def field_based_handler(output_line: OutputLine, tracker: 'StatusTracker') -> None:
+    """Process output lines that have structured fields.
+
+    Expects field names: event, completed, total, unit, result, timestamp, operation.
+    """
+    if not output_line.fields:
+        return
+
+    fields = output_line.fields
+    timestamp = _parse_timestamp(fields.get('timestamp'))
+    completed = convert_if_number(fields.get('completed'))
+    total = convert_if_number(fields.get('total'))
+
+    if any(v is not None for v in (completed, total, fields.get('unit'))):
+        op_name = fields.get('operation') or fields.get('event')
+        if op_name:
+            op = tracker.operation(op_name, timestamp)
+            op.update(completed, total, fields.get('unit'), timestamp)
+    elif event := fields.get('event'):
+        tracker.event(event, timestamp)
+
+    if result := fields.get('result'):
+        tracker.result(result, timestamp)
+
+
+def message_as_event(output_line: OutputLine, tracker: 'StatusTracker') -> None:
+    """Treat every output message as an event."""
+    if output_line.message:
+        tracker.event(output_line.message)
+
+
+def combined_output_handler(output_line: OutputLine, tracker: 'StatusTracker') -> None:
+    """Combined handler: use fields if present, otherwise treat message as event."""
+    if output_line.fields:
+        field_based_handler(output_line, tracker)
+    elif output_line.message:
+        tracker.event(output_line.message)
+
+
 class StatusTracker(OutputObserver):
 
-    def __init__(self):
+    def __init__(self, output_handler: OutputHandler = None):
+        self._output_handler = output_handler or combined_output_handler
         self._last_event: Optional[Event] = None
         self._operations: List[OperationTracker] = []
         self._warnings: List[Event] = []
         self._result: Optional[Event] = None
 
     def new_output(self, output_line: OutputLine):
-        """Process OutputLine fields directly.
-
-        Expects field names: event, completed, total, unit, result, timestamp, operation.
-        String values are converted to appropriate types (numbers, timestamps).
-        """
-        if not output_line.fields:
-            return
-
-        fields = output_line.fields
-        timestamp = self._parse_timestamp(fields.get('timestamp'))
-        completed = convert_if_number(fields.get('completed'))
-        total = convert_if_number(fields.get('total'))
-
-        # Handle operation updates (completed/total/unit present)
-        if any(v is not None for v in (completed, total, fields.get('unit'))):
-            op_name = fields.get('operation') or fields.get('event')
-            if op_name:
-                op = self.operation(op_name, timestamp)
-                op.update(completed, total, fields.get('unit'), timestamp)
-        elif event := fields.get('event'):
-            self.event(event, timestamp)
-
-        if result := fields.get('result'):
-            self.result(result, timestamp)
-
-    @staticmethod
-    def _parse_timestamp(value):
-        if value is None or isinstance(value, datetime):
-            return value
-        return util.parse_datetime(value)
+        self._output_handler(output_line, self)
 
     def event(self, text: str, timestamp=None) -> None:
         timestamp = ts_or_now(timestamp)
