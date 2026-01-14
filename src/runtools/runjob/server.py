@@ -77,7 +77,7 @@ class GetActiveRunsMethod(JsonRpcMethod):
         return [RUN_MATCH_PARAM]
 
     def execute(self, job_instances):
-        return [i.snapshot().serialize() for i in job_instances]
+        return [i.to_run().serialize() for i in job_instances]
 
 
 class StopInstanceMethod(JsonRpcMethod):
@@ -327,4 +327,4 @@ class RemoteCallServer(SocketServer, JobInstanceManager):
         except ValueError as e:
             raise JsonRpcError(ErrorCode.INVALID_PARAMS, f"Invalid run match criteria: {e}")
 
-        return [job_instance for job_instance in self._job_instances.values() if matching_criteria.matches(job_instance.snapshot())]
+        return [job_instance for job_instance in self._job_instances.values() if matching_criteria.matches(job_instance.to_run())]

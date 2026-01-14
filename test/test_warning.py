@@ -24,4 +24,4 @@ def test_exec_time_warning(job_instance):
 
     job_instance.find_phase_control_by_id('p1').release()
     run_thread.join(1)
-    assert job_instance.snapshot().status.warnings
+    assert job_instance.to_run().status.warnings

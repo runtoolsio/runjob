@@ -186,7 +186,7 @@ class _JobInstance(JobInstance):
     def output(self):
         return self._output_router
 
-    def snapshot(self) -> JobRun:
+    def to_run(self) -> JobRun:
         root_phase_detail = self._root_phase.detail()
         status = self._ctx.status_tracker.to_status() if self.status_tracker else None
         return JobRun(
@@ -288,7 +288,7 @@ class _JobInstance(JobInstance):
                 else:
                     log.info(self._log('run_successful', "termination=[{}]", term))
 
-        snapshot = self.snapshot()
+        snapshot = self.to_run()
         if is_root_phase:
             try:
                 event = InstanceLifecycleEvent(self.metadata, snapshot, e.new_stage, e.timestamp)

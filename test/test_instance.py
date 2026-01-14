@@ -52,8 +52,8 @@ def test_observer_raises_exception():
     job_instance = instance.create(iid('j1'), None, root_phase=execution, lifecycle_observers=[observer])
     job_instance.run()
     assert execution.completed
-    assert job_instance.snapshot().lifecycle.termination.status == TerminationStatus.COMPLETED
-    assert job_instance.snapshot().faults[0].category == instance.LIFECYCLE_OBSERVER_ERROR
+    assert job_instance.to_run().lifecycle.termination.status == TerminationStatus.COMPLETED
+    assert job_instance.to_run().faults[0].category == instance.LIFECYCLE_OBSERVER_ERROR
 
 
 class ExceptionRaisingObserver(InstanceLifecycleObserver):

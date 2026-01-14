@@ -115,7 +115,7 @@ def test_tracker_warnings():
 
     # Test warnings included in status string
     status = tracker.to_status()
-    assert str(status) == "[Copy 45/100 files (45%)]...  Processing  (!Low disk space, Network unstable)"
+    assert str(status) == "[Copy 45/100 files (45%)]  (!Low disk space, Network unstable)"
 
     # Test warnings with result
     tracker.result("Failed")

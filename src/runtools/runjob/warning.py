@@ -180,7 +180,7 @@ class _ExecTimeWarning(InstanceLifecycleObserver):
             self.timer.start()
 
     def _check(self):
-        if not self.job_instance.snapshot().lifecycle.termination:
+        if not self.job_instance.to_run().lifecycle.termination:
             self.job_instance.status_tracker.warning(self.text)
 
     def __repr__(self):
