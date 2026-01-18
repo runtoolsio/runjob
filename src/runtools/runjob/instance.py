@@ -259,10 +259,8 @@ class _JobInstance(JobInstance):
         """
         self._root_phase.stop(reason)
 
-    def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY, reply_last_event=False):
+    def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
         self._lifecycle_notification.add_observer(observer, priority)
-        if reply_last_event:
-            pass  # TODO
 
     def remove_observer_lifecycle(self, observer):
         self._lifecycle_notification.remove_observer(observer)

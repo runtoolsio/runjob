@@ -458,6 +458,10 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         """
         return cls(*ensure_component_dir(env_id, node_dir_prefix, root_dir))
 
+    @classmethod
+    def from_config(cls, env_config, node_dir_prefix: str = "node_"):
+        return cls.create(env_config.id, env_config.layout.root_dir, node_dir_prefix)
+
     @property
     def server_socket_path(self) -> Path:
         """
@@ -511,7 +515,7 @@ def create(env_config: EnvironmentConfigUnion):
         persistence = NullPersistence()
 
     if isinstance(env_config, LocalEnvironmentConfig):
-        layout = StandardLocalNodeLayout.create(env_config.id, env_config.layout.root_dir)  # TODO fact fnc for cfg
+        layout = StandardLocalNodeLayout.from_config(env_config)
         return local(env_config.id, persistence, layout)
 
     if isinstance(env_config, IsolatedEnvironmentConfig):
