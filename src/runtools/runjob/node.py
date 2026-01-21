@@ -10,7 +10,7 @@ from runtools.runcore import plugins, paths, connector, db, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
 from runtools.runcore.criteria import SortOption
-from runtools.runcore.db import sqlite, PersistingObserver, NullPersistence
+from runtools.runcore.db import sqlite, PersistingObserver, NullPersistence, PERSISTING_OBSERVER_PRIORITY
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
     IsolatedEnvironmentConfig
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
@@ -345,7 +345,7 @@ class IsolatedEnvironment(JobInstanceNotifications, EnvironmentNodeBase):
         self._persistence.open()
 
     def _on_added(self, job_instance):
-        job_instance.add_observer_lifecycle(self._persisting_observer)
+        job_instance.add_observer_lifecycle(self._persisting_observer, PERSISTING_OBSERVER_PRIORITY)
         job_instance.add_observer_lifecycle(self._stage_notification.observer_proxy,
                                             EnvironmentNodeBase.OBSERVERS_PRIORITY - 1)
         job_instance.add_observer_transition(self._transition_notification.observer_proxy,
@@ -615,7 +615,7 @@ class LocalNode(EnvironmentNodeBase):
         self._connector.remove_observer_output(observer)
 
     def _on_added(self, job_instance):
-        job_instance.add_observer_lifecycle(self._persisting_observer)
+        job_instance.add_observer_lifecycle(self._persisting_observer, PERSISTING_OBSERVER_PRIORITY)
         self._rpc_server.register_instance(job_instance)
         job_instance.add_observer_all_events(self._event_dispatcher)
 
