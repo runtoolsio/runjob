@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 from json import JSONDecodeError
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Union, override
 
 from itertools import zip_longest
 
@@ -65,17 +65,21 @@ class JsonRpcMethod(ABC):
 class GetActiveRunsMethod(JsonRpcMethod):
 
     @property
+    @override
     def type(self) -> JsonRpcMethodType:
         return JsonRpcMethodType.COLLECTION
 
     @property
+    @override
     def method_name(self):
         return "get_active_runs"
 
     @property
+    @override
     def parameters(self):
         return [RUN_MATCH_PARAM]
 
+    @override
     def execute(self, job_instances):
         return [i.to_run().serialize() for i in job_instances]
 
@@ -83,17 +87,21 @@ class GetActiveRunsMethod(JsonRpcMethod):
 class StopInstanceMethod(JsonRpcMethod):
 
     @property
+    @override
     def type(self) -> JsonRpcMethodType:
         return JsonRpcMethodType.INSTANCE
 
     @property
+    @override
     def method_name(self):
         return "stop_instance"
 
     @property
+    @override
     def parameters(self):
         return [INSTANCE_ID_PARAM]
 
+    @override
     def execute(self, job_instance):
         job_instance.stop()
 
@@ -101,17 +109,21 @@ class StopInstanceMethod(JsonRpcMethod):
 class GetOutputTailMethod(JsonRpcMethod):
 
     @property
+    @override
     def type(self) -> JsonRpcMethodType:
         return JsonRpcMethodType.INSTANCE
 
     @property
+    @override
     def method_name(self):
         return "get_output_tail"
 
     @property
+    @override
     def parameters(self):
         return [INSTANCE_ID_PARAM, MethodParameter("max_lines", int, required=False, default=100)]
 
+    @override
     def execute(self, job_instance, max_lines):
         return [line.serialize() for line in job_instance.output.tail(max_lines=max_lines)]
 
@@ -119,14 +131,17 @@ class GetOutputTailMethod(JsonRpcMethod):
 class ExecPhaseOpMethod(JsonRpcMethod):
 
     @property
+    @override
     def type(self) -> JsonRpcMethodType:
         return JsonRpcMethodType.INSTANCE
 
     @property
+    @override
     def method_name(self) -> str:
         return "exec_phase_op"
 
     @property
+    @override
     def parameters(self):
         return [
             INSTANCE_ID_PARAM,
@@ -135,6 +150,7 @@ class ExecPhaseOpMethod(JsonRpcMethod):
             MethodParameter("op_args", list, required=False, default=[])
         ]
 
+    @override
     def execute(self, job_instance: JobInstance, phase_id, op_name, op_args) -> Dict[str, Any]:
         control = job_instance.find_phase_control_by_id(phase_id)
         if not control:
@@ -169,7 +185,7 @@ def _is_valid_params(params: Any) -> bool:
     return params is None or isinstance(params, (dict, list))
 
 
-def _success_response(request_id: str, result: Any) -> str:
+def _success_response(request_id: str | int | None, result: Any) -> str:
     response = {
         "jsonrpc": "2.0",
         "result": result
