@@ -20,7 +20,7 @@ from runtools.runcore.job import JobRun, JobInstance, JobInstanceNotifications, 
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.util import to_tuple, lock
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
-from runtools.runcore.util.socket import SocketClient
+from runtools.runcore.util.socket import DatagramSocketClient
 from runtools.runjob import instance, JobInstanceHook
 from runtools.runjob.events import EventDispatcher
 from runtools.runjob.server import RemoteCallServer
@@ -530,7 +530,7 @@ def local(env_id, persistence=None, node_layout=None, *, lock_factory=None, feat
     local_connector = connector.local(env_id, persistence, layout)
 
     api = RemoteCallServer(layout.server_socket_path)
-    event_dispatcher = EventDispatcher(SocketClient(), {
+    event_dispatcher = EventDispatcher(DatagramSocketClient(), {
         InstanceLifecycleEvent.EVENT_TYPE: layout.listener_lifecycle_sockets_provider,
         InstanceTransitionEvent.EVENT_TYPE: layout.listener_phase_sockets_provider,
         InstanceOutputEvent.EVENT_TYPE: layout.listener_output_sockets_provider,

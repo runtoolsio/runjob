@@ -40,7 +40,7 @@ def server(job_instances):
 
 @pytest.fixture
 def client(server):
-    with RemoteCallClient(lambda: [server.address], random_test_socket()) as client:
+    with RemoteCallClient(lambda: [server.address]) as client:
         yield client
 
 

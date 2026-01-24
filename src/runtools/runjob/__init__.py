@@ -8,7 +8,7 @@ IMPLEMENTATION NOTE:
 """
 from typing import List
 
-from runtools.runcore.util.socket import SocketClient
+from runtools.runcore.util.socket import DatagramSocketClient
 from runtools.runjob import instance
 from runtools.runjob.instance import _JobInstance, JobInstanceHook
 
@@ -45,7 +45,7 @@ def configure(**kwargs):
 def clean_stale_sockets(file_extension) -> List[str]:
     cleaned = []
 
-    c = SocketClient(file_extension)
+    c = DatagramSocketClient(file_extension)
     try:
         ping_result = c.ping()
     finally:

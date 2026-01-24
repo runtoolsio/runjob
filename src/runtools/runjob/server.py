@@ -11,7 +11,7 @@ from itertools import zip_longest
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.job import JobInstanceManager, JobInstance, InstanceID
 from runtools.runcore.util.json import ErrorCode, JsonRpcError
-from runtools.runcore.util.socket import SocketServer
+from runtools.runcore.util.socket import StreamSocketServer
 
 log = logging.getLogger(__name__)
 
@@ -257,7 +257,7 @@ def validate_params(parameters, arguments: Union[List, Dict[str, Any]]) -> List[
     return validated_args
 
 
-class RemoteCallServer(SocketServer, JobInstanceManager):
+class RemoteCallServer(StreamSocketServer, JobInstanceManager):
     """
     JSON-RPC 2.0 API Server that handles requests for job instances.
 
