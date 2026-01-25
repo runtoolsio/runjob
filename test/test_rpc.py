@@ -2,13 +2,13 @@ from typing import List
 
 import pytest
 
-from runtools.runcore.client import RemoteCallClient, TargetNotFoundError, RemoteCallResult
+from runtools.runcore.client import LocalInstanceClient, TargetNotFoundError, InstanceCallResult
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.job import JobRun, InstanceID, iid
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminationStatus
 from runtools.runjob import instance
-from runtools.runjob.server import RemoteCallServer
+from runtools.runjob.server import LocalInstanceServer
 from runtools.runjob.test.phase import TestPhase
 from runtools.runjob.test.testutil import random_test_socket
 
@@ -26,7 +26,7 @@ def job_instances():
 @pytest.fixture(autouse=True)
 def server(job_instances):
     j1, j2 = job_instances
-    server = RemoteCallServer(random_test_socket())
+    server = LocalInstanceServer(random_test_socket())
 
     server.register_instance(j1)
     server.register_instance(j2)
@@ -40,7 +40,7 @@ def server(job_instances):
 
 @pytest.fixture
 def client(server):
-    with RemoteCallClient(lambda: [server.address]) as client:
+    with LocalInstanceClient(lambda: [server.address]) as client:
         yield client
 
 
@@ -57,7 +57,7 @@ def test_instance_not_found(client, server):
 def test_active_runs(client, server):
     j1_run = client.get_active_runs(server.address, JobRunCriteria.job_match('j1'))[0]
     j2_run = client.get_active_runs(server.address, JobRunCriteria.job_match('j2'))[0]
-    results: List[RemoteCallResult[List[JobRun]]] = client.collect_active_runs(JobRunCriteria.all())
+    results: List[InstanceCallResult[List[JobRun]]] = client.collect_active_runs(JobRunCriteria.all())
 
     assert j1_run.job_id == 'j1'
     assert j2_run.job_id == 'j2'

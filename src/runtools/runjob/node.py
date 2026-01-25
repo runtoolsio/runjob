@@ -23,7 +23,7 @@ from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
 from runtools.runcore.util.socket import DatagramSocketClient
 from runtools.runjob import instance, JobInstanceHook
 from runtools.runjob.events import EventDispatcher
-from runtools.runjob.server import RemoteCallServer
+from runtools.runjob.server import LocalInstanceServer
 
 log = logging.getLogger(__name__)
 
@@ -529,7 +529,7 @@ def local(env_id, persistence=None, node_layout=None, *, lock_factory=None, feat
     persistence = persistence or sqlite.create(str(paths.sqlite_db_path(env_id, create=True)))
     local_connector = connector.local(env_id, persistence, layout)
 
-    api = RemoteCallServer(layout.server_socket_path)
+    api = LocalInstanceServer(layout.server_socket_path)
     event_dispatcher = EventDispatcher(DatagramSocketClient(), {
         InstanceLifecycleEvent.EVENT_TYPE: layout.listener_lifecycle_sockets_provider,
         InstanceTransitionEvent.EVENT_TYPE: layout.listener_phase_sockets_provider,

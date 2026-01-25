@@ -257,7 +257,7 @@ def validate_params(parameters, arguments: Union[List, Dict[str, Any]]) -> List[
     return validated_args
 
 
-class RemoteCallServer(StreamSocketServer, JobInstanceManager):
+class LocalInstanceServer(StreamSocketServer, JobInstanceManager):
     """
     JSON-RPC 2.0 API Server that handles requests for job instances.
 
