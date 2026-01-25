@@ -259,7 +259,7 @@ def validate_params(parameters, arguments: Union[List, Dict[str, Any]]) -> List[
 
 class LocalInstanceServer(StreamSocketServer, JobInstanceManager):
     """
-    JSON-RPC 2.0 API Server that handles requests for job instances.
+    Server for handling requests to job instances in a local environment via Unix domain sockets (JSON-RPC 2.0).
 
     Each instance method requires an instance_id parameter, while collection methods use
     run_match parameter to identify target job instances. The run_match follows
