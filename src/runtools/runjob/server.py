@@ -10,6 +10,7 @@ from itertools import zip_longest
 
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.job import JobInstanceManager, JobInstance, InstanceID
+from runtools.runcore.run import StopReason
 from runtools.runcore.util.json import ErrorCode, JsonRpcError
 from runtools.runcore.util.socket import StreamSocketServer
 
@@ -29,6 +30,7 @@ class MethodParameter:
 
 RUN_MATCH_PARAM = MethodParameter('run_match', dict)
 INSTANCE_ID_PARAM = MethodParameter('instance_id', dict)
+STOP_REASON_PARAM = MethodParameter('stop_reason', str, required=False, default="STOPPED")
 
 
 class JsonRpcMethodType(Enum):
@@ -99,11 +101,12 @@ class StopInstanceMethod(JsonRpcMethod):
     @property
     @override
     def parameters(self):
-        return [INSTANCE_ID_PARAM]
+        return [INSTANCE_ID_PARAM, STOP_REASON_PARAM]
 
     @override
-    def execute(self, job_instance):
-        job_instance.stop()
+    def execute(self, job_instance, stop_reason_name: str = "STOPPED"):
+        stop_reason = StopReason[stop_reason_name]
+        job_instance.stop(stop_reason)
 
 
 class GetOutputTailMethod(JsonRpcMethod):
