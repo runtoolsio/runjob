@@ -14,9 +14,8 @@ from runtools.runcore.db import sqlite, PersistingObserver, NullPersistence, PER
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
     IsolatedEnvironmentConfig
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
-from runtools.runcore.job import JobRun, JobInstance, JobInstanceNotifications, InstanceLifecycleEvent, \
-    InstanceTransitionEvent, \
-    InstanceOutputEvent, JobInstanceDelegate
+from runtools.runcore.job import JobRun, JobInstance, JobInstanceNotifications, JobInstanceObservable, \
+    InstanceLifecycleEvent, InstanceTransitionEvent, InstanceOutputEvent, JobInstanceDelegate
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.util import to_tuple, lock
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY
@@ -322,10 +321,10 @@ def isolated(env_id=None, persistence=None, *, lock_factory=None, features=None,
     return IsolatedEnvironment(env_id, persistence, lock_factory, to_tuple(features), transient)
 
 
-class IsolatedEnvironment(JobInstanceNotifications, EnvironmentNodeBase):
+class IsolatedEnvironment(EnvironmentNodeBase):
 
     def __init__(self, env_id, persistence, lock_factory, features, transient=True):
-        JobInstanceNotifications.__init__(self)
+        JobInstanceObservable.__init__(self, JobInstanceNotifications())
         EnvironmentNodeBase.__init__(self, features, transient=transient)
         self._env_id = env_id
         self._persistence = persistence
@@ -346,17 +345,17 @@ class IsolatedEnvironment(JobInstanceNotifications, EnvironmentNodeBase):
 
     def _on_added(self, job_instance):
         job_instance.add_observer_lifecycle(self._persisting_observer, PERSISTING_OBSERVER_PRIORITY)
-        job_instance.add_observer_lifecycle(self._stage_notification.observer_proxy,
+        job_instance.add_observer_lifecycle(self._notifications.lifecycle_notification.observer_proxy,
                                             EnvironmentNodeBase.OBSERVERS_PRIORITY - 1)
-        job_instance.add_observer_transition(self._transition_notification.observer_proxy,
+        job_instance.add_observer_transition(self._notifications.transition_notification.observer_proxy,
                                              EnvironmentNodeBase.OBSERVERS_PRIORITY - 1)
-        job_instance.add_observer_output(self._output_notification.observer_proxy,
+        job_instance.add_observer_output(self._notifications.output_notification.observer_proxy,
                                          EnvironmentNodeBase.OBSERVERS_PRIORITY - 1)
 
     def _on_removed(self, job_instance):
-        job_instance.remove_observer_output(self._output_notification.observer_proxy)
-        job_instance.remove_observer_transition(self._transition_notification.observer_proxy)
-        job_instance.remove_observer_lifecycle(self._stage_notification.observer_proxy)
+        job_instance.remove_observer_output(self._notifications.output_notification.observer_proxy)
+        job_instance.remove_observer_transition(self._notifications.transition_notification.observer_proxy)
+        job_instance.remove_observer_lifecycle(self._notifications.lifecycle_notification.observer_proxy)
         job_instance.remove_observer_lifecycle(self._persisting_observer)
 
     def get_active_runs(self, run_match=None) -> List[JobRun]:
