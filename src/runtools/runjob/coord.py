@@ -371,7 +371,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
 
     def _run(self, ctx):
         try:
-            ctx.environment.add_observer_transition(self._new_instance_transition)
+            ctx.environment.add_observer_transition(self._instance_transition_update)
 
             with self._queue_change_condition:
                 # Transition under lock to prevent NONE -> CANCELLED -> IN_QUEUE race condition
@@ -394,7 +394,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
                 with ctx.environment.lock(self._lock_name()):
                     self._dispatch_next(ctx)
         finally:
-            ctx.environment.remove_observer_transition(self._new_instance_transition)
+            ctx.environment.remove_observer_transition(self._instance_transition_update)
 
         self._children[0].run(ctx)
 
@@ -445,7 +445,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
             else:
                 log.debug("event[not_dispatched] run=[%s]", next_dispatch.metadata)
 
-    def _new_instance_transition(self, event: InstanceTransitionEvent):
+    def _instance_transition_update(self, event: InstanceTransitionEvent):
         with self._queue_change_condition:
             if self._queue_changed or event.new_stage != Stage.ENDED or event.is_root_phase or not self._phase_filter(
                     # TODO Root phase

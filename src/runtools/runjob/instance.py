@@ -298,7 +298,7 @@ class _JobInstance(JobInstance):
         try:
             event = InstanceTransitionEvent(self.metadata, snapshot, is_root_phase, e.phase_detail.phase_id,
                                             e.new_stage, e.timestamp)
-            self._transition_notification.observer_proxy.new_instance_transition(event)
+            self._transition_notification.observer_proxy.instance_transition_update(event)
         except ExceptionGroup as eg:
             log.error("[transition_observer_error]", exc_info=eg)
             for exc in eg.exceptions:
