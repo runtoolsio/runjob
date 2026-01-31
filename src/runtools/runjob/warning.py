@@ -146,11 +146,11 @@ class OutputWarningExtension(PhaseDecorator[C], Generic[C]):
 
 
 def exec_time_exceeded(job_instance: JobInstance, warning_name: str, time: float):
-    job_instance.add_observer_lifecycle(_ExecTimeWarning(job_instance, warning_name, time))
+    job_instance.notifications.add_observer_lifecycle(_ExecTimeWarning(job_instance, warning_name, time))
 
 
 def output_matches(job_instance: JobInstance, warning_name: str, regex: str):
-    job_instance.add_observer_output(_OutputMatchesWarning(job_instance, warning_name, regex))
+    job_instance.notifications.add_observer_output(_OutputMatchesWarning(job_instance, warning_name, regex))
 
 
 def register(job_instance: JobInstance, *, warn_times: Sequence[str] = (), warn_outputs: Sequence[str] = ()):

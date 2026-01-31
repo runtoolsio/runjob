@@ -15,15 +15,13 @@ import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
 from threading import Thread
-from typing import Callable, Optional, List, Iterable
+from typing import Callable, Optional, List, Iterable, override
 
-from runtools.runcore.job import (JobInstance, JobRun, InstanceOutputObserver, JobInstanceMetadata,
-                                  InstanceTransitionObserver,
-                                  InstanceTransitionEvent, InstanceOutputEvent, InstanceLifecycleObserver,
-                                  InstanceLifecycleEvent)
+from runtools.runcore.job import (JobInstance, JobRun, JobInstanceMetadata, InstanceNotifications,
+                                  InstanceObservableNotifications, InstanceTransitionEvent, InstanceOutputEvent,
+                                  InstanceLifecycleObserver, InstanceLifecycleEvent)
 from runtools.runcore.run import Outcome, Fault, PhaseTransitionEvent, Stage, StopReason
 from runtools.runcore.util import utc_now
-from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer, OutputRouter
 from runtools.runjob.phase import SequentialPhase, Phase
 from runtools.runjob.track import StatusTracker
@@ -35,9 +33,6 @@ ROOT_PHASE_ID = "root"
 LIFECYCLE_OBSERVER_ERROR = "LIFECYCLE_OBSERVER_ERROR"
 TRANSITION_OBSERVER_ERROR = "TRANSITION_OBSERVER_ERROR"
 OUTPUT_OBSERVER_ERROR = "OUTPUT_OBSERVER_ERROR"
-
-TransitionObserverErrorHandler = Callable[[InstanceTransitionObserver, InstanceTransitionEvent, Exception], None]
-OutputObserverErrorHandler = Callable[[InstanceOutputObserver, InstanceOutputEvent, Exception], None]
 
 current_job_instance: ContextVar[Optional[JobInstanceMetadata]] = ContextVar('current_job_instance', default=None)
 
@@ -91,8 +86,7 @@ def create(instance_id, environment, phases=None,
            pre_run_hook: Optional[JobInstanceHook] = None,
            post_run_hook: Optional[JobInstanceHook] = None,
            lifecycle_observers: Iterable[InstanceLifecycleObserver] = (),
-           transition_observer_error_handler: Optional[TransitionObserverErrorHandler] = None,
-           output_observer_error_handler: Optional[OutputObserverErrorHandler] = None,
+           lifecycle_error_hook=None, transition_error_hook=None, output_error_hook=None,
            **user_params) -> JobInstance:
     """Create a job instance.
 
@@ -108,8 +102,9 @@ def create(instance_id, environment, phases=None,
         pre_run_hook: Hook called before execution starts
         post_run_hook: Hook called after execution completes
         lifecycle_observers: Observers for lifecycle events
-        transition_observer_error_handler: Error handler for transition observers
-        output_observer_error_handler: Error handler for output observers
+        lifecycle_error_hook: Error handler for lifecycle observer errors
+        transition_error_hook: Error handler for transition observer errors
+        output_error_hook: Error handler for output observer errors
         **user_params: Additional user-defined parameters stored in metadata
     """
     if not instance_id:
@@ -130,10 +125,10 @@ def create(instance_id, environment, phases=None,
 
     inst = _JobInstance(instance_id, root_phase, environment, output_sink, output_router, status_tracker,
                         pre_run_hook, post_run_hook,
-                        transition_observer_error_handler, output_observer_error_handler,
+                        lifecycle_error_hook, transition_error_hook, output_error_hook,
                         user_params)
     for so in lifecycle_observers:
-        inst.add_observer_lifecycle(so)
+        inst.notifications.add_observer_lifecycle(so)
     # noinspection PyProtectedMember
     inst._post_created()
     return inst
@@ -143,8 +138,13 @@ class _JobInstance(JobInstance):
 
     def __init__(self, instance_id, root_phase, env, output_sink, output_router, status_tracker,
                  pre_run_hook, post_run_hook,
-                 phase_update_observer_err_hook, output_observer_err_hook,
+                 lifecycle_error_hook, transition_error_hook, output_error_hook,
                  user_params):
+        self._notifications = InstanceObservableNotifications(
+            lifecycle_error_hook=lifecycle_error_hook,
+            transition_error_hook=transition_error_hook,
+            output_error_hook=output_error_hook,
+            force_reraise=True)
         self._metadata = JobInstanceMetadata(instance_id, user_params)
         self._root_phase: Phase = root_phase
         self._output_sink: OutputSink = output_sink
@@ -152,16 +152,12 @@ class _JobInstance(JobInstance):
         self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output_sink)
         self._pre_run_hook = pre_run_hook
         self._post_run_hook = post_run_hook
-
-        self._lifecycle_notification = (
-            ObservableNotification[InstanceLifecycleObserver](error_hook=phase_update_observer_err_hook,
-                                                              force_reraise=True))
-        self._transition_notification = (
-            ObservableNotification[InstanceTransitionObserver](error_hook=phase_update_observer_err_hook,
-                                                               force_reraise=True))
-        self._output_notification = (
-            ObservableNotification[InstanceOutputObserver](error_hook=output_observer_err_hook, force_reraise=True))
         self._faults: List[Fault] = []
+
+    @property
+    @override
+    def notifications(self) -> InstanceNotifications:
+        return self._notifications
 
     def _post_created(self):
         self._root_phase.add_phase_observer(self._on_phase_update)
@@ -209,7 +205,7 @@ class _JobInstance(JobInstance):
     def _process_output(self, output_line):
         event = InstanceOutputEvent(self._metadata, output_line, utc_now())
         try:
-            self._output_notification.observer_proxy.instance_output_update(event)
+            self._notifications.output_notification.observer_proxy.instance_output_update(event)
         except ExceptionGroup as eg:
             log.error("[output_observer_error]", exc_info=eg)
             for e in eg.exceptions:
@@ -259,18 +255,6 @@ class _JobInstance(JobInstance):
         """
         self._root_phase.stop(reason)
 
-    def add_observer_lifecycle(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        self._lifecycle_notification.add_observer(observer, priority)
-
-    def remove_observer_lifecycle(self, observer):
-        self._lifecycle_notification.remove_observer(observer)
-
-    def add_observer_transition(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        self._transition_notification.add_observer(observer, priority)
-
-    def remove_observer_transition(self, observer):
-        self._transition_notification.remove_observer(observer)
-
     def _on_phase_update(self, e: PhaseTransitionEvent):
         log.debug(self._log('instance_phase_update', "event=[{}]", e))
 
@@ -290,7 +274,7 @@ class _JobInstance(JobInstance):
         if is_root_phase:
             try:
                 event = InstanceLifecycleEvent(self.metadata, snapshot, e.new_stage, e.timestamp)
-                self._lifecycle_notification.observer_proxy.instance_lifecycle_update(event)
+                self._notifications.lifecycle_notification.observer_proxy.instance_lifecycle_update(event)
             except ExceptionGroup as eg:
                 log.error("[stage_observer_error]", exc_info=eg)
                 for exc in eg.exceptions:
@@ -298,14 +282,9 @@ class _JobInstance(JobInstance):
         try:
             event = InstanceTransitionEvent(self.metadata, snapshot, is_root_phase, e.phase_detail.phase_id,
                                             e.new_stage, e.timestamp)
-            self._transition_notification.observer_proxy.instance_transition_update(event)
+            self._notifications.transition_notification.observer_proxy.instance_transition_update(event)
         except ExceptionGroup as eg:
             log.error("[transition_observer_error]", exc_info=eg)
             for exc in eg.exceptions:
                 self._faults.append(Fault.from_exception(TRANSITION_OBSERVER_ERROR, exc))
 
-    def add_observer_output(self, observer, priority=DEFAULT_OBSERVER_PRIORITY):
-        self._output_notification.add_observer(observer, priority)
-
-    def remove_observer_output(self, observer):
-        self._output_notification.remove_observer(observer)

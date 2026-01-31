@@ -80,8 +80,8 @@ def test_instance_stage_observer(env):
     def observer_t(event):
         transitions.append(event)
 
-    env.add_observer_lifecycle(observer_s)
-    env.add_observer_transition(observer_t)
+    env.notifications.add_observer_lifecycle(observer_s)
+    env.notifications.add_observer_transition(observer_t)
 
     i = env.create_instance(iid("test_job"), root_phase=TestPhase())
     # TODO assert transitions[-1].new_stage == Stage.CREATED + transition phases
@@ -98,6 +98,6 @@ def test_output_observer(env):
     def observer(e):
         outputs.append(e)
 
-    env.add_observer_output(observer)
+    env.notifications.add_observer_output(observer)
     env.create_instance(iid("test_job"), root_phase=TestPhase(output_text='hey more')).run()
     assert outputs[0].output_line.message == 'hey more'

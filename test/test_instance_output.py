@@ -24,7 +24,7 @@ def test_output_observer():
     exec_phase = ProcessPhase('Printing', print_hello)
     i = instance.create(iid('j1', 'i1'), None, phases=[exec_phase])
     observer = TestOutputObserver()
-    i.add_observer_output(observer)
+    i.notifications.add_observer_output(observer)
 
     i.run()
 
