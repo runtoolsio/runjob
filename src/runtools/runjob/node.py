@@ -349,17 +349,10 @@ class IsolatedEnvironment(EnvironmentNodeBase):
 
     def _on_added(self, job_instance):
         job_instance.notifications.add_observer_lifecycle(self._persisting_observer, PERSISTING_OBSERVER_PRIORITY)
-        job_instance.notifications.add_observer_lifecycle(self._notifications.lifecycle_notification.observer_proxy,
-                                                          EnvironmentNodeBase.OBSERVERS_PRIORITY - 1)
-        job_instance.notifications.add_observer_transition(self._notifications.transition_notification.observer_proxy,
-                                                           EnvironmentNodeBase.OBSERVERS_PRIORITY - 1)
-        job_instance.notifications.add_observer_output(self._notifications.output_notification.observer_proxy,
-                                                       EnvironmentNodeBase.OBSERVERS_PRIORITY - 1)
+        self._notifications.bind_to(job_instance.notifications, EnvironmentNodeBase.OBSERVERS_PRIORITY - 1)
 
     def _on_removed(self, job_instance):
-        job_instance.notifications.remove_observer_output(self._notifications.output_notification.observer_proxy)
-        job_instance.notifications.remove_observer_transition(self._notifications.transition_notification.observer_proxy)
-        job_instance.notifications.remove_observer_lifecycle(self._notifications.lifecycle_notification.observer_proxy)
+        self._notifications.unbind_from(job_instance.notifications)
         job_instance.notifications.remove_observer_lifecycle(self._persisting_observer)
 
     def get_active_runs(self, run_match=None) -> List[JobRun]:
