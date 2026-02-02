@@ -12,8 +12,8 @@ from typing import Union, Optional
 
 import sys
 
-from runtools.runcore.output import OutputLine, OutputLineFactory
-from runtools.runcore.run import TerminationStatus, StopReason
+from runtools.runcore.output import OutputLineFactory
+from runtools.runcore.run import TerminationStatus
 from runtools.runjob.output import OutputContext
 from runtools.runjob.phase import BasePhase, PhaseTerminated
 
@@ -32,7 +32,6 @@ class ProgramPhase(BasePhase[OutputContext]):
         self._output_line_fact = OutputLineFactory()
         self._popen: Union[Popen, None] = None
         self._status = None
-        self._stop_reason: Optional[StopReason] = None
 
     @property
     def ret_code(self) -> Optional[int]:
