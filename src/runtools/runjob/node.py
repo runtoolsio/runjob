@@ -274,7 +274,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
         if detach:
             with self._detached_condition:
-                job_instance.stat = _InstanceState.DETACHED
+                job_instance._state = _InstanceState.DETACHED
                 self._detached_condition.notify()
 
         return job_instance
