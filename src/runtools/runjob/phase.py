@@ -8,7 +8,7 @@ from typing import Optional, Generic, List
 from runtools.runcore import err
 from runtools.runcore.job import Stage
 from runtools.runcore.run import TerminationStatus, TerminationInfo, C, PhaseControl, \
-    PhaseDetail, PhaseTransitionObserver, PhaseTransitionEvent, Outcome, RunCompletionError, StopReason
+    PhaseDetail, PhaseTransitionObserver, PhaseTransitionEvent, RunCompletionError, StopReason
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
@@ -349,7 +349,7 @@ class BasePhase(Phase[C], ABC):
         try:
             self._run(ctx)
         except PhaseTerminated as e:
-            if e.termination_status.is_outcome(Outcome.NON_SUCCESS):
+            if not e.termination_status.outcome.is_success:
                 msg = e.message
                 stack_trace = None
                 if e.__cause__:

@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 from threading import Condition, Event, Lock
-from typing import Any, List
+from typing import Any, List, Optional
 
 from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion, MetadataCriterion, LifecycleCriterion
 from runtools.runcore.job import JobRun, InstanceTransitionEvent
@@ -170,7 +170,7 @@ class WaitingPhase(BasePhase[OutputContext]):
         self._timeout = timeout
         self._conditions_lock = Lock()
         self._event = Event()
-        self._term_status = TerminationStatus.NONE
+        self._term_status: Optional[TerminationStatus] = None
 
     def _run(self, ctx):
         for condition in self._observable_conditions:

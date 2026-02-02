@@ -20,7 +20,7 @@ from typing import Callable, Optional, List, Iterable, override
 from runtools.runcore.job import (JobInstance, JobRun, JobInstanceMetadata, InstanceNotifications,
                                   InstanceObservableNotifications, InstanceTransitionEvent, InstanceOutputEvent,
                                   InstanceLifecycleObserver, InstanceLifecycleEvent)
-from runtools.runcore.run import Outcome, Fault, PhaseTransitionEvent, Stage, StopReason
+from runtools.runcore.run import Fault, PhaseTransitionEvent, Stage, StopReason
 from runtools.runcore.util import utc_now
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer, OutputRouter
 from runtools.runjob.phase import SequentialPhase, Phase
@@ -265,10 +265,10 @@ class _JobInstance(JobInstance):
             log.debug(self._log('instance_lifecycle_update', "new_stage=[{}]", e.new_stage))
 
             if term := e.phase_detail.lifecycle.termination:
-                if term.status.is_outcome(Outcome.NON_SUCCESS):
-                    log.warning(self._log('run_unsuccessful', "termination=[{}]", term))
-                else:
+                if term.status.outcome.is_success:
                     log.info(self._log('run_successful', "termination=[{}]", term))
+                else:
+                    log.warning(self._log('run_unsuccessful', "termination=[{}]", term))
 
         snapshot = self.to_run()
         if is_root_phase:
