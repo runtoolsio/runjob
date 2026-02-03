@@ -35,7 +35,7 @@ class ApprovalPhase(BasePhase[Any]):
         self._timeout = timeout
         self._event = Event()
 
-    def _run(self, _: OutputContext):
+    def _run(self, _):
         # TODO Add support for denial request (rejection)
         log.info("waiting_for_approval phase=[%s]", self.id)
 
@@ -68,10 +68,32 @@ class ApprovalPhase(BasePhase[Any]):
 
 class MutualExclusionPhase(BasePhase[JobInstanceContext]):
     """
-    TODO Docs
-    1. Set continue flag to be checked
-    Note: Current implementation doesn't implement a fair strategy for phases executed at nearly the same time
+    A phase that prevents concurrent execution of protected phases within the same exclusion group.
+
+    If another instance is already running a MutualExclusionPhase with the same exclusion group,
+    this phase terminates with OVERLAP status. Otherwise, it proceeds to run the protected child phase.
+
+    Gate State Machine:
+        The `_gate_lock` protects `_gate_state` to prevent a race between the run thread
+        (which proceeds to start the child) and a stop request (which must either prevent
+        the child from starting or stop it if already running).
+
+        States:
+            _PENDING (0):   Initial state - mutex check not yet complete
+            _PROCEEDED (1): Mutex check passed, child phase is running
+            _STOPPED (-1):  Stop requested before child could start
+
+        Transitions:
+            PENDING -> PROCEEDED: Mutex check passed, proceeding to run child
+            PENDING -> STOPPED:   Stop called before mutex check completed
+            PROCEEDED -> (stop child): Stop called after child started running
+
+    Note: Current implementation doesn't implement a fair strategy for phases executed at nearly the same time.
     """
+    _STOPPED = -1
+    _PENDING = 0
+    _PROCEEDED = 1
+
     running_mutex_filter = PhaseCriterion(
         phase_type=CoordTypes.MUTEX.value,
         lifecycle=LifecycleCriterion(stage=Stage.RUNNING)
@@ -81,8 +103,8 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
         super().__init__(phase_id, CoordTypes.MUTEX.value, phase_name, [protected_phase])
         self._exclusion_group = exclusion_group
         self._attrs = {'exclusion_group': self._exclusion_group}
-        self._state_lock = Lock()
-        self._state = 0  # -1 = stopped, 1 = proceeded
+        self._gate_lock = Lock()
+        self._gate_state = self._PENDING
 
     @property
     @control_api
@@ -102,7 +124,7 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
 
     def _run(self, ctx: JobInstanceContext):
         excl_group = self.exclusion_group or ctx.metadata.job_id
-        log.debug("[mutex_check_started] exclusion_group=[%s]", self.exclusion_group)
+        log.debug("[mutex_check_started] exclusion_group=[%s]", excl_group)
         with ctx.environment.lock(f"mutex-{excl_group}"):  # TODO Manage lock names better
             excl_runs: List[JobRun] = ctx.environment.get_active_runs(self._excl_running_job_filter(ctx))
             for excl_run in excl_runs:
@@ -113,23 +135,19 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
                                     f"phase=[{mutex_phase.phase_id}] exclusion_group=[{excl_group}]")
                         raise PhaseTerminated(TerminationStatus.OVERLAP)  # TODO Race-condition - set flag before raise
 
-        with self._state_lock:
-            if self._state == -1:
+        with self._gate_lock:
+            if self._gate_state == self._STOPPED:
                 raise PhaseTerminated(TerminationStatus.STOPPED)  # Status from stop reason
-            self._state = 1
+            self._gate_state = self._PROCEEDED
 
         self._children[0].run(ctx)
 
     def _stop_started_run(self, reason):
-        with self._state_lock:
-            if self._state == 1:
+        with self._gate_lock:
+            if self._gate_state == self._PROCEEDED:
                 self._children[0].stop(reason)
             else:
-                self._state = -1
-
-    @property
-    def stop_status(self):
-        return TerminationStatus.CANCELLED
+                self._gate_state = self._STOPPED
 
 
 class DependencyPhase(BasePhase[JobInstanceContext]):
@@ -154,10 +172,6 @@ class DependencyPhase(BasePhase[JobInstanceContext]):
 
     def _stop_started_run(self, reason):
         pass
-
-    @property
-    def stop_status(self):
-        return TerminationStatus.CANCELLED
 
 
 class WaitingPhase(BasePhase[OutputContext]):
@@ -354,10 +368,6 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
     @property
     def variables(self):
         return {ExecutionQueue.STATE: self._state.name}
-
-    @property
-    def stop_status(self):
-        return TerminationStatus.CANCELLED
 
     @property
     @control_api

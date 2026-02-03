@@ -247,7 +247,7 @@ class BasePhase(Phase[C], ABC):
         self._children = list(children)
         self._name = name
         self._created_at: datetime = utc_now()
-        self._state_lock = Lock()
+        self._lifecycle_lock = Lock()
         self._notification = ObservableNotification[PhaseTransitionObserver]()
         self._ctx = None
         self._started_at: Optional[datetime] = None
@@ -337,7 +337,7 @@ class BasePhase(Phase[C], ABC):
         return PhaseDetail.from_phase(self)
 
     def run(self, ctx: Optional[C]):
-        with self._state_lock:
+        with self._lifecycle_lock:
             if self.termination:
                 return
             self._started_at = utc_now()
@@ -403,7 +403,7 @@ class BasePhase(Phase[C], ABC):
             child.stop(reason)
 
     def stop(self, reason=StopReason.STOPPED):
-        with self._state_lock:
+        with self._lifecycle_lock:
             if self.termination:
                 return
             self._stop_reason = reason
