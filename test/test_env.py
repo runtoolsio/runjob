@@ -12,6 +12,7 @@ from runtools.runjob.test.phase import TestPhase
 
 @dataclass
 class TestFeature(Feature):
+    __test__ = False  # Prevent pytest collection
     opened = False
     closed = False
     added_instances: List[JobInstance] = None

@@ -24,6 +24,7 @@ class TestPhase(BasePhase[JobInstanceContext]):
     Test implementation of a V2 Phase for use in testing scenarios.
     Supports waiting, output generation, and various failure modes.
     """
+    __test__ = False  # Prevent pytest collection
 
     TYPE = 'TEST'
 
