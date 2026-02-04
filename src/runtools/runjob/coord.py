@@ -73,27 +73,8 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
     If another instance is already running a MutualExclusionPhase with the same exclusion group,
     this phase terminates with OVERLAP status. Otherwise, it proceeds to run the protected child phase.
 
-    Gate State Machine:
-        The `_gate_lock` protects `_gate_state` to prevent a race between the run thread
-        (which proceeds to start the child) and a stop request (which must either prevent
-        the child from starting or stop it if already running).
-
-        States:
-            _PENDING (0):   Initial state - mutex check not yet complete
-            _PROCEEDED (1): Mutex check passed, child phase is running
-            _STOPPED (-1):  Stop requested before child could start
-
-        Transitions:
-            PENDING -> PROCEEDED: Mutex check passed, proceeding to run child
-            PENDING -> STOPPED:   Stop called before mutex check completed
-            PROCEEDED -> (stop child): Stop called after child started running
-
     Note: Current implementation doesn't implement a fair strategy for phases executed at nearly the same time.
     """
-    _STOPPED = -1
-    _PENDING = 0
-    _PROCEEDED = 1
-
     running_mutex_filter = PhaseCriterion(
         phase_type=CoordTypes.MUTEX.value,
         lifecycle=LifecycleCriterion(stage=Stage.RUNNING)
@@ -103,8 +84,6 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
         super().__init__(phase_id, CoordTypes.MUTEX.value, phase_name, [protected_phase])
         self._exclusion_group = exclusion_group
         self._attrs = {'exclusion_group': self._exclusion_group}
-        self._gate_lock = Lock()
-        self._gate_state = self._PENDING
 
     @property
     @control_api
@@ -135,19 +114,10 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
                                     f"phase=[{mutex_phase.phase_id}] exclusion_group=[{excl_group}]")
                         raise PhaseTerminated(TerminationStatus.OVERLAP)  # TODO Race-condition - set flag before raise
 
-        with self._gate_lock:
-            if self._gate_state == self._STOPPED:
-                raise PhaseTerminated(TerminationStatus.STOPPED)  # Status from stop reason
-            self._gate_state = self._PROCEEDED
-
-        self._children[0].run(ctx)
+        self.run_child(self._children[0])
 
     def _stop_started_run(self, reason):
-        with self._gate_lock:
-            if self._gate_state == self._PROCEEDED:
-                self._children[0].stop(reason)
-            else:
-                self._gate_state = self._STOPPED
+        pass
 
 
 class DependencyPhase(BasePhase[JobInstanceContext]):

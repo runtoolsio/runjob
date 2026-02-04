@@ -383,8 +383,6 @@ class BasePhase(Phase[C], ABC):
                 PhaseTransitionEvent(self.detail(), Stage.ENDED, self._termination.terminated_at))
 
     def run_child(self, child):
-        if self._termination:  # TODO Do we need to also check whether the phase is started
-            raise RuntimeError("Parent already terminated")
         if child not in self._children:
             self._children.append(child)
             child.add_phase_observer(self._notification.observer_proxy)
@@ -403,6 +401,11 @@ class BasePhase(Phase[C], ABC):
             child.stop(reason)
 
     def stop(self, reason=StopReason.STOPPED):
+        # Stop children first to ensure child stopping completes (i.e. termination is set) before
+        # the parent's run() returns (when the parent responds to stop by returning before all children run).
+        # Wrong order would keep termination state corrupted (parent terminated, child not) for a short period.
+        self._stop_children(reason)
+
         with self._lifecycle_lock:
             if self.termination:
                 return
@@ -412,7 +415,7 @@ class BasePhase(Phase[C], ABC):
                 self._notification.observer_proxy.new_phase_transition(
                     PhaseTransitionEvent(self.detail(), Stage.ENDED, self._termination.terminated_at))
                 return
-        self._stop_children(reason)  # TODO Swap stop propagation order
+
         self._stop_started_run(reason)
 
     def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY):
@@ -439,8 +442,6 @@ class SequentialPhase(BasePhase):
         If any phase fails, execution is terminated.
         """
         for child in self._children:
-            if self._stop_reason:
-                raise PhaseTerminated(self._stop_reason.termination_status)
             self.run_child(child)
             if child.termination.status != TerminationStatus.COMPLETED:
                 raise PhaseTerminated(child.termination.status, child.termination.message)
