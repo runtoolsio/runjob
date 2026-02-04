@@ -245,6 +245,7 @@ class BasePhase(Phase[C], ABC):
     Thread Safety:
         The `_lifecycle_lock` guards the start/terminate decision boundary, ensuring that:
         - started_at is set at most once
+        - phase can be started only once
         - termination is set at most once
         - termination may occur before the phase starts
         - start may not occur after termination
