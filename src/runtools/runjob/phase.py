@@ -239,7 +239,16 @@ class PhaseDecorator(Phase[C], Generic[C]):
 
 
 class BasePhase(Phase[C], ABC):
-    """Base implementation providing common functionality for V2 phases"""
+    """
+    Base implementation providing common functionality for phases.
+
+    Thread Safety:
+        The `_lifecycle_lock` guards the start/terminate decision boundary, ensuring that:
+        - started_at is set at most once
+        - termination is set at most once
+        - termination may occur before the phase starts
+        - start may not occur after termination
+    """
 
     def __init__(self, phase_id: str, phase_type: str, name: Optional[str] = None, children=()):
         self._id = phase_id
@@ -338,7 +347,7 @@ class BasePhase(Phase[C], ABC):
 
     def run(self, ctx: Optional[C]):
         with self._lifecycle_lock:
-            if self.termination:
+            if self._started_at or self.termination:
                 return
             self._started_at = utc_now()
         self._notification.observer_proxy.new_phase_transition(
