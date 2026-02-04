@@ -407,7 +407,9 @@ class BasePhase(Phase[C], ABC):
         pass
 
     def _stop_children(self, reason):
-        for child in self._children:
+        # Stop in reverse order, so a parent executing children sequentially may assume
+        # all remaining children are stopped when it detects the current child has stopped.
+        for child in reversed(self._children):
             child.stop(reason)
 
     def stop(self, reason=StopReason.STOPPED):
