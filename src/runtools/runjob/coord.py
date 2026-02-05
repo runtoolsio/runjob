@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 
 
 class CoordTypes(Enum):
+    CHECKPOINT = 'CHECKPOINT'
     APPROVAL = 'APPROVAL'
     MUTEX = 'MUTEX'
     DEPENDENCY = 'DEPENDENCY'
@@ -24,29 +25,73 @@ class CoordTypes(Enum):
     QUEUE = 'QUEUE'
 
 
-class ApprovalPhase(BasePhase[Any]):
+class CheckpointPhase(BasePhase[Any]):
     """
-    Approval parameters (incl. timeout) + approval eval as separate objects
-    TODO: parameters
+    A strict barrier that must be resumed for the pipeline to continue.
+
+    - Leaf node (no children)
+    - Timeout stops the parent sequence
+    - Use when: "If this checkpoint isn't passed, abort the whole operation."
     """
 
-    def __init__(self, phase_id, phase_name=None, *, children=(), timeout=0):
-        super().__init__(phase_id, CoordTypes.APPROVAL.value, phase_name, children)
+    def __init__(self, phase_id, *, phase_name=None, timeout=0):
+        super().__init__(phase_id, CoordTypes.CHECKPOINT.value, phase_name)
         self._timeout = timeout
         self._event = Event()
 
     def _run(self, _):
-        # TODO Add support for denial request (rejection)
-        log.info("waiting_for_approval phase=[%s]", self.id)
+        log.debug(f"checkpoint_waiting phase=[{self.id}]")
+        resumed = self._event.wait(self._timeout or None)
+        if self._stop_reason:
+            raise PhaseTerminated(self._stop_reason.termination_status)
+        if not resumed:
+            log.debug(f"checkpoint_timeout phase=[{self.id}]")
+            raise PhaseTerminated(TerminationStatus.TIMEOUT)
+        log.debug(f"checkpoint_resumed phase=[{self.id}]")
 
+    @control_api
+    @property
+    def is_idle(self):
+        return self.stage == Stage.RUNNING and not self._event.is_set()
+
+    @control_api
+    def resume(self):
+        self._event.set()
+
+    @control_api
+    @property
+    def is_resumed(self):
+        return self._event.is_set() and not self._stop_reason
+
+    def _stop_started_run(self, reason):
+        self._event.set()
+
+
+class ApprovalPhase(BasePhase[Any]):
+    """
+    A conditional scope that runs its child only if approved.
+
+    - Container with single child
+    - Rejection or timeout skips the child (SKIPPED status) but pipeline continues
+    - Use when: "If not approved, skip this part but keep going."
+    """
+
+    def __init__(self, phase_id, protected_phase, *, phase_name=None, timeout=0):
+        super().__init__(phase_id, CoordTypes.APPROVAL.value, phase_name, [protected_phase])
+        self._timeout = timeout
+        self._event = Event()
+
+    def _run(self, ctx):
+        log.debug(f"approval_waiting phase=[{self.id}]")
         approved = self._event.wait(self._timeout or None)
         if self._stop_reason:
             raise PhaseTerminated(self._stop_reason.termination_status)
         if not approved:
-            raise PhaseTerminated(TerminationStatus.TIMEOUT)
+            log.debug(f"approval_skipped phase=[{self.id}]")
+            raise PhaseTerminated(TerminationStatus.SKIPPED, "TODO - can be passed via approve method")
 
-        log.info("approved phase=[%s]", self.id)
-        self.run_children()
+        log.debug(f"approval_granted phase=[{self.id}]")
+        self.run_child(self._children[0])
 
     @control_api
     @property
@@ -112,7 +157,7 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
                     if phase_excl_group == excl_group:
                         log.warning(f"mutex_overlap_found instance=[{excl_run.instance_id}] "
                                     f"phase=[{mutex_phase.phase_id}] exclusion_group=[{excl_group}]")
-                        raise PhaseTerminated(TerminationStatus.OVERLAP)  # TODO Race-condition - set flag before raise
+                        raise PhaseTerminated(TerminationStatus.OVERLAP)
 
         self.run_child(self._children[0])
 
@@ -121,6 +166,12 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
 
 
 class DependencyPhase(BasePhase[JobInstanceContext]):
+    """
+    A phase that checks if a required dependency is currently active.
+
+    If no active runs match the dependency criteria (excluding self), this phase
+    terminates with UNSATISFIED status. Otherwise, it completes successfully.
+    """
 
     def __init__(self, dependency_match, phase_id=None, phase_name='Active dependency check'):
         super().__init__(phase_id or str(dependency_match), CoordTypes.DEPENDENCY.value, phase_name)

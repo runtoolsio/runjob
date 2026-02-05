@@ -359,14 +359,14 @@ class BasePhase(Phase[C], ABC):
         try:
             self._run(ctx)
         except PhaseTerminated as e:
+            msg = e.message
+            stack_trace = None
             if not e.termination_status.outcome.is_success:
-                msg = e.message
-                stack_trace = None
                 if e.__cause__:
                     if not msg:
                         msg = str(e.__cause__)
                     stack_trace = err.stacktrace_str(e.__cause__)
-                term = TerminationInfo(e.termination_status, utc_now(), msg, stack_trace)
+            term = TerminationInfo(e.termination_status, utc_now(), msg, stack_trace)
         except RunCompletionError as e:
             term = TerminationInfo(TerminationStatus.ERROR, utc_now(), e.original_message())
             raise RunCompletionError(self.id, f"{e.phase_id} -> {e}") from e
@@ -383,7 +383,7 @@ class BasePhase(Phase[C], ABC):
                 self._termination = term
             else:
                 for child in self._children:
-                    if child.termination and child.termination.status != TerminationStatus.COMPLETED:
+                    if child.termination and not child.termination.status.outcome.is_success:
                         self._termination = TerminationInfo(child.termination.status, utc_now(),
                                                             child.termination.message)
                         break
@@ -397,10 +397,6 @@ class BasePhase(Phase[C], ABC):
             self._children.append(child)
             child.add_phase_observer(self._notification.observer_proxy)
         child.run(self._ctx)
-
-    def run_children(self):
-        for child in self._children:
-            self.run_child(child)
 
     @abstractmethod
     def _stop_started_run(self, reason):
@@ -455,7 +451,7 @@ class SequentialPhase(BasePhase):
         """
         for child in self._children:
             self.run_child(child)
-            if child.termination.status != TerminationStatus.COMPLETED:
+            if not child.termination.status.outcome.is_success:
                 raise PhaseTerminated(child.termination.status, child.termination.message)
 
     def _stop_started_run(self, reason):
