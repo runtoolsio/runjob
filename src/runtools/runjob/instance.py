@@ -183,12 +183,10 @@ class _JobInstance(JobInstance):
         return self._output_router
 
     def to_run(self) -> JobRun:
-        root_phase_detail = self._root_phase.detail()
         status = self._ctx.status_tracker.to_status() if self.status_tracker else None
         return JobRun(
             self.metadata,
-            root_phase_detail.lifecycle,
-            root_phase_detail.children,
+            self._root_phase.detail(),
             self._output_router.locations if self._output_router else None,
             tuple(self._faults),
             status
