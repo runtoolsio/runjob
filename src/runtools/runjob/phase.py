@@ -402,6 +402,11 @@ class BasePhase(Phase[C], ABC):
     def _stop_started_run(self, reason):
         pass
 
+    def _raise_if_stopped(self):
+        """Raise PhaseTerminated if the phase has been stopped. Call after waking from a blocking wait."""
+        if self._stop_reason:
+            raise PhaseTerminated(self._stop_reason.termination_status)
+
     def _stop_children(self, reason):
         # Stop in reverse order, so a parent executing children sequentially may assume
         # all remaining children are stopped when it detects the current child has stopped.

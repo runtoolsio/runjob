@@ -66,8 +66,7 @@ class ProgramPhase(BasePhase[OutputContext]):
 
         if self.ret_code == -signal.SIGINT:
             raise PhaseTerminated(TerminationStatus.INTERRUPTED)
-        if self._stop_reason:
-            raise PhaseTerminated(self._stop_reason.termination_status)
+        self._raise_if_stopped()
         if self.ret_code < 0:  # Negative exit code means terminated by a signal
             raise PhaseTerminated(TerminationStatus.STOPPED)
         raise PhaseTerminated(

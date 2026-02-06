@@ -52,8 +52,7 @@ class ProcessPhase(BasePhase[OutputContext]):
             if self._process.exitcode == -signal.SIGINT:
                 # Exit code is -SIGINT only when SIGINT handler is set back to DFL (KeyboardInterrupt gets exit code 1)
                 raise PhaseTerminated(TerminationStatus.INTERRUPTED)
-            if self._stop_reason:
-                raise PhaseTerminated(self._stop_reason.termination_status)
+            self._raise_if_stopped()
             if self._process.exitcode < 0:
                 raise PhaseTerminated(TerminationStatus.STOPPED)
 

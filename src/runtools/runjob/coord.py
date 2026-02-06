@@ -42,8 +42,7 @@ class CheckpointPhase(BasePhase[Any]):
     def _run(self, _):
         log.debug(f"checkpoint_waiting phase=[{self.id}]")
         resumed = self._event.wait(self._timeout or None)
-        if self._stop_reason:
-            raise PhaseTerminated(self._stop_reason.termination_status)
+        self._raise_if_stopped()
         if not resumed:
             log.debug(f"checkpoint_timeout phase=[{self.id}]")
             raise PhaseTerminated(TerminationStatus.TIMEOUT)
@@ -84,8 +83,7 @@ class ApprovalPhase(BasePhase[Any]):
     def _run(self, ctx):
         log.debug(f"approval_waiting phase=[{self.id}]")
         approved = self._event.wait(self._timeout or None)
-        if self._stop_reason:
-            raise PhaseTerminated(self._stop_reason.termination_status)
+        self._raise_if_stopped()
         if not approved:
             log.debug(f"approval_skipped phase=[{self.id}]")
             raise PhaseTerminated(TerminationStatus.SKIPPED, "TODO - can be passed via approve method")
@@ -412,7 +410,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
             while True:
                 with self._queue_change_condition:
                     if self._state == QueuedState.CANCELLED:
-                        return
+                        self._raise_if_stopped()
                     if self._state == QueuedState.DISPATCHED:
                         break
 
