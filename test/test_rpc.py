@@ -18,8 +18,8 @@ APPROVAL = 'APPROVAL'
 
 @pytest.fixture
 def job_instances():
-    j1 = instance.create(iid('j1'), None, [TestPhase(EXEC)])
-    j2 = instance.create(iid('j2'), None, [TestPhase(APPROVAL, wait=True)], run_id='i2')
+    j1 = instance.create(iid('j1'), None, TestPhase(EXEC))
+    j2 = instance.create(iid('j2'), None, TestPhase(APPROVAL, wait=True))
     yield j1, j2
 
 

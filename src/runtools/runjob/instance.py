@@ -23,12 +23,10 @@ from runtools.runcore.job import (JobInstance, JobRun, JobInstanceMetadata, Inst
 from runtools.runcore.run import Fault, PhaseTransitionEvent, Stage, StopReason
 from runtools.runcore.util import utc_now
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer, OutputRouter
-from runtools.runjob.phase import SequentialPhase, Phase
+from runtools.runjob.phase import Phase
 from runtools.runjob.track import StatusTracker
 
 log = logging.getLogger(__name__)
-
-ROOT_PHASE_ID = "root"
 
 LIFECYCLE_OBSERVER_ERROR = "LIFECYCLE_OBSERVER_ERROR"
 PHASE_OBSERVER_ERROR = "PHASE_OBSERVER_ERROR"
@@ -80,8 +78,7 @@ class JobInstanceContext(OutputContext):
 JobInstanceHook = Callable[[JobInstanceContext], None]
 
 
-def create(instance_id, environment, phases=None,
-           *, root_phase=None,
+def create(instance_id, environment, root_phase, *,
            output_sink=None, output_router=None, status_tracker=None,
            pre_run_hook: Optional[JobInstanceHook] = None,
            post_run_hook: Optional[JobInstanceHook] = None,
@@ -93,8 +90,7 @@ def create(instance_id, environment, phases=None,
     Args:
         instance_id: Unique identifier for this instance
         environment: Environment configuration
-        phases: List of phases for sequential execution (mutually exclusive with root_phase)
-        root_phase: Custom root phase (mutually exclusive with phases)
+        root_phase: Root phase of the job instance
         output_sink: Custom output sink (created automatically if not provided).
                      For text parsing, provide OutputSink(ParsingPreprocessor([KVParser()])).
         output_router: Custom output router (created automatically if not provided)
@@ -109,13 +105,6 @@ def create(instance_id, environment, phases=None,
     """
     if not instance_id:
         raise ValueError("Instance ID is mandatory")
-    if phases is not None and root_phase is not None:
-        raise ValueError("Cannot provide both 'phases' and 'root_phase'. They are mutually exclusive.")
-    if phases is None and root_phase is None:
-        raise ValueError("Must provide either 'phases' (for a sequential job) or a 'root_phase'.")
-
-    if phases:
-        root_phase = SequentialPhase(ROOT_PHASE_ID, phases)
     output_sink = output_sink or OutputSink()
     output_router = output_router or OutputRouter(tail_buffer=InMemoryTailBuffer(max_capacity=50))
     status_tracker = status_tracker or StatusTracker()
@@ -215,7 +204,8 @@ class _JobInstance(JobInstance):
         with self._instance_scope():
             with self._output_router as router:
                 with self._output_sink.observer_context(self._process_output, router):
-                    with self._output_sink.capture_logs_from(logging.getLogger(), log_filter=_JobInstanceLogFilter(self.id)):
+                    log_filter = _JobInstanceLogFilter(self.id)
+                    with self._output_sink.capture_logs_from(logging.getLogger(), log_filter=log_filter):
                         try:
                             self._exec_pre_run_hook()
                             self._root_phase.run(self._ctx)
@@ -237,22 +227,11 @@ class _JobInstance(JobInstance):
                 log.error(self._log('post_run_hook_error', "error=[{}]", str(e)), exc_info=True)
 
     def run_in_new_thread(self, daemon=False):
-        """
-        Run the job.
-
-        This method is not expected to raise any errors. In case of any failure the error details can be retrieved
-        by calling `exec_error` method.
-        """
-
         t = Thread(target=self.run, daemon=daemon)
         t.start()
+        return t
 
     def stop(self, reason=StopReason.STOPPED):
-        """
-        Cancel not yet started execution or stop started execution.
-        Due to synchronous design there is a small window when an execution can be stopped before it is started.
-        All execution implementations must cope with such scenario.
-        """
         self._root_phase.stop(reason)
 
     def _on_phase_update(self, e: PhaseTransitionEvent):

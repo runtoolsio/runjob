@@ -56,13 +56,8 @@ class FakeEnvironment:
     def get_instance(self, instance_id) -> Optional[JobInstance]:
         return self._instances.get(instance_id)
 
-    def create_instance(self, instance_id, *, root_phase, **user_params) -> 'TestJobInstance':
-        inst = instance.create(
-            instance_id=instance_id,
-            environment=self,
-            root_phase=root_phase,
-            **user_params,
-        )
+    def create_instance(self, instance_id, root_phase, **user_params) -> 'TestJobInstance':
+        inst = instance.create(instance_id, self, root_phase, **user_params)
         managed = TestJobInstance(inst)
         self._instances[instance_id] = managed
         self._notifications.bind_to(inst.notifications)

@@ -310,13 +310,6 @@ class ObservableCondition(ABC):
         pass
 
 
-class Queue:
-
-    @abstractmethod
-    def create_waiter(self, job_instance):
-        pass
-
-
 class QueuedState(Enum):
     NONE = auto(), False
     IN_QUEUE = auto(), False

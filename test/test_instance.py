@@ -21,7 +21,7 @@ EXEC = 'j1'
 
 
 def test_passed_args(observer: TestLifecycleObserver):
-    instance.create(iid('j1'), None, root_phase=TestPhase(EXEC), lifecycle_observers=[observer]).run()
+    instance.create(iid('j1'), None, TestPhase(EXEC), lifecycle_observers=[observer]).run()
 
     assert observer.job_runs[0].metadata.job_id == 'j1'
     assert observer.stages == [Stage.RUNNING, Stage.ENDED]  # TODO CREATED
@@ -29,14 +29,14 @@ def test_passed_args(observer: TestLifecycleObserver):
 
 def test_raise_exc(observer: TestLifecycleObserver):
     with pytest.raises(Exception):
-        instance.create(iid('j1'), None, root_phase=TestPhase(raise_exc=Exception), lifecycle_observers=[observer]).run()
+        instance.create(iid('j1'), None, TestPhase(raise_exc=Exception), lifecycle_observers=[observer]).run()
 
     assert observer.stages == [Stage.RUNNING, Stage.ENDED]  # TODO CREATED
     assert observer.job_runs[-1].lifecycle.termination.status == TerminationStatus.ERROR
 
 
 def test_raise_exec_terminated(observer: TestLifecycleObserver):
-    (instance.create(iid('j1'), None, root_phase=TestPhase(fail=True), lifecycle_observers=[observer])
+    (instance.create(iid('j1'), None, TestPhase(fail=True), lifecycle_observers=[observer])
      .run())
 
     assert observer.stages == [Stage.RUNNING, Stage.ENDED]  # TODO CREATED
@@ -49,7 +49,7 @@ def test_observer_raises_exception():
     """
     observer = ExceptionRaisingObserver(Exception('Should be captured by runjob'))
     execution = TestPhase()
-    job_instance = instance.create(iid('j1'), None, root_phase=execution, lifecycle_observers=[observer])
+    job_instance = instance.create(iid('j1'), None, execution, lifecycle_observers=[observer])
     job_instance.run()
     assert execution.completed
     assert job_instance.to_run().lifecycle.termination.status == TerminationStatus.COMPLETED

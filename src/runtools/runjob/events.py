@@ -9,19 +9,10 @@ and clients as producers.
 
 import json
 import logging
-from abc import ABC, abstractmethod
 
 from runtools.runcore.util.socket import PayloadTooLarge
 
 log = logging.getLogger(__name__)
-
-
-class Event(ABC):
-
-    @property
-    @abstractmethod
-    def event_type(self) -> str:
-        pass
 
 
 class EventDispatcher:

@@ -51,8 +51,8 @@ def test_environment_lifecycle(feature):
     with node.isolated(features=feature, transient=True) as e:
         assert feature.opened
 
-        inst = e.create_instance(iid("test_job"), root_phase=TestPhase())
-        inst2 = e.create_instance(iid('test_job_2'), root_phase=TestPhase())
+        inst = e.create_instance(iid("test_job"), TestPhase())
+        inst2 = e.create_instance(iid('test_job_2'), TestPhase())
 
         assert feature.added_instances[0] == inst
         assert feature.added_instances[1] == inst2
@@ -84,7 +84,7 @@ def test_instance_stage_observer(env):
     env.notifications.add_observer_lifecycle(observer_s)
     env.notifications.add_observer_phase(observer_t)
 
-    i = env.create_instance(iid("test_job"), root_phase=TestPhase())
+    i = env.create_instance(iid("test_job"), TestPhase())
     # TODO assert transitions[-1].new_stage == Stage.CREATED + transition phases
 
     i.run()
@@ -100,5 +100,5 @@ def test_output_observer(env):
         outputs.append(e)
 
     env.notifications.add_observer_output(observer)
-    env.create_instance(iid("test_job"), root_phase=TestPhase(output_text='hey more')).run()
+    env.create_instance(iid("test_job"), TestPhase(output_text='hey more')).run()
     assert outputs[0].output_line.message == 'hey more'

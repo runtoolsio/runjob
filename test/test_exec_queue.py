@@ -29,7 +29,7 @@ def test_stopped_queue_reports_stopped_status():
     """A queued phase that is stopped before dispatch should terminate with STOPPED, not COMPLETED."""
     fake_env = FakeEnvironment()
     queue = ExecutionQueue('QUEUE', GROUP, TestPhase('exec'))
-    inst = fake_env.create_instance(iid('job'), root_phase=queue)
+    inst = fake_env.create_instance(iid('job'), queue)
 
     inst.run(in_background=True)
     _wait_for_state(queue, QueuedState.IN_QUEUE)
