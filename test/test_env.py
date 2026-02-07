@@ -82,7 +82,7 @@ def test_instance_stage_observer(env):
         transitions.append(event)
 
     env.notifications.add_observer_lifecycle(observer_s)
-    env.notifications.add_observer_transition(observer_t)
+    env.notifications.add_observer_phase(observer_t)
 
     i = env.create_instance(iid("test_job"), root_phase=TestPhase())
     # TODO assert transitions[-1].new_stage == Stage.CREATED + transition phases

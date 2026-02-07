@@ -7,7 +7,7 @@ from threading import Condition, Event, Lock
 from typing import Any, List, Optional
 
 from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion, MetadataCriterion, LifecycleCriterion
-from runtools.runcore.job import JobRun, InstanceTransitionEvent
+from runtools.runcore.job import JobRun, InstancePhaseEvent
 from runtools.runcore.run import TerminationStatus, control_api, Stage
 from runtools.runjob.instance import JobInstanceContext
 from runtools.runjob.output import OutputContext
@@ -378,7 +378,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
 
     def _lock_name(self):
         # TODO Modifiable (inheritance?)
-        return f"eq-{self.execution_group}.lock"
+        return f"eq-{self._group.group_id}.lock"
 
     @property
     def attributes(self):
@@ -400,7 +400,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
 
     def _run(self, ctx):
         try:
-            ctx.environment.notifications.add_observer_transition(self._instance_transition_update)
+            ctx.environment.notifications.add_observer_phase(self._instance_phase_update)
 
             with self._queue_change_condition:
                 # Transition under lock to prevent NONE -> CANCELLED -> IN_QUEUE race condition
@@ -423,7 +423,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
                 with ctx.environment.lock(self._lock_name()):
                     self._dispatch_next(ctx)
         finally:
-            ctx.environment.notifications.remove_observer_transition(self._instance_transition_update)
+            ctx.environment.notifications.remove_observer_phase(self._instance_phase_update)
 
         self.run_child(self._children[0])
 
@@ -474,7 +474,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
             else:
                 log.debug("event[not_dispatched] run=[%s]", next_dispatch.metadata)
 
-    def _instance_transition_update(self, event: InstanceTransitionEvent):
+    def _instance_phase_update(self, event: InstancePhaseEvent):
         with self._queue_change_condition:
             if self._queue_changed or event.new_stage != Stage.ENDED:
                 return

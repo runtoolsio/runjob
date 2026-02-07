@@ -18,7 +18,7 @@ from threading import Thread
 from typing import Callable, Optional, List, Iterable, override
 
 from runtools.runcore.job import (JobInstance, JobRun, JobInstanceMetadata, InstanceNotifications,
-                                  InstanceObservableNotifications, InstanceTransitionEvent, InstanceOutputEvent,
+                                  InstanceObservableNotifications, InstancePhaseEvent, InstanceOutputEvent,
                                   InstanceLifecycleObserver, InstanceLifecycleEvent)
 from runtools.runcore.run import Fault, PhaseTransitionEvent, Stage, StopReason
 from runtools.runcore.util import utc_now
@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 ROOT_PHASE_ID = "root"
 
 LIFECYCLE_OBSERVER_ERROR = "LIFECYCLE_OBSERVER_ERROR"
-TRANSITION_OBSERVER_ERROR = "TRANSITION_OBSERVER_ERROR"
+PHASE_OBSERVER_ERROR = "PHASE_OBSERVER_ERROR"
 OUTPUT_OBSERVER_ERROR = "OUTPUT_OBSERVER_ERROR"
 
 current_job_instance: ContextVar[Optional[JobInstanceMetadata]] = ContextVar('current_job_instance', default=None)
@@ -86,7 +86,7 @@ def create(instance_id, environment, phases=None,
            pre_run_hook: Optional[JobInstanceHook] = None,
            post_run_hook: Optional[JobInstanceHook] = None,
            lifecycle_observers: Iterable[InstanceLifecycleObserver] = (),
-           lifecycle_error_hook=None, transition_error_hook=None, output_error_hook=None,
+           lifecycle_error_hook=None, phase_error_hook=None, output_error_hook=None,
            **user_params) -> JobInstance:
     """Create a job instance.
 
@@ -103,7 +103,7 @@ def create(instance_id, environment, phases=None,
         post_run_hook: Hook called after execution completes
         lifecycle_observers: Observers for lifecycle events
         lifecycle_error_hook: Error handler for lifecycle observer errors
-        transition_error_hook: Error handler for transition observer errors
+        phase_error_hook: Error handler for transition observer errors
         output_error_hook: Error handler for output observer errors
         **user_params: Additional user-defined parameters stored in metadata
     """
@@ -125,7 +125,7 @@ def create(instance_id, environment, phases=None,
 
     inst = _JobInstance(instance_id, root_phase, environment, output_sink, output_router, status_tracker,
                         pre_run_hook, post_run_hook,
-                        lifecycle_error_hook, transition_error_hook, output_error_hook,
+                        lifecycle_error_hook, phase_error_hook, output_error_hook,
                         user_params)
     for so in lifecycle_observers:
         inst.notifications.add_observer_lifecycle(so)
@@ -138,11 +138,11 @@ class _JobInstance(JobInstance):
 
     def __init__(self, instance_id, root_phase, env, output_sink, output_router, status_tracker,
                  pre_run_hook, post_run_hook,
-                 lifecycle_error_hook, transition_error_hook, output_error_hook,
+                 lifecycle_error_hook, phase_error_hook, output_error_hook,
                  user_params):
         self._notifications = InstanceObservableNotifications(
             lifecycle_error_hook=lifecycle_error_hook,
-            transition_error_hook=transition_error_hook,
+            phase_error_hook=phase_error_hook,
             output_error_hook=output_error_hook,
             force_reraise=True)
         self._metadata = JobInstanceMetadata(instance_id, user_params)
@@ -160,6 +160,8 @@ class _JobInstance(JobInstance):
         return self._notifications
 
     def _post_created(self):
+        # By observing the root phase, _JobInstance effectively receives transition events
+        # for all sub-phases within the hierarchy, as events propagate up to the root.
         self._root_phase.add_phase_observer(self._on_phase_update)
 
     def _log(self, event: str, msg: str = '', *params):
@@ -278,11 +280,10 @@ class _JobInstance(JobInstance):
                 for exc in eg.exceptions:
                     self._faults.append(Fault.from_exception(LIFECYCLE_OBSERVER_ERROR, exc))
         try:
-            event = InstanceTransitionEvent(self.metadata, snapshot, is_root_phase, e.phase_detail.phase_id,
-                                            e.new_stage, e.timestamp)
-            self._notifications.transition_notification.observer_proxy.instance_transition_update(event)
+            event = InstancePhaseEvent(self.metadata, snapshot, is_root_phase, e.phase_detail.phase_id,
+                                       e.new_stage, e.timestamp)
+            self._notifications.phase_notification.observer_proxy.instance_phase_update(event)
         except ExceptionGroup as eg:
-            log.error("[transition_observer_error]", exc_info=eg)
+            log.error("[phase_observer_error]", exc_info=eg)
             for exc in eg.exceptions:
-                self._faults.append(Fault.from_exception(TRANSITION_OBSERVER_ERROR, exc))
-
+                self._faults.append(Fault.from_exception(PHASE_OBSERVER_ERROR, exc))

@@ -15,7 +15,7 @@ from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig,
     IsolatedEnvironmentConfig
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
-    InstanceLifecycleEvent, InstanceTransitionEvent, InstanceOutputEvent, JobInstanceDelegate
+    InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, JobInstanceDelegate
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.util import to_tuple, lock
 from runtools.runcore.util.socket import DatagramSocketClient
@@ -528,7 +528,7 @@ def local(env_id, persistence=None, node_layout=None, *, lock_factory=None, feat
     api = LocalInstanceServer(layout.server_socket_path)
     event_dispatcher = EventDispatcher(DatagramSocketClient(), {
         InstanceLifecycleEvent.EVENT_TYPE: layout.listener_lifecycle_sockets_provider,
-        InstanceTransitionEvent.EVENT_TYPE: layout.listener_phase_sockets_provider,
+        InstancePhaseEvent.EVENT_TYPE: layout.listener_phase_sockets_provider,
         InstanceOutputEvent.EVENT_TYPE: layout.listener_output_sockets_provider,
     })
     lock_factory = lock_factory or lock.default_file_lock_factory()
