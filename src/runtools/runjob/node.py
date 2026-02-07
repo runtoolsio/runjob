@@ -35,8 +35,7 @@ def _create_plugins(names):
 class EnvironmentNode(EnvironmentConnector, ABC):
 
     @abstractmethod
-    def create_instance(self, *args, **kwargs):
-        """TODO Should the instance be auto-started to prevent environment waiting infinitely?"""
+    def create_instance(self, instance_id, root_phase, **kwargs):
         pass
 
     @abstractmethod
@@ -227,17 +226,6 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         for feature in self._features:
             feature.on_instance_added(job_instance)
 
-        # #  TODO optional plugins
-        # if cfg.plugins_enabled and cfg.plugins_load:
-        #     plugins.register_new_job_instance(job_instance, cfg.plugins_load,
-        #                                       plugin_module_prefix=EXT_PLUGIN_MODULE_PREFIX)
-
-        # IMPORTANT:
-        #   1. Add observer first and only then check for the termination to prevent termination miss by the race condition
-        #   2. Priority should be set to be the lowest from all observers, however the current implementation
-        #      will work regardless of the priority as the removal of the observers doesn't affect
-        #      iteration/notification (`Notification` class)
-
         return job_instance
 
     def _on_added(self, job_instance):
@@ -352,6 +340,12 @@ class IsolatedEnvironment(EnvironmentNodeBase):
 
     def get_active_runs(self, run_match=None) -> List[JobRun]:
         return [i.to_run() for i in self.get_instances(run_match)]
+
+    def get_instance(self, instance_id) -> Optional[JobInstance]:
+        for inst in self.instances:
+            if inst.id == instance_id:
+                return inst
+        return None
 
     def get_instances(self, run_match=None) -> List[JobInstance]:
         return [i for i in self.instances if not run_match or run_match(i.to_run())]
@@ -603,7 +597,7 @@ class LocalNode(EnvironmentNodeBase):
     def close(self):
         run_isolated_collect_exceptions(
             "Errors during closing runnable local environment",
-            lambda: EnvironmentNodeBase.close(self),  # Always execute first as the method is waiting until it can be closed
+            lambda: EnvironmentNodeBase.close(self),  # First: waits until all instances detached
             self._rpc_server.close,
             self._event_dispatcher.close,
             self._connector.close,  # Keep last as it deletes the node directory
