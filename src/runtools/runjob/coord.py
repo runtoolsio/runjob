@@ -425,12 +425,11 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
         finally:
             ctx.environment.notifications.remove_observer_transition(self._instance_transition_update)
 
-        self._children[0].run(ctx)
+        self.run_child(self._children[0])
 
     def _stop_started_run(self, reason):
         with self._queue_change_condition:
             if self._state.dequeued:
-                self._children[0].stop(reason)
                 return
 
             self._state = QueuedState.CANCELLED
@@ -447,17 +446,18 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
             return True
 
     def _dispatch_next(self, ctx):
-        runs: List[JobRun] = ctx.environment.get_active_runs(JobRunCriteria(phase_criteria=self._phase_filter_running))
-        runs_sorted = sorted(runs, key=lambda run: run.find_first_phase(self._phase_filter).lifecycle.created_at)
+        filter_ = self._phase_filter_running
+        runs: List[JobRun] = ctx.environment.get_active_runs(JobRunCriteria(phase_criteria=filter_))
+        runs_sorted = sorted(runs, key=lambda run: run.find_first_phase(filter_).lifecycle.created_at)
         ids_dispatched = {r.instance_id for r in runs_sorted if
-                          r.find_first_phase(self._phase_filter).variables[
+                          r.find_first_phase(filter_).variables[
                               ExecutionQueue.STATE] == QueuedState.DISPATCHED.name}
         free_slots = self._group.max_executions - len(ids_dispatched)
 
         if free_slots <= 0:
             log.debug("event[exec_limit_reached] slots=[%d] dispatched=[%d]",
                       self._group.max_executions, len(ids_dispatched))
-            return False
+            return
 
         log.debug("event[dispatching_from_queue] free_slots=[%d]", free_slots)
         for next_dispatch in runs_sorted:
@@ -476,9 +476,11 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
 
     def _instance_transition_update(self, event: InstanceTransitionEvent):
         with self._queue_change_condition:
-            if self._queue_changed or event.new_stage != Stage.ENDED or event.is_root_phase or not self._phase_filter(
-                    # TODO Root phase
-                    event.job_run.find_phase_by_id(event.phase_id)):
+            if self._queue_changed or event.new_stage != Stage.ENDED:
+                return
+
+            ended_phase = event.job_run.find_phase_by_id(event.phase_id)
+            if not ended_phase or not self._phase_filter(ended_phase):
                 return
 
             log.debug("event[queue_slot_freed] instance=[%s] phase=[%s]", event.instance.instance_id, event.phase_id)
