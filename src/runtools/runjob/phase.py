@@ -242,13 +242,37 @@ class BasePhase(Phase[C], ABC):
     """
     Base implementation providing common functionality for phases.
 
-    Thread Safety:
-        The `_lifecycle_lock` guards the start/terminate decision boundary, ensuring that:
-        - started_at is set at most once
-        - phase can be started only once
-        - termination is set at most once
-        - termination may occur before the phase starts
-        - start may not occur after termination
+    A phase goes through three stages: CREATED -> RUNNING -> ENDED. ``run(ctx)`` drives the full
+    lifecycle and can only be called once. ``stop(reason)`` can be called from any thread at any time
+    and is idempotent — it works whether the phase hasn't started yet, is currently running, or has
+    already ended.
+
+    Subclass contract:
+        ``_run(ctx)``:
+            Implement the phase's work. Must be interruptible: when ``_stop_started_run`` unblocks
+            whatever ``_run`` is waiting on, ``_run`` should detect it and either return or raise
+            ``PhaseTerminated``. Use ``_raise_if_stopped()`` after waking from any blocking wait.
+            Use ``run_child(child)`` to execute children (not ``child.run()`` directly). Raise
+            ``PhaseTerminated(status)`` to terminate with a specific status; normal return means
+            COMPLETED (unless a child failed).
+
+        ``_stop_started_run(reason)``:
+            Unblock ``_run`` so it can detect the stop and exit. Does not need to stop children —
+            already done by ``stop()`` before this method is called. Must be safe to call from another
+            thread. Can be a no-op if ``_run`` holds only a brief non-interruptible operation.
+
+    Key invariants:
+        - Children stop before parent: ``stop()`` stops children first (in reverse order). By the time
+          ``_run`` detects the stop, all children are already terminated.
+        - Pre-terminated children are skipped: ``run()`` returns immediately if already terminated,
+          so ``run_child`` on a pre-stopped child is a no-op.
+
+    Thread safety:
+        The ``_lifecycle_lock`` guards the start/terminate decision boundary, ensuring that:
+        - ``started_at`` is set at most once (phase can be started only once)
+        - ``termination`` is set at most once
+        - Termination may occur before the phase starts
+        - Start may not occur after termination
     """
 
     def __init__(self, phase_id: str, phase_type: str, name: Optional[str] = None, children=()):
