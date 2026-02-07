@@ -349,11 +349,42 @@ class ConcurrencyGroup:
 
 
 class ExecutionQueue(BasePhase[JobInstanceContext]):
+    """
+    A phase that limits concurrent execution of its child phase across instances in the same concurrency group.
+
+    Instances entering this phase are queued and dispatched in FIFO order (by phase creation time).
+    Only up to ``concurrency_group.max_executions`` instances run the child phase simultaneously.
+    When a running instance's queue phase ends, a slot is freed and the next queued instance is dispatched.
+
+    Queue state machine (guarded by ``_queue_change_condition``)::
+
+        NONE ──→ IN_QUEUE ──→ DISPATCHED
+                    │
+                    └──→ CANCELLED
+
+    - NONE → IN_QUEUE: On entry to ``_run``, before the dispatch loop starts.
+    - IN_QUEUE → DISPATCHED: When ``signal_dispatch()`` is called by another instance's ``_dispatch_next``,
+      or by this instance dispatching itself.
+    - IN_QUEUE → CANCELLED: When ``stop()`` is called before dispatch.
+
+    Dispatch protocol:
+        Each iteration of the wait loop acquires the environment lock for the concurrency group and calls
+        ``_dispatch_next``. This method queries all active runs with a running QUEUE phase in the same group,
+        counts how many are already DISPATCHED, and signals the next queued instances to fill free slots.
+        The dispatched instance's ``signal_dispatch()`` transitions its state to DISPATCHED and wakes its
+        wait loop, which then breaks out and runs the child phase.
+
+    Slot-freed notifications:
+        An observer on environment phase transitions detects when a QUEUE phase in the same group ends,
+        setting ``_queue_changed`` and waking the wait loop to trigger a rescan. A periodic rescan timeout
+        (default 30s) provides a fallback in case a notification is missed.
+    """
+
     GROUP_ID = "group_id"
     MAX_EXEC = "max_exec"
     STATE = "state"
 
-    def __init__(self, phase_id, concurrency_group, limited_phase, phase_name=None):
+    def __init__(self, phase_id, concurrency_group, limited_phase, phase_name=None, queue_rescan_timeout=30):
         super().__init__(phase_id or concurrency_group.group_id, CoordTypes.QUEUE.value, phase_name, [limited_phase])
         if not concurrency_group:
             raise ValueError('Concurrency group must be specified')
@@ -372,6 +403,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
         self._phase_filter_running.lifecycle = LifecycleCriterion(stage=Stage.RUNNING)
 
         self._queue_change_condition = Condition()
+        self._rescan_timeout = queue_rescan_timeout
         # vv Guarding these fields vv
         self._state = QueuedState.NONE
         self._queue_changed = True
@@ -415,8 +447,8 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
                         break
 
                     if not self._queue_changed:
-                        self._queue_change_condition.wait()  # Set timeout
-                        continue
+                        if self._queue_change_condition.wait(timeout=self._rescan_timeout):
+                            continue
 
                     self._queue_changed = False
 
@@ -463,9 +495,13 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
         for next_dispatch in runs_sorted:
             if next_dispatch.instance_id in ids_dispatched:
                 continue
-            dispatched = (
-                ctx.environment.get_instance(next_dispatch.instance_id).find_phase_control(
-                    self._phase_filter).signal_dispatch())
+            inst = ctx.environment.get_instance(next_dispatch.instance_id)
+            if not inst:
+                continue
+            ctrl = inst.find_phase_control(filter_)
+            if not ctrl:
+                continue
+            dispatched = ctrl.signal_dispatch()
             if dispatched:
                 log.debug("event[dispatched] run=[%s]", next_dispatch.metadata)
                 free_slots -= 1
