@@ -2,7 +2,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from collections import deque
-from threading import local
+from threading import Lock, local
 from typing import Optional, Callable, List, Iterable
 
 from runtools.runcore.output import OutputLine, OutputObserver, TailBuffer, Mode, OutputLineFactory, Output, \
@@ -239,8 +239,18 @@ class OutputRouter(OutputObserver, Output):
         self.realtime_storages: List[OutputStorage] = [s for s in self.storages if not s.batch_size]
         self.batch_storages: List[OutputStorage] = [s for s in self.storages if s.batch_size]
         self.max_batch = max_batch
+        self._batch_lock = Lock()
         self._batch_buffer: List[OutputLine] = []
         self._locations = [storage.location for storage in self.storages]
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['_batch_lock']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._batch_lock = Lock()
 
     def __enter__(self):
         return self
@@ -264,7 +274,8 @@ class OutputRouter(OutputObserver, Output):
 
         # 3) buffer for batch stores
         if self.batch_storages:
-            self._batch_buffer.append(output_line)
+            with self._batch_lock:
+                self._batch_buffer.append(output_line)
             if (
                     len(self._batch_buffer) >= self.max_batch
                     or any(len(self._batch_buffer) >= s.batch_size for s in self.batch_storages)
@@ -272,7 +283,10 @@ class OutputRouter(OutputObserver, Output):
                 self._flush_batch_buffer()
 
     def _flush_batch_buffer(self):
-        lines_to_flush, self._batch_buffer = self._batch_buffer, []
+        with self._batch_lock:
+            lines_to_flush, self._batch_buffer = self._batch_buffer, []
+        if not lines_to_flush:
+            return
         for storage in self.batch_storages:
             batch_sz = storage.batch_size or len(lines_to_flush)
             for i in range(0, len(lines_to_flush), batch_sz):
