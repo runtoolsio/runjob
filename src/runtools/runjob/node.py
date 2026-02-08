@@ -221,10 +221,14 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             job_instance = JobInstanceManaged(self, job_instance)
             self._managed_instances[job_instance.id] = job_instance
 
-        # TODO Exception must be caught here to prevent inconsistent state and possibility in get stuck in close method:
-        self._on_added(job_instance)
-        for feature in self._features:
-            feature.on_instance_added(job_instance)
+        try:
+            self._on_added(job_instance)
+            for feature in self._features:
+                feature.on_instance_added(job_instance)
+        except Exception:
+            with self._lock:
+                self._managed_instances.pop(job_instance.id, None)
+            raise
 
         return job_instance
 
@@ -272,6 +276,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
     def close(self):
         interrupt_received = False
         with self._detached_condition:
+            # TODO Consider adding a timeout to prevent indefinite blocking if an instance never reaches DETACHED
             if self._closing:
                 return
 
