@@ -301,14 +301,14 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             raise KeyboardInterrupt
 
 
-def in_process(env_id=None, persistence=None, *, lock_factory=None, features=None, transient=True) -> 'InProcessEnvironment':
+def in_process(env_id=None, persistence=None, *, lock_factory=None, features=None, transient=True) -> 'InProcessNode':
     env_id = env_id or "in_process_" + util.unique_timestamp_hex()
     persistence = persistence or sqlite.create(':memory:')
     lock_factory = lock_factory or lock.default_memory_lock_factory()
-    return InProcessEnvironment(env_id, persistence, lock_factory, to_tuple(features), transient)
+    return InProcessNode(env_id, persistence, lock_factory, to_tuple(features), transient)
 
 
-class InProcessEnvironment(EnvironmentNodeBase):
+class InProcessNode(EnvironmentNodeBase):
 
     def __init__(self, env_id, persistence, lock_factory, features, transient=True):
         self._notifications = InstanceObservableNotifications()

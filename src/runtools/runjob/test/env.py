@@ -1,6 +1,6 @@
 """
 Lightweight fake environment for testing coordination phases (ExecutionQueue, MutualExclusionPhase, etc.)
-without the overhead of a full InProcessEnvironment.
+without the overhead of a full InProcessNode.
 
 Usage:
     env = FakeEnvironment()
