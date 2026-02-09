@@ -42,13 +42,13 @@ def feature():
 
 @pytest.fixture
 def env(feature):
-    with node.isolated(features=feature, transient=True) as env:
+    with node.in_process(features=feature, transient=True) as env:
         yield env
 
 
 def test_environment_lifecycle(feature):
     """Test basic environment lifecycle - open, add instance, close"""
-    with node.isolated(features=feature, transient=True) as e:
+    with node.in_process(features=feature, transient=True) as e:
         assert feature.opened
 
         inst = e.create_instance(iid("test_job"), TestPhase())

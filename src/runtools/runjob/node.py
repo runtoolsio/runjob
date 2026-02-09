@@ -12,7 +12,7 @@ from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayou
 from runtools.runcore.criteria import SortOption
 from runtools.runcore.db import sqlite, PersistingObserver, NullPersistence, PERSISTING_OBSERVER_PRIORITY
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
-    IsolatedEnvironmentConfig
+    InProcessEnvironmentConfig
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
     InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, JobInstanceDelegate
@@ -301,14 +301,14 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             raise KeyboardInterrupt
 
 
-def isolated(env_id=None, persistence=None, *, lock_factory=None, features=None, transient=True) -> 'IsolatedEnvironment':
-    env_id = env_id or "isolated_" + util.unique_timestamp_hex()
+def in_process(env_id=None, persistence=None, *, lock_factory=None, features=None, transient=True) -> 'InProcessEnvironment':
+    env_id = env_id or "in_process_" + util.unique_timestamp_hex()
     persistence = persistence or sqlite.create(':memory:')
     lock_factory = lock_factory or lock.default_memory_lock_factory()
-    return IsolatedEnvironment(env_id, persistence, lock_factory, to_tuple(features), transient)
+    return InProcessEnvironment(env_id, persistence, lock_factory, to_tuple(features), transient)
 
 
-class IsolatedEnvironment(EnvironmentNodeBase):
+class InProcessEnvironment(EnvironmentNodeBase):
 
     def __init__(self, env_id, persistence, lock_factory, features, transient=True):
         self._notifications = InstanceObservableNotifications()
@@ -508,8 +508,8 @@ def create(env_config: EnvironmentConfigUnion):
         layout = StandardLocalNodeLayout.from_config(env_config)
         return local(env_config.id, persistence, layout)
 
-    if isinstance(env_config, IsolatedEnvironmentConfig):
-        return isolated(env_config.id, persistence)
+    if isinstance(env_config, InProcessEnvironmentConfig):
+        return in_process(env_config.id, persistence)
 
     raise AssertionError(f"Unsupported environment config: {type(env_config)}.")
 
