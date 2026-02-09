@@ -8,7 +8,7 @@ import logging
 import signal
 import sys
 from subprocess import Popen, PIPE
-from threading import Thread
+from threading import Lock, Thread
 from typing import Optional
 
 from runtools.runcore.output import OutputLineFactory
@@ -29,6 +29,7 @@ class ProgramPhase(BasePhase[OutputContext]):
         self.args = args
         self.read_output: bool = read_output
         self._output_line_fact = OutputLineFactory()
+        self._stop_lock = Lock()
         self._popen: Optional[Popen] = None
         self._status = None
 
@@ -40,28 +41,30 @@ class ProgramPhase(BasePhase[OutputContext]):
         return self._popen.returncode
 
     def _run(self, run_ctx):
-        if not self._stop_reason:
+        with self._stop_lock:
+            self._raise_if_stopped()
             stdout = PIPE if self.read_output else None
             stderr = PIPE if self.read_output else None
             try:
-                self._popen = Popen(" ".join(self.args) if USE_SHELL else self.args, stdout=stdout, stderr=stderr,
-                                    shell=USE_SHELL)
-                stdout_reader = None
-                stderr_reader = None
-                if self.read_output:
-                    stdout_reader = self._start_output_reader(run_ctx, self._popen.stdout, False)
-                    stderr_reader = self._start_output_reader(run_ctx, self._popen.stderr, True)
-
-                self._popen.wait()
-                if self.read_output:
-                    stdout_reader.join(timeout=1)
-                    stderr_reader.join(timeout=1)
-                if self.ret_code == 0:
-                    return
+                self._popen = Popen( " ".join(self.args) if USE_SHELL else self.args, stdout=stdout, stderr=stderr,
+                                     shell=USE_SHELL)
             except OSError as e:
                 sys.stderr.write(str(e) + "\n")
                 # TODO: Move exception level up
                 raise PhaseTerminated(TerminationStatus.FAILED, str(e)) from e
+
+        stdout_reader = None
+        stderr_reader = None
+        if self.read_output:
+            stdout_reader = self._start_output_reader(run_ctx, self._popen.stdout, False)
+            stderr_reader = self._start_output_reader(run_ctx, self._popen.stderr, True)
+
+        self._popen.wait()
+        if self.read_output:
+            stdout_reader.join(timeout=1)
+            stderr_reader.join(timeout=1)
+        if self.ret_code == 0:
+            return
 
         if self.ret_code == -signal.SIGINT:
             raise PhaseTerminated(TerminationStatus.INTERRUPTED)
@@ -82,8 +85,9 @@ class ProgramPhase(BasePhase[OutputContext]):
         return {'args': self.args, 'output_read': self.read_output}
 
     def _stop_started_run(self, reason):
-        if self._popen:
-            self._popen.terminate()
+        with self._stop_lock:
+            if self._popen:
+                self._popen.terminate()
 
     def _process_output(self, run_ctx, infile, is_err):
         with infile:
