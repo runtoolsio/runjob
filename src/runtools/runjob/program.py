@@ -6,11 +6,10 @@ run an external program using the `subprocess` module from the standard library.
 import io
 import logging
 import signal
+import sys
 from subprocess import Popen, PIPE
 from threading import Thread
-from typing import Union, Optional
-
-import sys
+from typing import Optional
 
 from runtools.runcore.output import OutputLineFactory
 from runtools.runcore.run import TerminationStatus
@@ -30,7 +29,7 @@ class ProgramPhase(BasePhase[OutputContext]):
         self.args = args
         self.read_output: bool = read_output
         self._output_line_fact = OutputLineFactory()
-        self._popen: Union[Popen, None] = None
+        self._popen: Optional[Popen] = None
         self._status = None
 
     @property
@@ -59,9 +58,9 @@ class ProgramPhase(BasePhase[OutputContext]):
                     stderr_reader.join(timeout=1)
                 if self.ret_code == 0:
                     return
-            except FileNotFoundError as e:
+            except OSError as e:
                 sys.stderr.write(str(e) + "\n")
-                """TODO Move exception level up"""
+                # TODO: Move exception level up
                 raise PhaseTerminated(TerminationStatus.FAILED, str(e)) from e
 
         if self.ret_code == -signal.SIGINT:
@@ -83,13 +82,12 @@ class ProgramPhase(BasePhase[OutputContext]):
         return {'args': self.args, 'output_read': self.read_output}
 
     def _stop_started_run(self, reason):
-        self._stop_reason = reason
         if self._popen:
             self._popen.terminate()
 
     def _process_output(self, run_ctx, infile, is_err):
         with infile:
-            for line in io.TextIOWrapper(infile, encoding="utf-8"):
+            for line in io.TextIOWrapper(infile, encoding="utf-8", errors="replace"):
                 line_stripped = line.rstrip()
                 self._status = line_stripped
                 print(line_stripped, file=sys.stderr if is_err else sys.stdout)
