@@ -1,3 +1,18 @@
+"""
+Warning extensions for monitoring job execution and triggering alerts.
+
+Provides two layers of warning functionality:
+
+Phase decorators (for wrapping individual phases):
+    TimeWarningExtension — triggers a warning when phase execution exceeds a time threshold.
+    OutputWarningExtension — triggers warnings when phase output matches regex patterns.
+
+Job instance observers (for monitoring the entire job lifecycle):
+    exec_time_exceeded() — registers a time-based warning observer on a job instance.
+    output_matches() — registers an output pattern warning observer on a job instance.
+    register() — convenience function to register multiple warnings from duration strings and regex patterns.
+"""
+
 import logging
 import re
 from threading import Timer
@@ -137,23 +152,44 @@ class OutputWarningExtension(PhaseDecorator[C], Generic[C]):
                         warning_text = warning_text.replace("$LINE", output_line.message)
 
                     log.warning(
-                        f"output_warning pattern=[{pattern.pattern}] match=[{match.group(0)}] line=[{output_line.message}] phase=[{self.id}]")
+                        f"output_warning pattern=[{pattern.pattern}] match=[{match.group(0)}]"
+                        f" line=[{output_line.message}] phase=[{self.id}]")
                     ctx.status_tracker.warning(warning_text)
-                    # break  # Stop after first match to avoid multiple warnings for one line
 
         with ctx.output_sink.observer_context(pattern_output_observer):
             return super().run(ctx)
 
 
 def exec_time_exceeded(job_instance: JobInstance, warning_name: str, time: float):
+    """Register a warning that triggers when job execution time exceeds the given threshold.
+
+    Args:
+        job_instance: The job instance to monitor.
+        warning_name: Descriptive name for the warning event.
+        time: Time threshold in seconds.
+    """
     job_instance.notifications.add_observer_lifecycle(_ExecTimeWarning(job_instance, warning_name, time))
 
 
 def output_matches(job_instance: JobInstance, warning_name: str, regex: str):
+    """Register a warning that triggers when job output matches the given regex pattern.
+
+    Args:
+        job_instance: The job instance to monitor.
+        warning_name: Descriptive name for the warning event.
+        regex: Regular expression pattern to match against output lines.
+    """
     job_instance.notifications.add_observer_output(_OutputMatchesWarning(job_instance, warning_name, regex))
 
 
 def register(job_instance: JobInstance, *, warn_times: Sequence[str] = (), warn_outputs: Sequence[str] = ()):
+    """Register multiple warnings on a job instance from duration strings and regex patterns.
+
+    Args:
+        job_instance: The job instance to monitor.
+        warn_times: Duration strings (e.g., "30s", "5m") for execution time warnings.
+        warn_outputs: Regex patterns for output matching warnings.
+    """
     for warn_time in warn_times:
         time = util.parse_duration_to_sec(warn_time)
         exec_time_exceeded(job_instance, f"run_time>{time}s", time)
@@ -163,6 +199,7 @@ def register(job_instance: JobInstance, *, warn_times: Sequence[str] = (), warn_
 
 
 class _ExecTimeWarning(InstanceLifecycleObserver):
+    """Lifecycle observer that triggers a warning when job execution time exceeds a threshold."""
 
     def __init__(self, job_instance, text, time: float):
         self.job_instance = job_instance
@@ -177,6 +214,7 @@ class _ExecTimeWarning(InstanceLifecycleObserver):
         elif event.new_stage == Stage.RUNNING:
             assert self.timer is None
             self.timer = Timer(self.time, self._check)
+            self.timer.daemon = True
             self.timer.start()
 
     def _check(self):
@@ -189,6 +227,7 @@ class _ExecTimeWarning(InstanceLifecycleObserver):
 
 
 class _OutputMatchesWarning(InstanceOutputObserver):
+    """Output observer that triggers a warning when job output matches a regex pattern."""
 
     def __init__(self, job_instance, text, regex):
         self.job_instance = job_instance
