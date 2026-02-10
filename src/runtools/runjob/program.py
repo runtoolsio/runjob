@@ -1,6 +1,6 @@
 """
-This module contains the `ProgramExecution` class, an implementation of the `Execution` abstract class, used to
-run an external program using the `subprocess` module from the standard library.
+This module contains the `ProgramPhase` class, a phase implementation that runs an external program using the
+`subprocess` module from the standard library.
 """
 
 import io

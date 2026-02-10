@@ -1,4 +1,3 @@
-import re
 from datetime import datetime, UTC
 from typing import Optional, List, Callable
 
@@ -28,7 +27,7 @@ class OperationTracker:
                unit: Optional[str] = None,
                updated_at: Optional[datetime] = None) -> None:
         if completed is not None:
-            if not self.completed or completed > self.completed:
+            if self.completed is None or completed > self.completed:
                 self.completed = completed  # Assuming is total completed
             else:
                 self.completed += completed  # Assuming it is an increment
@@ -37,26 +36,6 @@ class OperationTracker:
         if unit is not None:
             self.unit = unit
         self.updated_at = updated_at or datetime.now(UTC).replace(tzinfo=None)
-
-    def finished(self, result, updated_at: Optional[datetime] = None) -> None:
-        self.result = result
-        self.updated_at = updated_at or datetime.now(UTC).replace(tzinfo=None)
-
-    def parse_value(self, value):
-        # Check if value is a string and extract number and unit
-        if isinstance(value, str):
-            match = re.match(r"(\d+(\.\d+)?)(\s*)(\w+)?", value)
-            if match:
-                number = float(match.group(1))
-                unit = match.group(4) if match.group(4) else ''
-                return number, unit
-            else:
-                raise ValueError("String format is not correct. Expected format: {number}{unit} or {number} {unit}")
-        elif isinstance(value, (float, int)):
-            return float(value), self.unit
-        else:
-            raise TypeError("Value must be in the format `{number}{unit}` or `{number} {unit}`, but it was: "
-                            + str(value))
 
     @property
     def is_finished(self):
@@ -108,7 +87,6 @@ def field_based_handler(output_line: OutputLine, tracker: 'StatusTracker') -> No
 
     if result := fields.get('result'):
         tracker.result(result, timestamp)
-
 
 def message_as_event(output_line: OutputLine, tracker: 'StatusTracker') -> None:
     """Treat every output message as an event."""
