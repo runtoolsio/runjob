@@ -303,7 +303,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
 def in_process(env_id=None, persistence=None, *, lock_factory=None, features=None, transient=True) -> 'InProcessNode':
     env_id = env_id or "in_process_" + util.unique_timestamp_hex()
-    persistence = persistence or sqlite.create(':memory:')
+    persistence = persistence or sqlite.create(env_id=env_id, database=':memory:')
     lock_factory = lock_factory or lock.default_memory_lock_factory()
     return InProcessNode(env_id, persistence, lock_factory, to_tuple(features), transient)
 
@@ -516,7 +516,7 @@ def create(env_config: EnvironmentConfigUnion):
 
 def local(env_id, persistence=None, node_layout=None, *, lock_factory=None, features=None, transient=True):
     layout = node_layout or StandardLocalNodeLayout.create(env_id)
-    persistence = persistence or sqlite.create(str(paths.sqlite_db_path(env_id, create=True)))
+    persistence = persistence or sqlite.create(env_id=env_id)
     local_connector = connector.local(env_id, persistence, layout)
 
     api = LocalInstanceServer(layout.server_socket_path)
