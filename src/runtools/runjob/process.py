@@ -87,20 +87,23 @@ class ProcessPhase(BasePhase[OutputContext]):
             sys.stderr = original_stderr
 
     def _stop_started_run(self, reason):
-        self._stop_reason = reason
-        self.output_queue.put_nowait((_QueueStop(), False))
+        try:
+            self.output_queue.put_nowait((_QueueStop(), False))
+        except Full:
+            pass  # Reader will exit via is_alive() check
         if self._process:
             self._process.terminate()
 
     def _read_output(self, output_sink):
-        while self._process.is_alive():
+        while True:
             try:
                 output_text, is_err = self.output_queue.get(timeout=2)
                 if isinstance(output_text, _QueueStop):
                     break
                 output_sink.new_output(self._output_line_fact(output_text, is_err))
             except Empty:
-                pass
+                if not self._process.is_alive():
+                    break
 
 
 class _CapturingWriter:
