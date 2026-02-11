@@ -193,7 +193,7 @@ def _success_response(request_id: str | int | None, result: Any) -> str:
         "jsonrpc": "2.0",
         "result": result
     }
-    if request_id:
+    if request_id is not None:
         response["id"] = request_id
     return json.dumps(response)
 
@@ -206,9 +206,9 @@ def _error_response(request_id: Any, code: ErrorCode, message: str, data: Any = 
             "message": message
         }
     }
-    if data:
+    if data is not None:
         response["error"]["data"] = data
-    if request_id:
+    if request_id is not None:
         response["id"] = request_id
     return json.dumps(response)
 
