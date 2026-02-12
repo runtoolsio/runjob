@@ -1,6 +1,6 @@
 import pytest
 
-from runtools.runcore.run import TerminationStatus, RunCompletionError
+from runtools.runcore.run import TerminationStatus
 from runtools.runjob.phase import SequentialPhase
 from runtools.runjob.test.phase import FakeContext, TestPhase
 
@@ -61,10 +61,10 @@ def test_sequential_stops_on_exception(ctx):
     exc = Exception()
     seq = SequentialPhase('seq_fail',
                           [TestPhase(EXEC1), TestPhase(EXEC2, raise_exc=exc), TestPhase('exec3')])
-    with pytest.raises(RunCompletionError) as exc_info:
+    with pytest.raises(Exception) as exc_info:
         seq.run(ctx)
 
-    assert exc_info.value.__cause__.__cause__ == exc
+    assert exc_info.value is exc
     assert seq.children[0].termination.status == TerminationStatus.COMPLETED
     assert seq.children[1].termination.status == TerminationStatus.ERROR
     assert not seq.children[2].termination

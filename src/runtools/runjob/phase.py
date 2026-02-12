@@ -1,5 +1,7 @@
+import functools
 import logging
 from abc import ABC, abstractmethod
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 from multiprocessing import Lock  # TODO
 from threading import Timer
@@ -8,11 +10,13 @@ from typing import Optional, Generic, List
 from runtools.runcore import err
 from runtools.runcore.job import Stage
 from runtools.runcore.run import TerminationStatus, TerminationInfo, C, PhaseControl, \
-    PhaseDetail, PhaseTransitionObserver, PhaseTransitionEvent, RunCompletionError, StopReason
+    PhaseDetail, PhaseTransitionObserver, PhaseTransitionEvent, StopReason
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
 log = logging.getLogger(__name__)
+
+_current_phase: ContextVar['BasePhase'] = ContextVar('_current_phase')
 
 UNCAUGHT_PHASE_EXEC_EXCEPTION = "UNCAUGHT_PHASE_RUN_EXCEPTION"
 CHILD_RUN_ERROR = "ERROR"
@@ -35,6 +39,20 @@ class PhaseTerminated(Exception):
         super().__init__(message)
         self.termination_status = termination_status
         self.message = message
+
+
+class ChildPhaseTerminated(PhaseTerminated):
+    """Raised by the @phase wrapper when a child phase terminated non-successfully.
+
+    Unlike PhaseTerminated (a phase-internal signal caught by run()), this exception crosses
+    phase boundaries so parent code can handle child failures explicitly. Extends PhaseTerminated
+    so unhandled cases are caught by the existing ``except PhaseTerminated`` in run().
+
+    Catching hierarchy:
+        ``except ChildPhaseTerminated``: only child failures
+        ``except PhaseTerminated``: both child failures and own stop/timeout
+    """
+    pass
 
 
 class Phase(ABC, Generic[C]):
@@ -252,9 +270,10 @@ class BasePhase(Phase[C], ABC):
             Implement the phase's work. Must be interruptible: when ``_stop_started_run`` unblocks
             whatever ``_run`` is waiting on, ``_run`` should detect it and either return or raise
             ``PhaseTerminated``. Use ``_raise_if_stopped()`` after waking from any blocking wait.
-            Use ``run_child(child)`` to execute children (not ``child.run()`` directly). Raise
-            ``PhaseTerminated(status)`` to terminate with a specific status; normal return means
-            COMPLETED (unless a child failed).
+            Use ``run_child(child)`` to execute children (not ``child.run()`` directly); it raises
+            when a child ends unsuccessfully, so failures can be handled explicitly in ``_run``.
+            Raise ``PhaseTerminated(status)`` to terminate with a specific status; normal return means
+            COMPLETED.
 
         ``_stop_started_run(reason)``:
             Unblock ``_run`` so it can detect the stop and exit. Does not need to stop children —
@@ -287,6 +306,7 @@ class BasePhase(Phase[C], ABC):
         self._started_at: Optional[datetime] = None
         self._termination: Optional[TerminationInfo] = None
         self._stop_reason: Optional[StopReason] = None
+        self._failure_raised: bool = False
         for c in children:
             c.add_phase_observer(self._notification.observer_proxy)
 
@@ -373,15 +393,16 @@ class BasePhase(Phase[C], ABC):
     def run(self, ctx: Optional[C]):
         with self._lifecycle_lock:
             if self._started_at or self.termination:
-                return
+                return None
             self._started_at = utc_now()
         self._notification.observer_proxy.new_phase_transition(
             PhaseTransitionEvent(self.detail(), Stage.RUNNING, self._started_at))
 
         self._ctx = ctx
         term = None
+        token = _current_phase.set(self)
         try:
-            self._run(ctx)
+            return self._run(ctx)
         except PhaseTerminated as e:
             msg = e.message
             stack_trace = None
@@ -391,23 +412,26 @@ class BasePhase(Phase[C], ABC):
                         msg = str(e.__cause__)
                     stack_trace = err.stacktrace_str(e.__cause__)
             term = TerminationInfo(e.termination_status, utc_now(), msg, stack_trace)
-        except RunCompletionError as e:
-            term = TerminationInfo(TerminationStatus.ERROR, utc_now(), e.original_message())
-            raise RunCompletionError(self.id, f"{e.phase_id} -> {e}") from e
-        except Exception as e:
-            term = TerminationInfo(TerminationStatus.ERROR, utc_now(), str(e), err.stacktrace_str(e))
-            raise RunCompletionError(self.id, str(e)) from e
         except (KeyboardInterrupt, SystemExit) as e:
             self.stop()
             term = TerminationInfo(TerminationStatus.INTERRUPTED, utc_now())
-            raise e
+            raise
+        except Exception as e:
+            self._failure_raised = True
+            term = TerminationInfo(TerminationStatus.ERROR, utc_now(), str(e), err.stacktrace_str(e))
+            raise
         finally:
+            _current_phase.reset(token)
             self._ctx = None
             if term:
                 self._termination = term
             else:
                 for child in self._children:
                     if child.termination and not child.termination.status.outcome.is_success:
+                        # Skip children whose failure was raised as an exception — the parent's
+                        # _run() had the chance to handle it. If it returned normally, it did.
+                        if getattr(child, '_failure_raised', False):
+                            continue
                         self._termination = TerminationInfo(child.termination.status, utc_now(),
                                                             child.termination.message)
                         break
@@ -417,10 +441,14 @@ class BasePhase(Phase[C], ABC):
                 PhaseTransitionEvent(self.detail(), Stage.ENDED, self._termination.terminated_at))
 
     def run_child(self, child):
+        # Dynamically created children (e.g. @phase functions) don't exist when stop() calls
+        # _stop_children(), so they would run despite the parent being stopped. This check ensures
+        # stop propagates at the next run_child boundary.
+        self._raise_if_stopped()
         if child not in self._children:
             self._children.append(child)
             child.add_phase_observer(self._notification.observer_proxy)
-        child.run(self._ctx)
+        return child.run(self._ctx)
 
     @abstractmethod
     def _stop_started_run(self, reason):
@@ -552,3 +580,78 @@ class TimeoutExtension(PhaseDecorator[C], Generic[C]):
         if self._timer is not None:
             self._timer.cancel()
             self._timer = None
+
+
+class FunctionPhase(BasePhase):
+    """A phase that wraps a plain function call."""
+
+    def __init__(self, phase_id: str, phase_type: str, func, args, kwargs, *, name: Optional[str] = None):
+        super().__init__(phase_id, phase_type, name)
+        self._func = func
+        self._args = args
+        self._kwargs = kwargs
+
+    def _run(self, ctx):
+        return self._func(*self._args, **self._kwargs)
+
+    def _stop_started_run(self, reason):
+        pass
+
+
+def phase(func=None, phase_type=None):
+    """Decorator that turns a plain function into a phase.
+
+    Usage::
+
+        @phase
+        def fetch_data(url):
+            return requests.get(url).json()
+
+        @phase("CUSTOM_TYPE")
+        def transform(data):
+            return [item['name'] for item in data]
+
+    When called inside a running phase's ``_run()``, the decorated function automatically creates
+    a child ``FunctionPhase``, registers it with the parent via ``run_child()``, and returns the result.
+    """
+    if func is None:
+        # Called as @phase("CUSTOM_TYPE")
+        def decorator(f):
+            return _make_phase_wrapper(f, phase_type)
+        return decorator
+
+    if isinstance(func, str):
+        # Called as @phase("CUSTOM_TYPE") — func is actually the type string
+        def decorator(f):
+            return _make_phase_wrapper(f, func)
+        return decorator
+
+    # Called as @phase (no arguments)
+    return _make_phase_wrapper(func, None)
+
+
+def _make_phase_wrapper(func, explicit_type):
+    resolved_type = explicit_type or func.__name__.upper()
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            parent = _current_phase.get()
+        except LookupError:
+            raise RuntimeError(
+                f"@phase function '{func.__name__}' called outside a running phase. "
+                f"It must be called from within a phase's _run() method."
+            )
+        child = FunctionPhase(func.__name__, resolved_type, func, args, kwargs)
+        result = parent.run_child(child)
+        # Uncaught exceptions already propagated with their original type (never reaches here).
+        # PhaseTerminated and pre-termination are caught by run() internally, so run_child()
+        # returns None silently. Re-raise as ChildPhaseTerminated so parent code can handle it.
+        if child.termination and not child.termination.status.outcome.is_success:
+            # Mark so parent's scanning skips this child — the failure is being surfaced
+            # as an exception, giving _run() the chance to handle it.
+            child._failure_raised = True
+            raise ChildPhaseTerminated(child.termination.status, child.termination.message)
+        return result
+
+    return wrapper
