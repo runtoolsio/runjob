@@ -1,7 +1,7 @@
 import pytest
 
 from runtools.runcore.run import TerminationStatus
-from runtools.runjob.phase import BasePhase, ChildPhaseTerminated, FunctionPhase, PhaseTerminated, SequentialPhase, phase
+from runtools.runjob.phase import BasePhase, ChildPhaseTerminated, PhaseTerminated, SequentialPhase, phase
 from runtools.runjob.test.phase import FakeContext
 
 
@@ -17,9 +17,6 @@ class HostPhase(BasePhase):
 
     def _run(self, ctx):
         return self._run_body()
-
-    def _stop_started_run(self, reason):
-        pass
 
 
 @pytest.fixture
@@ -241,9 +238,6 @@ def test_integration_with_sequential_phase(ctx):
 
         def _run(self, ctx):
             self.result = compute()
-
-        def _stop_started_run(self, reason):
-            pass
 
     inner = InnerPhase()
     seq = SequentialPhase("seq", [inner])

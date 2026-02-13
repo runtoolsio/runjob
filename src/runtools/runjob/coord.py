@@ -62,7 +62,7 @@ class CheckpointPhase(BasePhase[Any]):
     def is_resumed(self):
         return self._event.is_set() and not self._stop_reason
 
-    def _stop_started_run(self, reason):
+    def _stop_running(self, reason):
         self._event.set()
 
 
@@ -105,7 +105,7 @@ class ApprovalPhase(BasePhase[Any]):
     def approved(self):
         return self._event.is_set() and not self._stop_reason
 
-    def _stop_started_run(self, reason):
+    def _stop_running(self, reason):
         self._event.set()
 
 
@@ -159,9 +159,6 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
 
         self.run_child(self._children[0])
 
-    def _stop_started_run(self, reason):
-        pass
-
 
 class DependencyPhase(BasePhase[JobInstanceContext]):
     """
@@ -188,9 +185,6 @@ class DependencyPhase(BasePhase[JobInstanceContext]):
             log.debug(f"[active_dependency_not_found] dependency=[{self._dependency_match}]")
             raise PhaseTerminated(TerminationStatus.UNSATISFIED)
         log.debug(f"[active_dependency_found] instances={[r.instance_id for r in matching_runs]}")
-
-    def _stop_started_run(self, reason):
-        pass
 
 
 class WaitingPhase(BasePhase[OutputContext]):
@@ -232,7 +226,7 @@ class WaitingPhase(BasePhase[OutputContext]):
         if not wait:
             self._event.set()
 
-    def _stop_started_run(self, reason):
+    def _stop_running(self, reason):
         self._stop_all()
         self._event.set()
 
@@ -452,7 +446,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
 
         self.run_child(self._children[0])
 
-    def _stop_started_run(self, reason):
+    def _stop_running(self, reason):
         with self._queue_change_condition:
             if self._state.dequeued:
                 return

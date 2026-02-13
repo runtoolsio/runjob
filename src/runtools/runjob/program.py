@@ -6,10 +6,11 @@ This module contains the `ProgramPhase` class, a phase implementation that runs 
 import io
 import logging
 import signal
-import sys
 from subprocess import Popen, PIPE
 from threading import Lock, Thread
 from typing import Optional
+
+import sys
 
 from runtools.runcore.output import OutputLineFactory
 from runtools.runcore.run import TerminationStatus
@@ -84,7 +85,7 @@ class ProgramPhase(BasePhase[OutputContext]):
     def attributes(self):
         return {'args': self.args, 'output_read': self.read_output}
 
-    def _stop_started_run(self, reason):
+    def _stop_running(self, reason):
         with self._stop_lock:
             if self._popen:
                 self._popen.terminate()

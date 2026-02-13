@@ -267,7 +267,7 @@ class BasePhase(Phase[C], ABC):
 
     Subclass contract:
         ``_run(ctx)``:
-            Implement the phase's work. Must be interruptible: when ``_stop_started_run`` unblocks
+            Implement the phase's work. Must be interruptible: when ``_stop_running`` unblocks
             whatever ``_run`` is waiting on, ``_run`` should detect it and either return or raise
             ``PhaseTerminated``. Use ``_raise_if_stopped()`` after waking from any blocking wait.
             Use ``run_child(child)`` to execute children (not ``child.run()`` directly); it raises
@@ -275,10 +275,10 @@ class BasePhase(Phase[C], ABC):
             Raise ``PhaseTerminated(status)`` to terminate with a specific status; normal return means
             COMPLETED.
 
-        ``_stop_started_run(reason)``:
+        ``_stop_running(reason)`` (optional override):
             Unblock ``_run`` so it can detect the stop and exit. Does not need to stop children —
             already done by ``stop()`` before this method is called. Must be safe to call from another
-            thread. Can be a no-op if ``_run`` holds only a brief non-interruptible operation.
+            thread. Default is a no-op — override when ``_run`` blocks on something that needs unblocking.
 
     Key invariants:
         - Children stop before parent: ``stop()`` stops children first (in reverse order). By the time
@@ -450,8 +450,8 @@ class BasePhase(Phase[C], ABC):
             child.add_phase_observer(self._notification.observer_proxy)
         return child.run(self._ctx)
 
-    @abstractmethod
-    def _stop_started_run(self, reason):
+    def _stop_running(self, reason):
+        """Signal ``_run()`` to stop. Override when ``_run()`` blocks on something that needs unblocking."""
         pass
 
     def _raise_if_stopped(self):
@@ -481,7 +481,7 @@ class BasePhase(Phase[C], ABC):
                     PhaseTransitionEvent(self.detail(), Stage.ENDED, self._termination.terminated_at))
                 return
 
-        self._stop_started_run(reason)
+        self._stop_running(reason)
 
     def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY):
         self._notification.add_observer(observer, priority)
@@ -510,9 +510,6 @@ class SequentialPhase(BasePhase):
             self.run_child(child)
             if not child.termination.status.outcome.is_success:
                 raise PhaseTerminated(child.termination.status, child.termination.message)
-
-    def _stop_started_run(self, reason):
-        pass
 
 
 class TimeoutExtension(PhaseDecorator[C], Generic[C]):
@@ -593,9 +590,6 @@ class FunctionPhase(BasePhase):
 
     def _run(self, ctx):
         return self._func(*self._args, **self._kwargs)
-
-    def _stop_started_run(self, reason):
-        pass
 
 
 def phase(func=None, phase_type=None):
