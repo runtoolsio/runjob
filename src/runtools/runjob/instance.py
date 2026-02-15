@@ -173,11 +173,11 @@ class _JobInstance(JobInstance):
     def output(self):
         return self._output_router
 
-    def to_run(self) -> JobRun:
+    def snap(self) -> JobRun:
         status = self._ctx.status_tracker.to_status() if self.status_tracker else None
         return JobRun(
             self.metadata,
-            self._root_phase.detail(),
+            self._root_phase.snap(),
             self._output_router.locations if self._output_router else None,
             tuple(self._faults),
             status
@@ -249,7 +249,7 @@ class _JobInstance(JobInstance):
                 else:
                     log.warning(self._log('run_unsuccessful', "termination=[{}]", term))
 
-        snapshot = self.to_run()
+        snapshot = self.snap()
         if is_root_phase:
             try:
                 event = InstanceLifecycleEvent(self.metadata, snapshot, e.new_stage, e.timestamp)

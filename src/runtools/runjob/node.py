@@ -344,7 +344,7 @@ class InProcessNode(EnvironmentNodeBase):
         job_instance.notifications.remove_observer_lifecycle(self._persisting_observer)
 
     def get_active_runs(self, run_match=None) -> List[JobRun]:
-        return [i.to_run() for i in self.get_instances(run_match)]
+        return [i.snap() for i in self.get_instances(run_match)]
 
     def get_instance(self, instance_id) -> Optional[JobInstance]:
         for inst in self.instances:
@@ -353,7 +353,7 @@ class InProcessNode(EnvironmentNodeBase):
         return None
 
     def get_instances(self, run_match=None) -> List[JobInstance]:
-        return [i for i in self.instances if not run_match or run_match(i.to_run())]
+        return [i for i in self.instances if not run_match or run_match(i.snap())]
 
     def read_history_runs(self, run_match, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._persistence.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)

@@ -20,7 +20,8 @@ from typing import Generic, Optional
 from typing import Sequence, List
 
 from runtools.runcore import util
-from runtools.runcore.job import (JobInstance, InstanceOutputObserver, InstanceLifecycleObserver, InstanceLifecycleEvent,
+from runtools.runcore.job import (JobInstance, InstanceOutputObserver, InstanceLifecycleObserver,
+                                  InstanceLifecycleEvent,
                                   InstanceOutputEvent)
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import Stage, C, StopReason
@@ -218,7 +219,7 @@ class _ExecTimeWarning(InstanceLifecycleObserver):
             self.timer.start()
 
     def _check(self):
-        if not self.job_instance.to_run().lifecycle.termination:
+        if not self.job_instance.snap().lifecycle.termination:
             self.job_instance.status_tracker.warning(self.text)
 
     def __repr__(self):

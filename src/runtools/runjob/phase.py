@@ -10,7 +10,7 @@ from typing import Optional, Generic, List
 from runtools.runcore import err
 from runtools.runcore.job import Stage
 from runtools.runcore.run import TerminationStatus, TerminationInfo, C, PhaseControl, \
-    PhaseDetail, PhaseTransitionObserver, PhaseTransitionEvent, StopReason
+    PhaseRun, PhaseTransitionObserver, PhaseTransitionEvent, StopReason
 from runtools.runcore.util import utc_now
 from runtools.runcore.util.observer import DEFAULT_OBSERVER_PRIORITY, ObservableNotification
 
@@ -90,12 +90,12 @@ class Phase(ABC, Generic[C]):
         return {}
 
     @abstractmethod
-    def detail(self):
+    def snap(self):
         """
-        Creates a view of the current phase state.
+        Creates a snapshot of the current phase state.
 
         Returns:
-            PhaseView: An immutable view of the phase's current state
+            PhaseRun: An immutable snapshot of the phase's current state
         """
         pass
 
@@ -202,9 +202,9 @@ class PhaseDecorator(Phase[C], Generic[C]):
         """Delegates to the wrapped phase's variables property"""
         return self._wrapped.variables
 
-    def detail(self) -> PhaseDetail:
-        """Delegates to the wrapped phase's detail method"""
-        return self._wrapped.detail()
+    def snap(self) -> PhaseRun:
+        """Delegates to the wrapped phase's snap method"""
+        return self._wrapped.snap()
 
     @property
     def control(self) -> PhaseControl:
@@ -366,11 +366,11 @@ class BasePhase(Phase[C], ABC):
             PhaseControl for the matching phase, or None if not found
         """
         phase = None
-        if phase_filter(self.detail()):
+        if phase_filter(self.snap()):
             phase = self
         else:
             for child in self.children:
-                if phase_filter(child.detail()):
+                if phase_filter(child.snap()):
                     phase = child
                     break
                 if phase_control := child.find_phase_control(phase_filter):
@@ -381,14 +381,14 @@ class BasePhase(Phase[C], ABC):
 
         return phase.control
 
-    def detail(self) -> PhaseDetail:
+    def snap(self) -> PhaseRun:
         """
-        Creates a view of the current phase state.
+        Creates a snapshot of the current phase state.
 
         Returns:
-            PhaseView: An immutable view of the phase's current state
+            PhaseRun: An immutable snapshot of the phase's current state
         """
-        return PhaseDetail.from_phase(self)
+        return PhaseRun.from_phase(self)
 
     def run(self, ctx: Optional[C]):
         with self._lifecycle_lock:
@@ -396,7 +396,7 @@ class BasePhase(Phase[C], ABC):
                 return None
             self._started_at = utc_now()
         self._notification.observer_proxy.new_phase_transition(
-            PhaseTransitionEvent(self.detail(), Stage.RUNNING, self._started_at))
+            PhaseTransitionEvent(self.snap(), Stage.RUNNING, self._started_at))
 
         self._ctx = ctx
         term = None
@@ -438,7 +438,7 @@ class BasePhase(Phase[C], ABC):
                 if not self._termination:
                     self._termination = TerminationInfo(TerminationStatus.COMPLETED, utc_now())
             self._notification.observer_proxy.new_phase_transition(
-                PhaseTransitionEvent(self.detail(), Stage.ENDED, self._termination.terminated_at))
+                PhaseTransitionEvent(self.snap(), Stage.ENDED, self._termination.terminated_at))
 
     def run_child(self, child):
         # Dynamically created children (e.g. @phase functions) don't exist when stop() calls
@@ -478,7 +478,7 @@ class BasePhase(Phase[C], ABC):
             if not self._started_at:
                 self._termination = TerminationInfo(reason.termination_status, utc_now())
                 self._notification.observer_proxy.new_phase_transition(
-                    PhaseTransitionEvent(self.detail(), Stage.ENDED, self._termination.terminated_at))
+                    PhaseTransitionEvent(self.snap(), Stage.ENDED, self._termination.terminated_at))
                 return
 
         self._stop_running(reason)

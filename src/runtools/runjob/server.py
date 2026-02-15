@@ -7,7 +7,6 @@ from json import JSONDecodeError
 from typing import Dict, Any, List, Union, override
 
 from itertools import zip_longest
-
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.job import JobInstanceManager, JobInstance, InstanceID
 from runtools.runcore.run import StopReason
@@ -83,7 +82,7 @@ class GetActiveRunsMethod(JsonRpcMethod):
 
     @override
     def execute(self, job_instances):
-        return [i.to_run().serialize() for i in job_instances]
+        return [i.snap().serialize() for i in job_instances]
 
 
 class StopInstanceMethod(JsonRpcMethod):
@@ -346,4 +345,5 @@ class LocalInstanceServer(StreamSocketServer, JobInstanceManager):
         except ValueError as e:
             raise JsonRpcError(ErrorCode.INVALID_PARAMS, f"Invalid run match criteria: {e}")
 
-        return [job_instance for job_instance in self._job_instances.values() if matching_criteria.matches(job_instance.to_run())]
+        return [job_instance for job_instance in self._job_instances.values() if
+                matching_criteria.matches(job_instance.snap())]

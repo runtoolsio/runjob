@@ -1,7 +1,6 @@
 from typing import List
 
 import pytest
-
 from runtools.runcore.client import LocalInstanceClient, TargetNotFoundError, InstanceCallResult
 from runtools.runcore.criteria import JobRunCriteria
 from runtools.runcore.job import JobRun, InstanceID, iid
@@ -72,8 +71,8 @@ def test_stop(job_instances, client, server):
     j1, j2 = job_instances
     client.stop_instance(server.address, j1.id)
 
-    assert j1.to_run().lifecycle.termination.status == TerminationStatus.STOPPED
-    assert not j2.to_run().lifecycle.termination
+    assert j1.snap().lifecycle.termination.status == TerminationStatus.STOPPED
+    assert not j2.snap().lifecycle.termination
 
 
 def test_phase_op_release(job_instances, client, server):

@@ -2,7 +2,6 @@ from threading import Thread
 
 import pytest
 import time
-
 from runtools.runcore.job import iid
 from runtools.runjob import instance
 from runtools.runjob import warning
@@ -24,4 +23,4 @@ def test_exec_time_warning(job_instance):
 
     job_instance.find_phase_control_by_id('p1').release()
     run_thread.join(1)
-    assert job_instance.to_run().status.warnings
+    assert job_instance.snap().status.warnings
