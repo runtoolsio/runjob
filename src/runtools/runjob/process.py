@@ -13,7 +13,6 @@ from queue import Full, Empty
 from typing import Union, Tuple, Optional
 
 import sys
-
 from runtools.runcore.output import OutputLineFactory
 from runtools.runcore.run import TerminationStatus
 from runtools.runjob.output import OutputContext
@@ -27,11 +26,11 @@ NON_ZERO_RETURN_CODE = "NON_ZERO_RETURN_CODE"
 class ProcessPhase(BasePhase[OutputContext]):
     TYPE = 'PROCESS'
 
-    def __init__(self, phase_id: str, target, args=(), *, output_id=None):
+    def __init__(self, phase_id: str, target, args=()):
         super().__init__(phase_id, ProcessPhase.TYPE)
         self.target = target
         self.args = args
-        self._output_line_fact = OutputLineFactory(output_id)
+        self._output_line_fact = OutputLineFactory()
         self.output_queue: Queue[Tuple[Union[str, _QueueStop], bool]] = Queue(maxsize=2048)
         self._process: Optional[Process] = None
 

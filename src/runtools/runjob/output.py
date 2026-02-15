@@ -8,6 +8,7 @@ from typing import Optional, Callable, List, Iterable
 from runtools.runcore.output import OutputLine, OutputObserver, TailBuffer, Mode, OutputLineFactory, Output, \
     TailNotSupportedError, OutputLocation
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY, ObserverContext
+from runtools.runjob.phase import _current_phase
 
 _thread_local = local()
 
@@ -66,6 +67,9 @@ class OutputSink:
         _thread_local.processing_output = True
 
         try:
+            if output_line.source is None and (current := _current_phase.get(None)):
+                output_line = output_line.with_source(current.id)
+
             if self.preprocessing:
                 output_line = self.preprocessing(output_line)
             self._output_notification.observer_proxy.new_output(output_line)
