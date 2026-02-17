@@ -10,8 +10,6 @@ and clients as producers.
 import json
 import logging
 
-from runtools.runcore.util.socket import PayloadTooLarge
-
 log = logging.getLogger(__name__)
 
 
@@ -34,22 +32,14 @@ class EventDispatcher:
         self.send_event(event.event_type, event)
 
     def send_event(self, event_type, event):
-        """
-        Send an event to all registered listeners.
-
-        Args:
-            event_type(str): Type identifier for the event
-            event(Serializable): Event to send
-        """
         socket_listeners_provider = self._event_type_to_sockets_provider.get(event_type)
         if socket_listeners_provider:
             addresses = socket_listeners_provider()
         else:
             addresses = None
-        try:
-            self._client.communicate(json.dumps(event.serialize()), addresses)
-        except PayloadTooLarge:
-            log.warning("event=[event_dispatch_failed] reason=[payload_too_large] note=[Please report this issue!]")
+
+        payload = json.dumps(event.serialize())
+        self._client.communicate(payload, addresses)
 
     def close(self):
         """Release resources used by the dispatcher."""

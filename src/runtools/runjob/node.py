@@ -554,6 +554,9 @@ class LocalNode(EnvironmentNodeBase):
         return self._connector.persistence_enabled
 
     def open(self):
+        # TODO Clean up stale sockets from dead connectors on startup (e.g., call clean_stale_sockets
+        #  for the environment's listener socket directory). Currently, stale sockets cause repeated
+        #  ConnectionRefusedError on every event dispatch until the socket files are manually removed.
         EnvironmentNodeBase.open(self)  # Execute first for opened only once check
         self._connector.open()
         self._rpc_server.start()

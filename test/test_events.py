@@ -21,7 +21,6 @@ def test_transition_dispatching():
 
     job_run = fake_job_run('j1', 'r1')
     event = InstancePhaseEvent(
-        instance=job_run.metadata,
         job_run=job_run,
         is_root_phase=True,
         phase_id=job_run.root_phase.children[0].phase_id,

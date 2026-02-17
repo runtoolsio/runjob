@@ -11,7 +11,7 @@ from runtools.runcore.job import JobRun, InstancePhaseEvent
 from runtools.runcore.run import TerminationStatus, control_api, Stage
 from runtools.runjob.instance import JobInstanceContext
 from runtools.runjob.output import OutputContext
-from runtools.runjob.phase import BasePhase, PhaseTerminated
+from runtools.runjob.phase import BasePhase, PhaseTerminated, SequentialPhase
 
 log = logging.getLogger(__name__)
 
@@ -509,3 +509,34 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
             log.debug("event[queue_slot_freed] instance=[%s] phase=[%s]", event.instance.instance_id, event.phase_id)
             self._queue_changed = True
             self._queue_change_condition.notify()
+
+
+def checkpoint(decor=None, *, timeout=0):
+    """Decorator that adds a checkpoint gate before a @phase function.
+
+    Usage::
+
+        @checkpoint
+        @phase
+        def deploy(env):
+            ...
+
+        @checkpoint(timeout=30)
+        @phase
+        def deploy(env):
+            ...
+    """
+    def apply(d):
+        original = d.create_phase
+
+        def wrapped_create(*args, **kwargs):
+            fn_phase = original(*args, **kwargs)
+            cp = CheckpointPhase(f'{fn_phase.id}_checkpoint', phase_name='Checkpoint', timeout=timeout)
+            return SequentialPhase(f'{fn_phase.id}_seq', [cp, fn_phase])
+
+        d.create_phase = wrapped_create
+        return d
+
+    if decor is not None:
+        return apply(decor)
+    return apply

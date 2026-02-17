@@ -160,7 +160,10 @@ class ExecPhaseOpMethod(JsonRpcMethod):
 
         operation = getattr(control, op_name, None)
         if operation is None:
-            raise JsonRpcError(ErrorCode.PHASE_OP_NOT_FOUND, f"Phase operation not found: {op_name}")
+            raise JsonRpcError(
+                ErrorCode.PHASE_OP_NOT_FOUND,
+                f"Phase '{phase_id}' (type {control.phase_type}) has no operation '{op_name}'"
+            )
         try:
             result = operation(*op_args)
         except AttributeError as e:

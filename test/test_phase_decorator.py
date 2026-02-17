@@ -1,6 +1,9 @@
+import threading
+
 import pytest
 
 from runtools.runcore.run import TerminationStatus
+from runtools.runjob.coord import CheckpointPhase, checkpoint
 from runtools.runjob.phase import BasePhase, ChildPhaseTerminated, PhaseTerminated, SequentialPhase, phase
 from runtools.runjob.test.phase import FakeContext
 
@@ -78,8 +81,8 @@ def test_auto_derived_type(ctx):
 
 
 def test_explicit_type_override(ctx):
-    """@phase("CUSTOM") overrides the auto-derived type."""
-    @phase("CUSTOM")
+    """@phase(phase_type="CUSTOM") overrides the auto-derived type."""
+    @phase(phase_type="CUSTOM")
     def do_work():
         pass
 
@@ -261,3 +264,66 @@ def test_exception_in_phase_function(ctx):
 
     assert host.children[0].termination.status == TerminationStatus.ERROR
     assert host.termination.status == TerminationStatus.ERROR
+
+
+def test_checkpoint_decorator(ctx):
+    """@checkpoint wraps @phase with SequentialPhase([CheckpointPhase, FunctionPhase]); resume allows execution."""
+    executed = []
+
+    @checkpoint
+    @phase
+    def deploy(env):
+        executed.append(env)
+        return "deployed"
+
+    def run_body():
+        return deploy("prod")
+
+    host = HostPhase(run_body)
+
+    def resume_checkpoint():
+        # Wait for the checkpoint phase to start running
+        while True:
+            children = host.children
+            if not children:
+                continue
+            seq = children[0]
+            cp = seq.children[0]
+            if cp.started_at and not cp.termination:
+                cp.resume()
+                break
+
+    t = threading.Thread(target=resume_checkpoint, daemon=True)
+    t.start()
+    host.run(ctx)
+    t.join(timeout=5)
+
+    assert executed == ["prod"]
+
+    # Verify structure: host -> SequentialPhase -> [CheckpointPhase, FunctionPhase]
+    seq = host.children[0]
+    assert seq.type == SequentialPhase.TYPE
+    assert seq.id == "deploy_seq"
+
+    cp_phase, fn_phase = seq.children
+    assert isinstance(cp_phase, CheckpointPhase)
+    assert cp_phase.id == "deploy_checkpoint"
+    assert fn_phase.id == "deploy"
+
+    assert host.termination.status == TerminationStatus.COMPLETED
+
+
+def test_checkpoint_decorator_with_timeout(ctx):
+    """@checkpoint(timeout=...) terminates when timeout expires without resume."""
+    @checkpoint(timeout=0.1)
+    @phase
+    def slow_deploy():
+        return "should not reach"
+
+    host = HostPhase(lambda: slow_deploy())
+    host.run(ctx)
+
+    seq = host.children[0]
+    cp_phase = seq.children[0]
+    assert cp_phase.termination.status == TerminationStatus.TIMEOUT
+    assert host.termination.status == TerminationStatus.TIMEOUT

@@ -252,14 +252,14 @@ class _JobInstance(JobInstance):
         snapshot = self.snap()
         if is_root_phase:
             try:
-                event = InstanceLifecycleEvent(self.metadata, snapshot, e.new_stage, e.timestamp)
+                event = InstanceLifecycleEvent(snapshot, e.new_stage, e.timestamp)
                 self._notifications.lifecycle_notification.observer_proxy.instance_lifecycle_update(event)
             except ExceptionGroup as eg:
                 log.error("[stage_observer_error]", exc_info=eg)
                 for exc in eg.exceptions:
                     self._faults.append(Fault.from_exception(LIFECYCLE_OBSERVER_ERROR, exc))
         try:
-            event = InstancePhaseEvent(self.metadata, snapshot, is_root_phase, e.phase_detail.phase_id,
+            event = InstancePhaseEvent(snapshot, is_root_phase, e.phase_detail.phase_id,
                                        e.new_stage, e.timestamp)
             self._notifications.phase_notification.observer_proxy.instance_phase_update(event)
         except ExceptionGroup as eg:

@@ -592,7 +592,7 @@ class FunctionPhase(BasePhase):
         return self._func(*self._args, **self._kwargs)
 
 
-def phase(func=None, phase_type=None):
+def phase(func=None, *, phase_type=None):
     """Decorator that turns a plain function into a phase.
 
     Usage::
@@ -601,7 +601,7 @@ def phase(func=None, phase_type=None):
         def fetch_data(url):
             return requests.get(url).json()
 
-        @phase("CUSTOM_TYPE")
+        @phase(phase_type="CUSTOM_TYPE")
         def transform(data):
             return [item['name'] for item in data]
 
@@ -609,34 +609,29 @@ def phase(func=None, phase_type=None):
     a child ``FunctionPhase``, registers it with the parent via ``run_child()``, and returns the result.
     """
     if func is None:
-        # Called as @phase("CUSTOM_TYPE")
-        def decorator(f):
-            return _make_phase_wrapper(f, phase_type)
-        return decorator
-
-    if isinstance(func, str):
-        # Called as @phase("CUSTOM_TYPE") — func is actually the type string
-        def decorator(f):
-            return _make_phase_wrapper(f, func)
-        return decorator
-
-    # Called as @phase (no arguments)
-    return _make_phase_wrapper(func, None)
+        return lambda f: _PhaseDecor(f, phase_type)
+    return _PhaseDecor(func, phase_type)
 
 
-def _make_phase_wrapper(func, explicit_type):
-    resolved_type = explicit_type or func.__name__.upper()
+class _PhaseDecor:
 
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        try:
-            parent = _current_phase.get()
-        except LookupError:
+    def __init__(self, func, phase_type):
+        functools.update_wrapper(self, func)
+        self.func = func
+        self.phase_type = phase_type or func.__name__.upper()
+
+    def create_phase(self, *args, **kwargs):
+        """Create the FunctionPhase for this call. Subclasses/extensions can wrap the result."""
+        return FunctionPhase(self.func.__name__, self.phase_type, self.func, args, kwargs)
+
+    def __call__(self, *args, **kwargs):
+        parent = _current_phase.get(None)
+        if parent is None:
             raise RuntimeError(
-                f"@phase function '{func.__name__}' called outside a running phase. "
+                f"@phase function '{self.func.__name__}' called outside a running phase. "
                 f"It must be called from within a phase's _run() method."
             )
-        child = FunctionPhase(func.__name__, resolved_type, func, args, kwargs)
+        child = self.create_phase(*args, **kwargs)
         result = parent.run_child(child)
         # Uncaught exceptions already propagated with their original type (never reaches here).
         # PhaseTerminated and pre-termination are caught by run() internally, so run_child()
@@ -648,4 +643,4 @@ def _make_phase_wrapper(func, explicit_type):
             raise ChildPhaseTerminated(child.termination.status, child.termination.message)
         return result
 
-    return wrapper
+
