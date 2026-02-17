@@ -582,8 +582,10 @@ class TimeoutExtension(PhaseDecorator[C], Generic[C]):
 class FunctionPhase(BasePhase):
     """A phase that wraps a plain function call."""
 
-    def __init__(self, phase_id: str, phase_type: str, func, args, kwargs, *, name: Optional[str] = None):
-        super().__init__(phase_id, phase_type, name)
+    TYPE = 'FUNCTION'
+
+    def __init__(self, phase_id: str, func, args, kwargs, *, name: Optional[str] = None):
+        super().__init__(phase_id, self.TYPE, name)
         self._func = func
         self._args = args
         self._kwargs = kwargs
@@ -592,7 +594,7 @@ class FunctionPhase(BasePhase):
         return self._func(*self._args, **self._kwargs)
 
 
-def phase(func=None, *, phase_type=None):
+def phase(func=None, *, phase_id=None):
     """Decorator that turns a plain function into a phase.
 
     Usage::
@@ -601,28 +603,28 @@ def phase(func=None, *, phase_type=None):
         def fetch_data(url):
             return requests.get(url).json()
 
-        @phase(phase_type="CUSTOM_TYPE")
-        def transform(data):
-            return [item['name'] for item in data]
+        @phase(phase_id="ETL")
+        def extract_and_parse(data):
+            ...
 
     When called inside a running phase's ``_run()``, the decorated function automatically creates
     a child ``FunctionPhase``, registers it with the parent via ``run_child()``, and returns the result.
     """
     if func is None:
-        return lambda f: _PhaseDecor(f, phase_type)
-    return _PhaseDecor(func, phase_type)
+        return lambda f: _PhaseDecor(f, phase_id)
+    return _PhaseDecor(func, phase_id)
 
 
 class _PhaseDecor:
 
-    def __init__(self, func, phase_type):
+    def __init__(self, func, phase_id):
         functools.update_wrapper(self, func)
         self.func = func
-        self.phase_type = phase_type or func.__name__.upper()
+        self.phase_id = phase_id or func.__name__
 
     def create_phase(self, *args, **kwargs):
         """Create the FunctionPhase for this call. Subclasses/extensions can wrap the result."""
-        return FunctionPhase(self.func.__name__, self.phase_type, self.func, args, kwargs)
+        return FunctionPhase(self.phase_id, self.func, args, kwargs)
 
     def __call__(self, *args, **kwargs):
         parent = _current_phase.get(None)

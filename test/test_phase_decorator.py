@@ -1,7 +1,6 @@
 import threading
 
 import pytest
-
 from runtools.runcore.run import TerminationStatus
 from runtools.runjob.coord import CheckpointPhase, checkpoint
 from runtools.runjob.phase import BasePhase, ChildPhaseTerminated, PhaseTerminated, SequentialPhase, phase
@@ -64,12 +63,12 @@ def test_child_appears_in_parent(ctx):
     children = host.children
     assert len(children) == 1
     assert children[0].id == "my_step"
-    assert children[0].type == "MY_STEP"
+    assert children[0].type == "FUNCTION"
     assert children[0].termination.status == TerminationStatus.COMPLETED
 
 
-def test_auto_derived_type(ctx):
-    """Phase type is auto-derived from function name: my_func -> MY_FUNC."""
+def test_type_is_function(ctx):
+    """Phase type is always FUNCTION for @phase decorated functions."""
     @phase
     def fetch_data():
         pass
@@ -77,31 +76,21 @@ def test_auto_derived_type(ctx):
     host = HostPhase(lambda: fetch_data())
     host.run(ctx)
 
-    assert host.children[0].type == "FETCH_DATA"
+    assert host.children[0].type == "FUNCTION"
 
 
-def test_explicit_type_override(ctx):
-    """@phase(phase_type="CUSTOM") overrides the auto-derived type."""
-    @phase(phase_type="CUSTOM")
+def test_explicit_phase_id(ctx):
+    """@phase(phase_id="ETL") overrides the auto-derived phase id."""
+
+    @phase(phase_id="ETL")
     def do_work():
         pass
 
     host = HostPhase(lambda: do_work())
     host.run(ctx)
 
-    assert host.children[0].type == "CUSTOM"
-
-
-def test_explicit_type_with_keyword(ctx):
-    """@phase(phase_type="CUSTOM") overrides the auto-derived type."""
-    @phase(phase_type="EXTRACT")
-    def do_work():
-        pass
-
-    host = HostPhase(lambda: do_work())
-    host.run(ctx)
-
-    assert host.children[0].type == "EXTRACT"
+    assert host.children[0].id == "ETL"
+    assert host.children[0].type == "FUNCTION"
 
 
 def test_nesting(ctx):
@@ -221,7 +210,7 @@ def test_multiple_calls_create_separate_children(ctx):
     assert result == [0, 2, 4]
     assert len(host.children) == 3
     assert all(c.id == "step" for c in host.children)
-    assert all(c.type == "STEP" for c in host.children)
+    assert all(c.type == "FUNCTION" for c in host.children)
 
 
 def test_integration_with_sequential_phase(ctx):
