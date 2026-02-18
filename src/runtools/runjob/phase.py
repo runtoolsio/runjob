@@ -139,6 +139,11 @@ class Phase(ABC, Generic[C]):
         pass
 
     @property
+    @abstractmethod
+    def stop_reason(self) -> Optional[StopReason]:
+        pass
+
+    @property
     def stage(self) -> Stage:
         """Determines the current stage of the phase in its lifecycle."""
         if self.termination:
@@ -247,6 +252,11 @@ class PhaseDecorator(Phase[C], Generic[C]):
         """Delegates to the wrapped phase's termination property"""
         return self._wrapped.termination
 
+    @property
+    def stop_reason(self) -> Optional[StopReason]:
+        """Delegates to the wrapped phase's stop_reason property"""
+        return self._wrapped.stop_reason
+
     def add_phase_observer(self, observer, *, priority=DEFAULT_OBSERVER_PRIORITY):
         """Delegates to the wrapped phase's add_phase_observer method"""
         self._wrapped.add_phase_observer(observer, priority=priority)
@@ -337,6 +347,10 @@ class BasePhase(Phase[C], ABC):
     @property
     def termination(self) -> Optional[TerminationInfo]:
         return self._termination
+
+    @property
+    def stop_reason(self) -> Optional[StopReason]:
+        return self._stop_reason
 
     @property
     def total_run_time(self) -> Optional[timedelta]:
@@ -644,5 +658,3 @@ class _PhaseDecor:
             child._failure_raised = True
             raise ChildPhaseTerminated(child.termination.status, child.termination.message)
         return result
-
-
