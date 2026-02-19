@@ -2,8 +2,12 @@ import threading
 
 import pytest
 from runtools.runcore.run import TerminationStatus
-from runtools.runjob.coord import CheckpointPhase, checkpoint
-from runtools.runjob.phase import BasePhase, ChildPhaseTerminated, PhaseTerminated, SequentialPhase, phase
+from runtools.runjob.coord import (
+    ApprovalPhase, CheckpointPhase, ConcurrencyGroup, ExecutionQueue, MutualExclusionPhase,
+    approval, checkpoint, mutex, queue,
+)
+from runtools.runjob.phase import BasePhase, ChildPhaseTerminated, PhaseTerminated, SequentialPhase, TimeoutExtension, \
+    phase, timeout
 from runtools.runjob.test.phase import FakeContext
 
 
@@ -316,3 +320,262 @@ def test_checkpoint_decorator_with_timeout(ctx):
     cp_phase = seq.children[0]
     assert cp_phase.termination.status == TerminationStatus.TIMEOUT
     assert host.termination.status == TerminationStatus.TIMEOUT
+
+
+# --- @timeout ---
+
+def test_timeout_structure():
+    """@timeout wraps FunctionPhase with TimeoutExtension."""
+    @timeout(30)
+    @phase
+    def deploy():
+        pass
+
+    p = deploy.create_phase()
+    assert isinstance(p, TimeoutExtension)
+    assert p.timeout_sec == 30
+    # TimeoutExtension delegates id to the wrapped FunctionPhase
+    assert p.id == "deploy"
+
+
+def test_timeout_bare_raises():
+    """@timeout without parentheses raises TypeError."""
+    with pytest.raises(TypeError, match="@timeout requires parentheses"):
+        @timeout
+        @phase
+        def deploy():
+            pass
+
+
+def test_timeout_execution(ctx):
+    """@timeout allows execution to complete within the limit."""
+    @timeout(5)
+    @phase
+    def fast():
+        return "done"
+
+    host = HostPhase(lambda: fast())
+    result = host.run(ctx)
+
+    assert result == "done"
+    assert host.termination.status == TerminationStatus.COMPLETED
+
+
+# --- @approval ---
+
+def test_approval_structure():
+    """@approval wraps FunctionPhase with ApprovalPhase."""
+    @approval
+    @phase
+    def deploy():
+        pass
+
+    p = deploy.create_phase()
+    assert isinstance(p, ApprovalPhase)
+    assert p.id == "deploy_approval"
+    assert len(p.children) == 1
+    assert p.children[0].id == "deploy"
+    assert p.children[0].type == "FUNCTION"
+
+
+def test_approval_with_timeout_structure():
+    """@approval(timeout=60) passes timeout to ApprovalPhase."""
+    @approval(timeout=60)
+    @phase
+    def deploy():
+        pass
+
+    p = deploy.create_phase()
+    assert isinstance(p, ApprovalPhase)
+    assert p.id == "deploy_approval"
+    assert p._timeout == 60
+
+
+def test_approval_execution(ctx):
+    """@approval blocks until approved, then executes the function phase."""
+    executed = []
+
+    @approval
+    @phase
+    def deploy(env):
+        executed.append(env)
+        return "deployed"
+
+    host = HostPhase(lambda: deploy("prod"))
+
+    def approve_phase():
+        while True:
+            children = host.children
+            if not children:
+                continue
+            approval_phase = children[0]
+            if approval_phase.started_at and not approval_phase.termination:
+                approval_phase.approve()
+                break
+
+    t = threading.Thread(target=approve_phase, daemon=True)
+    t.start()
+    host.run(ctx)
+    t.join(timeout=5)
+
+    assert executed == ["prod"]
+    assert host.termination.status == TerminationStatus.COMPLETED
+
+
+def test_approval_timeout_skips(ctx):
+    """@approval(timeout=...) skips when timeout expires without approval."""
+    @approval(timeout=0.1)
+    @phase
+    def deploy():
+        return "should not reach"
+
+    host = HostPhase(lambda: deploy())
+    host.run(ctx)
+
+    approval_phase = host.children[0]
+    assert approval_phase.termination.status == TerminationStatus.SKIPPED
+
+
+# --- @mutex ---
+
+def test_mutex_structure():
+    """@mutex wraps FunctionPhase with MutualExclusionPhase."""
+    @mutex
+    @phase
+    def deploy():
+        pass
+
+    p = deploy.create_phase()
+    assert isinstance(p, MutualExclusionPhase)
+    assert p.id == "deploy_mutex"
+    assert len(p.children) == 1
+    assert p.children[0].id == "deploy"
+    assert p.children[0].type == "FUNCTION"
+
+
+def test_mutex_with_group_structure():
+    """@mutex(group="deploys") sets exclusion_group on MutualExclusionPhase."""
+    @mutex(group="deploys")
+    @phase
+    def deploy():
+        pass
+
+    p = deploy.create_phase()
+    assert isinstance(p, MutualExclusionPhase)
+    assert p.id == "deploy_mutex"
+    assert p.exclusion_group == "deploys"
+
+
+def test_mutex_default_group_is_none():
+    """Bare @mutex leaves exclusion_group as None (falls back to job_id at runtime)."""
+    @mutex
+    @phase
+    def deploy():
+        pass
+
+    p = deploy.create_phase()
+    assert p.exclusion_group is None
+
+
+# --- @queue ---
+
+def test_queue_structure():
+    """@queue wraps FunctionPhase with ExecutionQueue."""
+    @queue(max_concurrent=2)
+    @phase
+    def deploy():
+        pass
+
+    p = deploy.create_phase()
+    assert isinstance(p, ExecutionQueue)
+    assert p.id == "deploy_queue"
+    assert len(p.children) == 1
+    assert p.children[0].id == "deploy"
+    assert p.children[0].type == "FUNCTION"
+
+
+def test_queue_with_group_structure():
+    """@queue(group=..., max_concurrent=...) sets concurrency group."""
+    @queue(group="deploys", max_concurrent=3)
+    @phase
+    def deploy():
+        pass
+
+    p = deploy.create_phase()
+    assert isinstance(p, ExecutionQueue)
+    assert p.id == "deploy_queue"
+    assert p.execution_group == ConcurrencyGroup("deploys", 3)
+
+
+def test_queue_default_group_uses_phase_id():
+    """@queue without group= defaults group_id to the phase id."""
+    @queue(max_concurrent=1)
+    @phase
+    def deploy():
+        pass
+
+    p = deploy.create_phase()
+    assert p.execution_group.group_id == "deploy"
+    assert p.execution_group.max_executions == 1
+
+
+# --- Composition ---
+
+def test_timeout_approval_composition():
+    """@timeout + @approval produces TimeoutExtension(ApprovalPhase(FunctionPhase))."""
+    @timeout(60)
+    @approval
+    @phase
+    def deploy():
+        pass
+
+    p = deploy.create_phase()
+    # Outermost: TimeoutExtension
+    assert isinstance(p, TimeoutExtension)
+    assert p.timeout_sec == 60
+    # TimeoutExtension delegates id to wrapped ApprovalPhase
+    assert p.id == "deploy_approval"
+
+    # Inner: ApprovalPhase
+    wrapped = p._wrapped
+    assert isinstance(wrapped, ApprovalPhase)
+    assert wrapped.id == "deploy_approval"
+    assert wrapped.children[0].id == "deploy"
+
+
+def test_timeout_mutex_composition():
+    """@timeout + @mutex produces TimeoutExtension(MutualExclusionPhase(FunctionPhase))."""
+    @timeout(30)
+    @mutex(group="deploys")
+    @phase
+    def deploy():
+        pass
+
+    p = deploy.create_phase()
+    assert isinstance(p, TimeoutExtension)
+    assert p.timeout_sec == 30
+
+    wrapped = p._wrapped
+    assert isinstance(wrapped, MutualExclusionPhase)
+    assert wrapped.exclusion_group == "deploys"
+    assert wrapped.children[0].id == "deploy"
+
+
+def test_checkpoint_approval_composition():
+    """@checkpoint + @approval produces SequentialPhase([CheckpointPhase, ApprovalPhase(FunctionPhase)])."""
+    @checkpoint
+    @approval
+    @phase
+    def deploy():
+        pass
+
+    p = deploy.create_phase()
+    # Outermost: SequentialPhase (from checkpoint)
+    assert isinstance(p, SequentialPhase)
+    assert p.id == "deploy_approval_seq"
+
+    cp_phase, approval_phase = p.children
+    assert isinstance(cp_phase, CheckpointPhase)
+    assert cp_phase.id == "deploy_approval_checkpoint"
+    assert isinstance(approval_phase, ApprovalPhase)
+    assert approval_phase.children[0].id == "deploy"

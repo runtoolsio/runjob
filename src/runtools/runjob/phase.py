@@ -593,6 +593,32 @@ class TimeoutExtension(PhaseDecorator[C], Generic[C]):
             self._timer = None
 
 
+def timeout(seconds):
+    """Decorator that wraps a @phase function with TimeoutExtension.
+
+    Usage::
+
+        @timeout(30)
+        @phase
+        def deploy():
+            ...
+    """
+    if callable(seconds):
+        raise TypeError("@timeout requires parentheses, e.g. @timeout(30)")
+
+    def apply(d):
+        original = d.create_phase
+
+        def wrapped_create(*args, **kwargs):
+            fn_phase = original(*args, **kwargs)
+            return TimeoutExtension(fn_phase, seconds)
+
+        d.create_phase = wrapped_create
+        return d
+
+    return apply
+
+
 class FunctionPhase(BasePhase):
     """A phase that wraps a plain function call."""
 

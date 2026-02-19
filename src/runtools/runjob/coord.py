@@ -540,3 +540,92 @@ def checkpoint(decor=None, *, timeout=0):
     if decor is not None:
         return apply(decor)
     return apply
+
+
+def approval(decor=None, *, timeout=0):
+    """Decorator that wraps a @phase function with ApprovalPhase.
+
+    Usage::
+
+        @approval
+        @phase
+        def deploy(env):
+            ...
+
+        @approval(timeout=60)
+        @phase
+        def deploy(env):
+            ...
+    """
+    def apply(d):
+        original = d.create_phase
+
+        def wrapped_create(*args, **kwargs):
+            fn_phase = original(*args, **kwargs)
+            return ApprovalPhase(f'{fn_phase.id}_approval', fn_phase, timeout=timeout)
+
+        d.create_phase = wrapped_create
+        return d
+
+    if decor is not None:
+        return apply(decor)
+    return apply
+
+
+def mutex(decor=None, *, group=None):
+    """Decorator that wraps a @phase function with MutualExclusionPhase.
+
+    Usage::
+
+        @mutex
+        @phase
+        def deploy():
+            ...
+
+        @mutex(group="deploys")
+        @phase
+        def deploy():
+            ...
+    """
+    def apply(d):
+        original = d.create_phase
+
+        def wrapped_create(*args, **kwargs):
+            fn_phase = original(*args, **kwargs)
+            return MutualExclusionPhase(f'{fn_phase.id}_mutex', fn_phase, exclusion_group=group)
+
+        d.create_phase = wrapped_create
+        return d
+
+    if decor is not None:
+        return apply(decor)
+    return apply
+
+
+def queue(*, max_concurrent, group=None):
+    """Decorator that wraps a @phase function with ExecutionQueue.
+
+    Usage::
+
+        @queue(max_concurrent=2)
+        @phase
+        def deploy():
+            ...
+
+        @queue(group="deploys", max_concurrent=3)
+        @phase
+        def deploy():
+            ...
+    """
+    def apply(d):
+        original = d.create_phase
+
+        def wrapped_create(*args, **kwargs):
+            fn_phase = original(*args, **kwargs)
+            grp = ConcurrencyGroup(group or fn_phase.id, max_concurrent)
+            return ExecutionQueue(f'{fn_phase.id}_queue', grp, fn_phase)
+
+        d.create_phase = wrapped_create
+        return d
+
+    return apply
