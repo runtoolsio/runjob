@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from abc import ABC, abstractmethod
@@ -218,7 +219,7 @@ class FileOutputStorage(OutputStorage):
         self._file.flush()
 
     def _format_line(self, line: OutputLine) -> str:
-        return line.message
+        return json.dumps(line.serialize(), ensure_ascii=False)
 
     def close(self):
         self._file.close()
