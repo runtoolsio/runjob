@@ -6,7 +6,7 @@ Tests that :mod:`runjob` sends correct notification to state observers.
 import pytest
 
 from runtools.runcore.job import InstanceLifecycleObserver, iid
-from runtools.runcore.run import TerminationStatus, Stage
+from runtools.runcore.run import JobCompletionError, TerminationStatus, Stage
 from runtools.runcore.test.observer import TestLifecycleObserver
 from runtools.runjob import instance
 from runtools.runjob.test.phase import TestPhase
@@ -28,17 +28,20 @@ def test_passed_args(observer: TestLifecycleObserver):
 
 
 def test_raise_exc(observer: TestLifecycleObserver):
-    with pytest.raises(Exception):
+    with pytest.raises(JobCompletionError) as exc_info:
         instance.create(iid('j1'), None, TestPhase(raise_exc=Exception), lifecycle_observers=[observer]).run()
 
+    assert isinstance(exc_info.value.__cause__, Exception)
+    assert exc_info.value.termination.status == TerminationStatus.ERROR
     assert observer.stages == [Stage.RUNNING, Stage.ENDED]  # TODO CREATED
     assert observer.job_runs[-1].lifecycle.termination.status == TerminationStatus.ERROR
 
 
 def test_raise_exec_terminated(observer: TestLifecycleObserver):
-    (instance.create(iid('j1'), None, TestPhase(fail=True), lifecycle_observers=[observer])
-     .run())
+    with pytest.raises(JobCompletionError) as exc_info:
+        instance.create(iid('j1'), None, TestPhase(fail=True), lifecycle_observers=[observer]).run()
 
+    assert exc_info.value.termination.status == TerminationStatus.FAILED
     assert observer.stages == [Stage.RUNNING, Stage.ENDED]  # TODO CREATED
     assert observer.job_runs[-1].lifecycle.termination.status == TerminationStatus.FAILED
 

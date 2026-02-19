@@ -7,16 +7,28 @@ Usage::
         fetch_data()
         transform()
 
-    run = pipeline()                     # auto-generated run_id, default env
-    run = pipeline(run_id="batch-42")    # explicit run_id
-    run = pipeline(env="staging")        # override env at call time
+    result = pipeline()                     # auto-generated run_id, default env
+    result = pipeline(run_id="batch-42")    # explicit run_id
+    result = pipeline(env="staging")        # override env at call time
+
+    result.run       # JobRun snapshot
+    result.retval    # return value of the decorated function
 """
 import functools
 import inspect
+from dataclasses import dataclass
+from typing import Any
 
-from runtools.runcore.job import iid
+from runtools.runcore.job import JobRun, iid
 from runtools.runjob import node
 from runtools.runjob.phase import FunctionPhase
+
+
+@dataclass
+class JobResult:
+    """Result of a @job-decorated function call."""
+    run: JobRun
+    retval: Any = None
 
 
 def job(func=None, *, job_id=None, env=None):
@@ -55,5 +67,5 @@ class _JobDecor:
 
         with node.connect(env) as env_node:
             inst = env_node.create_instance(instance_id, root_phase)
-            inst.run()
-            return inst.snap()
+            retval = inst.run()
+            return JobResult(run=inst.snap(), retval=retval)

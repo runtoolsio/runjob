@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 import pytest
-from runtools.runcore.run import TerminationStatus
+from runtools.runcore.run import JobCompletionError, TerminationStatus
 from runtools.runjob import node
 from runtools.runjob.job import job
 from runtools.runjob.phase import phase, ChildPhaseTerminated
@@ -19,14 +19,15 @@ def use_in_process_node():
 
 
 def test_basic_execution():
-    """@job function returns a JobRun with COMPLETED status."""
+    """@job function returns a JobResult with COMPLETED status and retval."""
 
     @job
     def simple():
         return 42
 
-    run = simple()
-    assert run.lifecycle.termination.status == TerminationStatus.COMPLETED
+    result = simple()
+    assert result.run.lifecycle.termination.status == TerminationStatus.COMPLETED
+    assert result.retval == 42
 
 
 def test_bare_and_parameterized_forms():
@@ -40,11 +41,11 @@ def test_bare_and_parameterized_forms():
     def parameterized():
         pass
 
-    run1 = bare()
-    run2 = parameterized()
-    assert run1.lifecycle.termination.status == TerminationStatus.COMPLETED
-    assert run2.lifecycle.termination.status == TerminationStatus.COMPLETED
-    assert run2.instance_id.job_id == "custom"
+    result1 = bare()
+    result2 = parameterized()
+    assert result1.run.lifecycle.termination.status == TerminationStatus.COMPLETED
+    assert result2.run.lifecycle.termination.status == TerminationStatus.COMPLETED
+    assert result2.run.instance_id.job_id == "custom"
 
 
 def test_job_id_defaults_to_function_name():
@@ -54,8 +55,8 @@ def test_job_id_defaults_to_function_name():
     def my_pipeline():
         pass
 
-    run = my_pipeline()
-    assert run.instance_id.job_id == "my_pipeline"
+    result = my_pipeline()
+    assert result.run.instance_id.job_id == "my_pipeline"
 
 
 def test_explicit_job_id():
@@ -65,8 +66,8 @@ def test_explicit_job_id():
     def pipeline():
         pass
 
-    run = pipeline()
-    assert run.instance_id.job_id == "etl"
+    result = pipeline()
+    assert result.run.instance_id.job_id == "etl"
 
 
 def test_run_id_kwarg():
@@ -76,8 +77,8 @@ def test_run_id_kwarg():
     def pipeline():
         pass
 
-    run = pipeline(run_id="batch-42")
-    assert run.instance_id.run_id == "batch-42"
+    result = pipeline(run_id="batch-42")
+    assert result.run.instance_id.run_id == "batch-42"
 
 
 def test_run_id_auto_generated():
@@ -87,8 +88,8 @@ def test_run_id_auto_generated():
     def pipeline():
         pass
 
-    run = pipeline()
-    assert run.instance_id.run_id  # non-empty
+    result = pipeline()
+    assert result.run.instance_id.run_id  # non-empty
 
 
 def test_function_args_pass_through():
@@ -119,23 +120,26 @@ def test_phase_children_inside_job():
         step_a()
         step_b()
 
-    run = pipeline()
-    assert run.lifecycle.termination.status == TerminationStatus.COMPLETED
-    children = run.root_phase.children
+    result = pipeline()
+    assert result.run.lifecycle.termination.status == TerminationStatus.COMPLETED
+    children = result.run.root_phase.children
     assert len(children) == 2
     assert children[0].phase_id == "step_a"
     assert children[1].phase_id == "step_b"
 
 
 def test_exception_propagation():
-    """Exceptions from @job functions propagate to the caller."""
+    """Exceptions from @job functions are wrapped in JobCompletionError."""
 
     @job
     def failing():
         raise ValueError("boom")
 
-    with pytest.raises(ValueError, match="boom"):
+    with pytest.raises(JobCompletionError) as exc_info:
         failing()
+
+    assert isinstance(exc_info.value.__cause__, ValueError)
+    assert str(exc_info.value.__cause__) == "boom"
 
 
 def test_env_kwarg_forwarded():

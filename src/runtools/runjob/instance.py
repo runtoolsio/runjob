@@ -20,7 +20,7 @@ from typing import Callable, Optional, List, Iterable, override
 from runtools.runcore.job import (JobInstance, JobRun, JobInstanceMetadata, InstanceNotifications,
                                   InstanceObservableNotifications, InstancePhaseEvent, InstanceOutputEvent,
                                   InstanceLifecycleObserver, InstanceLifecycleEvent)
-from runtools.runcore.run import Fault, PhaseTransitionEvent, Stage, StopReason
+from runtools.runcore.run import Fault, PhaseTransitionEvent, JobCompletionError, Stage, StopReason
 from runtools.runcore.util import utc_now
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer, OutputRouter
 from runtools.runjob.phase import Phase
@@ -208,9 +208,16 @@ class _JobInstance(JobInstance):
                     with self._output_sink.capture_logs_from(logging.getLogger(), log_filter=log_filter):
                         try:
                             self._exec_pre_run_hook()
-                            self._root_phase.run(self._ctx)
+                            retval = self._root_phase.run(self._ctx)
+                        except Exception as e:
+                            raise JobCompletionError(self._root_phase.termination) from e
                         finally:
                             self._exec_post_run_hook()
+
+                        termination = self._root_phase.termination
+                        if not termination.status.outcome.is_success:
+                            raise JobCompletionError(termination)
+                        return retval
 
     def _exec_pre_run_hook(self):
         if self._pre_run_hook:
