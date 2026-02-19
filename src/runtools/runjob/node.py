@@ -12,10 +12,11 @@ from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayou
 from runtools.runcore.criteria import SortOption
 from runtools.runcore.db import sqlite, PersistingObserver, NullPersistence, PERSISTING_OBSERVER_PRIORITY
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
-    InProcessEnvironmentConfig
+    InProcessEnvironmentConfig, get_env_config, EnvironmentNotFoundError, DEFAULT_LOCAL_ENVIRONMENT
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
     InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, JobInstanceDelegate
+from runtools.runcore.paths import ConfigFileNotFoundError
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.util import to_tuple, lock
 from runtools.runcore.util.socket import DatagramSocketClient
@@ -299,6 +300,18 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
         if interrupt_received:
             raise KeyboardInterrupt
+
+
+def connect(env_id=None):
+    """Connect to an environment node, falling back to a local node when no config is found.
+
+    Unlike ``connector.connect()``, this always falls back to a local node so that
+    ``@job`` decorated functions work zero-config.
+    """
+    try:
+        return create(get_env_config(env_id))
+    except (EnvironmentNotFoundError, ConfigFileNotFoundError):
+        return local(env_id or DEFAULT_LOCAL_ENVIRONMENT)
 
 
 def in_process(env_id=None, persistence=None, *, lock_factory=None, features=None, transient=True) -> 'InProcessNode':
