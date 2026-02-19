@@ -34,8 +34,8 @@ class CheckpointPhase(BasePhase[Any]):
     - Use when: "If this checkpoint isn't passed, abort the whole operation."
     """
 
-    def __init__(self, phase_id, *, phase_name=None, timeout=0):
-        super().__init__(phase_id, CoordTypes.CHECKPOINT.value, phase_name)
+    def __init__(self, phase_id, *, timeout=0):
+        super().__init__(phase_id, CoordTypes.CHECKPOINT.value)
         self._timeout = timeout
         self._event = Event()
 
@@ -75,8 +75,8 @@ class ApprovalPhase(BasePhase[Any]):
     - Use when: "If not approved, skip this part but keep going."
     """
 
-    def __init__(self, phase_id, protected_phase, *, phase_name=None, timeout=0):
-        super().__init__(phase_id, CoordTypes.APPROVAL.value, phase_name, [protected_phase])
+    def __init__(self, phase_id, protected_phase, *, timeout=0):
+        super().__init__(phase_id, CoordTypes.APPROVAL.value, [protected_phase])
         self._timeout = timeout
         self._event = Event()
 
@@ -123,8 +123,8 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
         lifecycle=LifecycleCriterion(stage=Stage.RUNNING)
     )
 
-    def __init__(self, phase_id, protected_phase, *, exclusion_group=None, phase_name=None):
-        super().__init__(phase_id, CoordTypes.MUTEX.value, phase_name, [protected_phase])
+    def __init__(self, phase_id, protected_phase, *, exclusion_group=None):
+        super().__init__(phase_id, CoordTypes.MUTEX.value, [protected_phase])
         self._exclusion_group = exclusion_group
         self._attrs = {'exclusion_group': self._exclusion_group}
 
@@ -168,8 +168,8 @@ class DependencyPhase(BasePhase[JobInstanceContext]):
     terminates with UNSATISFIED status. Otherwise, it completes successfully.
     """
 
-    def __init__(self, dependency_match, phase_id=None, phase_name='Active dependency check'):
-        super().__init__(phase_id or str(dependency_match), CoordTypes.DEPENDENCY.value, phase_name)
+    def __init__(self, dependency_match, phase_id=None):
+        super().__init__(phase_id or str(dependency_match), CoordTypes.DEPENDENCY.value)
         self._dependency_match = dependency_match
 
     @property
@@ -371,8 +371,8 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
     MAX_EXEC = "max_exec"
     STATE = "state"
 
-    def __init__(self, phase_id, concurrency_group, limited_phase, phase_name=None, queue_rescan_timeout=30):
-        super().__init__(phase_id or concurrency_group.group_id, CoordTypes.QUEUE.value, phase_name, [limited_phase])
+    def __init__(self, phase_id, concurrency_group, limited_phase, queue_rescan_timeout=30):
+        super().__init__(phase_id or concurrency_group.group_id, CoordTypes.QUEUE.value, [limited_phase])
         if not concurrency_group:
             raise ValueError('Concurrency group must be specified')
 
@@ -531,7 +531,7 @@ def checkpoint(decor=None, *, timeout=0):
 
         def wrapped_create(*args, **kwargs):
             fn_phase = original(*args, **kwargs)
-            cp = CheckpointPhase(f'{fn_phase.id}_checkpoint', phase_name='Checkpoint', timeout=timeout)
+            cp = CheckpointPhase(f'{fn_phase.id}_checkpoint', timeout=timeout)
             return SequentialPhase(f'{fn_phase.id}_seq', [cp, fn_phase])
 
         d.create_phase = wrapped_create

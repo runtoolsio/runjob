@@ -78,10 +78,6 @@ class Phase(ABC, Generic[C]):
         return False
 
     @property
-    def name(self) -> Optional[str]:
-        return None
-
-    @property
     def attributes(self):
         return {}
 
@@ -192,10 +188,6 @@ class PhaseDecorator(Phase[C], Generic[C]):
         """Delegates to the wrapped phase's is_idle property"""
         return self._wrapped.is_idle
 
-    @property
-    def name(self) -> Optional[str]:
-        """Delegates to the wrapped phase's name property"""
-        return self._wrapped.name
 
     @property
     def attributes(self):
@@ -304,11 +296,10 @@ class BasePhase(Phase[C], ABC):
         - Start may not occur after termination
     """
 
-    def __init__(self, phase_id: str, phase_type: str, name: Optional[str] = None, children=()):
+    def __init__(self, phase_id: str, phase_type: str, children=()):
         self._id = phase_id
         self._type = phase_type
         self._children = list(children)
-        self._name = name
         self._created_at: datetime = utc_now()
         self._lifecycle_lock = Lock()
         self._notification = ObservableNotification[PhaseTransitionObserver]()
@@ -331,10 +322,6 @@ class BasePhase(Phase[C], ABC):
     @property
     def type(self) -> str:
         return self._type
-
-    @property
-    def name(self) -> Optional[str]:
-        return self._name
 
     @property
     def created_at(self) -> Optional[datetime]:
@@ -512,8 +499,8 @@ class SequentialPhase(BasePhase):
 
     TYPE = 'SEQUENTIAL'
 
-    def __init__(self, phase_id: str, children: List[Phase[C]], name: Optional[str] = None):
-        super().__init__(phase_id, SequentialPhase.TYPE, name, children)
+    def __init__(self, phase_id: str, children: List[Phase[C]]):
+        super().__init__(phase_id, SequentialPhase.TYPE, children)
 
     def _run(self, ctx: Optional[C]):
         """
@@ -624,11 +611,11 @@ class FunctionPhase(BasePhase):
 
     TYPE = 'FUNCTION'
 
-    def __init__(self, phase_id: str, func, args, kwargs, *, name: Optional[str] = None):
-        super().__init__(phase_id, self.TYPE, name)
+    def __init__(self, phase_id: str, func, args=(), kwargs=None):
+        super().__init__(phase_id, self.TYPE)
         self._func = func
         self._args = args
-        self._kwargs = kwargs
+        self._kwargs = kwargs or {}
 
     def _run(self, ctx):
         return self._func(*self._args, **self._kwargs)

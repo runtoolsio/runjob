@@ -11,7 +11,6 @@ from threading import Lock, Thread
 from typing import Optional
 
 import sys
-
 from runtools.runcore.output import OutputLineFactory
 from runtools.runcore.run import TerminationStatus
 from runtools.runjob.output import OutputContext
@@ -25,8 +24,8 @@ log = logging.getLogger(__name__)
 class ProgramPhase(BasePhase[OutputContext]):
     TYPE = 'PROGRAM'
 
-    def __init__(self, phase_id, *args, name=None, read_output: bool = True):
-        super().__init__(phase_id, ProgramPhase.TYPE, name)
+    def __init__(self, phase_id, *args, read_output: bool = True):
+        super().__init__(phase_id, ProgramPhase.TYPE)
         self.args = args
         self.read_output: bool = read_output
         self._output_line_fact = OutputLineFactory()

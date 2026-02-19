@@ -33,8 +33,8 @@ class TestPhase(BasePhase[JobInstanceContext]):
                  output_text: Optional[str] = None,
                  raise_exc=None,
                  fail=False,
-                 name: Optional[str] = None):
-        super().__init__(phase_id, TestPhase.TYPE, name)
+                 ):
+        super().__init__(phase_id, TestPhase.TYPE)
         self.wait: Optional[Event] = Event() if wait else None
         self.output_text = output_text
         self.exception = raise_exc
