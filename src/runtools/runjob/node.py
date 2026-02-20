@@ -6,23 +6,24 @@ from pathlib import Path
 from threading import Lock, Condition
 from typing import Dict, Optional, List, Callable, override
 
-from runtools.runcore import plugins, paths, connector, db, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
 from runtools.runcore.criteria import SortOption
+from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
+    InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, InstanceControlEvent, JobInstanceDelegate
+from runtools.runcore.util import to_tuple, lock
+from runtools.runcore.util.socket import DatagramSocketClient
+from runtools.runjob import instance
+from runtools.runjob.events import EventDispatcher
+from runtools.runjob.server import LocalInstanceServer
+
+from runtools.runcore import plugins, paths, connector, db, util
 from runtools.runcore.db import sqlite, PersistingObserver, NullPersistence, PERSISTING_OBSERVER_PRIORITY
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
     InProcessEnvironmentConfig, get_env_config, EnvironmentNotFoundError, DEFAULT_LOCAL_ENVIRONMENT
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
-from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
-    InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, JobInstanceDelegate
 from runtools.runcore.paths import ConfigFileNotFoundError
 from runtools.runcore.plugins import Plugin
-from runtools.runcore.util import to_tuple, lock
-from runtools.runcore.util.socket import DatagramSocketClient
-from runtools.runjob import instance, JobInstanceHook
-from runtools.runjob.events import EventDispatcher
-from runtools.runjob.server import LocalInstanceServer
 
 log = logging.getLogger(__name__)
 
@@ -151,8 +152,6 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
     def create_instance(self, instance_id, root_phase, *,
                         output_sink=None, output_router=None, status_tracker=None,
-                        pre_run_hook: Optional[JobInstanceHook] = None,
-                        post_run_hook: Optional[JobInstanceHook] = None,
                         user_params=None) -> JobInstanceManaged:
         """
         Create a new job instance within this environment.
@@ -163,8 +162,6 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             output_sink: Optional output sink (for text parsing, use OutputSink with ParsingPreprocessor)
             output_router: Optional buffer for output tailing
             status_tracker: Optional status tracker for the job
-            pre_run_hook: Optional hook called before running the instance
-            post_run_hook: Optional hook called after running the instance
             user_params: Optional user-defined parameters
 
         Returns:
@@ -179,8 +176,6 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             output_sink=output_sink,
             output_router=output_router,
             status_tracker=status_tracker,
-            pre_run_hook=pre_run_hook,
-            post_run_hook=post_run_hook,
             **(user_params or {})
         )
         return self._add_instance(inst)
@@ -446,6 +441,7 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         self._listener_lifecycle_socket_name = "listener-lifecycle.sock"
         self._listener_phase_socket_name = "listener-phase.sock"
         self._listener_output_socket_name = "listener-output.sock"
+        self._listener_control_socket_name = "listener-control.sock"
 
     @classmethod
     def create(cls, env_id: str, root_dir: Optional[Path] = None, node_dir_prefix: str = "node_"):
@@ -510,6 +506,14 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         """
         return self._provider_sockets_listener(self._listener_output_socket_name)
 
+    @property
+    def listener_control_sockets_provider(self) -> Callable:
+        """
+        Returns:
+            Callable: A provider function that generates paths to control listener socket files
+        """
+        return self._provider_sockets_listener(self._listener_control_socket_name)
+
 
 def create(env_config: EnvironmentConfigUnion):
     if env_config.persistence:
@@ -537,6 +541,7 @@ def local(env_id, persistence=None, node_layout=None, *, lock_factory=None, feat
         InstanceLifecycleEvent.EVENT_TYPE: layout.listener_lifecycle_sockets_provider,
         InstancePhaseEvent.EVENT_TYPE: layout.listener_phase_sockets_provider,
         InstanceOutputEvent.EVENT_TYPE: layout.listener_output_sockets_provider,
+        InstanceControlEvent.EVENT_TYPE: layout.listener_control_sockets_provider,
     })
     lock_factory = lock_factory or lock.default_file_lock_factory()
     features = to_tuple(features)

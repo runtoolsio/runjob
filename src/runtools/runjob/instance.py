@@ -15,11 +15,12 @@ import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
 from threading import Thread
-from typing import Callable, Optional, List, Iterable, override
+from typing import Optional, List, Iterable, override
 
 from runtools.runcore.job import (JobInstance, JobRun, JobInstanceMetadata, InstanceNotifications,
                                   InstanceObservableNotifications, InstancePhaseEvent, InstanceOutputEvent,
-                                  InstanceLifecycleObserver, InstanceLifecycleEvent)
+                                  InstanceLifecycleObserver, InstanceLifecycleEvent,
+                                  InstanceControlEvent, ControlAction)
 from runtools.runcore.run import Fault, PhaseTransitionEvent, JobCompletionError, Stage, StopReason
 from runtools.runcore.util import utc_now
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer, OutputRouter
@@ -31,6 +32,7 @@ log = logging.getLogger(__name__)
 LIFECYCLE_OBSERVER_ERROR = "LIFECYCLE_OBSERVER_ERROR"
 PHASE_OBSERVER_ERROR = "PHASE_OBSERVER_ERROR"
 OUTPUT_OBSERVER_ERROR = "OUTPUT_OBSERVER_ERROR"
+CONTROL_OBSERVER_ERROR = "CONTROL_OBSERVER_ERROR"
 
 current_job_instance: ContextVar[Optional[JobInstanceMetadata]] = ContextVar('current_job_instance', default=None)
 
@@ -75,15 +77,10 @@ class JobInstanceContext(OutputContext):
         return self._output_sink
 
 
-JobInstanceHook = Callable[[JobInstanceContext], None]
-
-
 def create(instance_id, environment, root_phase, *,
            output_sink=None, output_router=None, status_tracker=None,
-           pre_run_hook: Optional[JobInstanceHook] = None,
-           post_run_hook: Optional[JobInstanceHook] = None,
            lifecycle_observers: Iterable[InstanceLifecycleObserver] = (),
-           lifecycle_error_hook=None, phase_error_hook=None, output_error_hook=None,
+           error_hook=None,
            **user_params) -> JobInstance:
     """Create a job instance.
 
@@ -95,12 +92,8 @@ def create(instance_id, environment, root_phase, *,
                      For text parsing, provide OutputSink(ParsingPreprocessor([KVParser()])).
         output_router: Custom output router (created automatically if not provided)
         status_tracker: Custom status tracker (created automatically if not provided)
-        pre_run_hook: Hook called before execution starts
-        post_run_hook: Hook called after execution completes
         lifecycle_observers: Observers for lifecycle events
-        lifecycle_error_hook: Error handler for lifecycle observer errors
-        phase_error_hook: Error handler for transition observer errors
-        output_error_hook: Error handler for output observer errors
+        error_hook: Error handler for observer errors
         **user_params: Additional user-defined parameters stored in metadata
     """
     if not instance_id:
@@ -113,9 +106,7 @@ def create(instance_id, environment, root_phase, *,
     output_sink.add_observer(status_tracker)
 
     inst = _JobInstance(instance_id, root_phase, environment, output_sink, output_router, status_tracker,
-                        pre_run_hook, post_run_hook,
-                        lifecycle_error_hook, phase_error_hook, output_error_hook,
-                        user_params)
+                        error_hook, user_params)
     for so in lifecycle_observers:
         inst.notifications.add_observer_lifecycle(so)
     # noinspection PyProtectedMember
@@ -126,21 +117,13 @@ def create(instance_id, environment, root_phase, *,
 class _JobInstance(JobInstance):
 
     def __init__(self, instance_id, root_phase, env, output_sink, output_router, status_tracker,
-                 pre_run_hook, post_run_hook,
-                 lifecycle_error_hook, phase_error_hook, output_error_hook,
-                 user_params):
-        self._notifications = InstanceObservableNotifications(
-            lifecycle_error_hook=lifecycle_error_hook,
-            phase_error_hook=phase_error_hook,
-            output_error_hook=output_error_hook,
-            force_reraise=True)
+                 error_hook, user_params):
+        self._notifications = InstanceObservableNotifications(error_hook=error_hook, force_reraise=True)
         self._metadata = JobInstanceMetadata(instance_id, user_params)
         self._root_phase: Phase = root_phase
         self._output_sink: OutputSink = output_sink
         self._output_router = output_router
         self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output_sink)
-        self._pre_run_hook = pre_run_hook
-        self._post_run_hook = post_run_hook
         self._faults: List[Fault] = []
 
     @property
@@ -207,31 +190,14 @@ class _JobInstance(JobInstance):
                     log_filter = _JobInstanceLogFilter(self.id)
                     with self._output_sink.capture_logs_from(logging.getLogger(), log_filter=log_filter):
                         try:
-                            self._exec_pre_run_hook()
                             retval = self._root_phase.run(self._ctx)
                         except Exception as e:
                             raise JobCompletionError(self._root_phase.termination) from e
-                        finally:
-                            self._exec_post_run_hook()
 
                         termination = self._root_phase.termination
                         if not termination.status.outcome.is_success:
                             raise JobCompletionError(termination)
                         return retval
-
-    def _exec_pre_run_hook(self):
-        if self._pre_run_hook:
-            try:
-                self._pre_run_hook(self._ctx)
-            except Exception as e:
-                log.error(self._log('pre_run_hook_error', "error=[{}]", str(e)), exc_info=True)
-
-    def _exec_post_run_hook(self):
-        if self._post_run_hook:
-            try:
-                self._post_run_hook(self._ctx)
-            except Exception as e:
-                log.error(self._log('post_run_hook_error', "error=[{}]", str(e)), exc_info=True)
 
     def run_in_new_thread(self, daemon=False):
         t = Thread(target=self.run, daemon=daemon)
@@ -240,6 +206,13 @@ class _JobInstance(JobInstance):
 
     def stop(self, reason=StopReason.STOPPED):
         self._root_phase.stop(reason)
+        try:
+            event = InstanceControlEvent(self.snap(), ControlAction.STOP_REQUESTED, utc_now())
+            self._notifications.control_notification.observer_proxy.instance_control_update(event)
+        except ExceptionGroup as eg:
+            log.error("[control_observer_error]", exc_info=eg)
+            for exc in eg.exceptions:
+                self._faults.append(Fault.from_exception(CONTROL_OBSERVER_ERROR, exc))
 
     def _on_phase_update(self, e: PhaseTransitionEvent):
         log.debug(self._log('instance_phase_update', "event=[{}]", e))

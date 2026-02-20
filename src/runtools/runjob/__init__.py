@@ -7,5 +7,5 @@ IMPLEMENTATION NOTE:
     additional packages.
 """
 from runtools.runjob import instance
-from runtools.runjob.instance import _JobInstance, JobInstanceHook
+from runtools.runjob.instance import _JobInstance
 __version__ = "0.11.0"
