@@ -20,7 +20,7 @@ from typing import Optional, List, Iterable, override
 from runtools.runcore.job import (JobInstance, JobRun, JobInstanceMetadata, InstanceNotifications,
                                   InstanceObservableNotifications, InstancePhaseEvent, InstanceOutputEvent,
                                   InstanceLifecycleObserver, InstanceLifecycleEvent,
-                                  InstanceControlEvent, ControlAction)
+                                  InstanceControlEvent, ControlAction, InstanceStatusEvent)
 from runtools.runcore.run import Fault, PhaseTransitionEvent, JobCompletionError, Stage, StopReason
 from runtools.runcore.util import utc_now
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer, OutputRouter
@@ -33,6 +33,7 @@ LIFECYCLE_OBSERVER_ERROR = "LIFECYCLE_OBSERVER_ERROR"
 PHASE_OBSERVER_ERROR = "PHASE_OBSERVER_ERROR"
 OUTPUT_OBSERVER_ERROR = "OUTPUT_OBSERVER_ERROR"
 CONTROL_OBSERVER_ERROR = "CONTROL_OBSERVER_ERROR"
+STATUS_OBSERVER_ERROR = "STATUS_OBSERVER_ERROR"
 
 current_job_instance: ContextVar[Optional[JobInstanceMetadata]] = ContextVar('current_job_instance', default=None)
 
@@ -135,6 +136,7 @@ class _JobInstance(JobInstance):
         # By observing the root phase, _JobInstance effectively receives transition events
         # for all sub-phases within the hierarchy, as events propagate up to the root.
         self._root_phase.add_phase_observer(self._on_phase_update)
+        self._ctx.status_tracker._on_change = self._on_status_change
 
     def _log(self, event: str, msg: str = '', *params):
         return ("{} instance=[{}] env=[{}] " + msg).format(
@@ -246,3 +248,12 @@ class _JobInstance(JobInstance):
             log.error("[phase_observer_error]", exc_info=eg)
             for exc in eg.exceptions:
                 self._faults.append(Fault.from_exception(PHASE_OBSERVER_ERROR, exc))
+
+    def _on_status_change(self):
+        try:
+            event = InstanceStatusEvent(self.snap(), utc_now())
+            self._notifications.status_notification.observer_proxy.instance_status_update(event)
+        except ExceptionGroup as eg:
+            log.error("[status_observer_error]", exc_info=eg)
+            for exc in eg.exceptions:
+                self._faults.append(Fault.from_exception(STATUS_OBSERVER_ERROR, exc))

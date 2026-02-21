@@ -6,24 +6,24 @@ from pathlib import Path
 from threading import Lock, Condition
 from typing import Dict, Optional, List, Callable, override
 
+from runtools.runcore import plugins, paths, connector, db, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
 from runtools.runcore.criteria import SortOption
+from runtools.runcore.db import sqlite, PersistingObserver, NullPersistence, PERSISTING_OBSERVER_PRIORITY
+from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
+    InProcessEnvironmentConfig, get_env_config, EnvironmentNotFoundError, DEFAULT_LOCAL_ENVIRONMENT
+from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
-    InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, InstanceControlEvent, JobInstanceDelegate
+    InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, InstanceControlEvent, InstanceStatusEvent, \
+    JobInstanceDelegate
+from runtools.runcore.paths import ConfigFileNotFoundError
+from runtools.runcore.plugins import Plugin
 from runtools.runcore.util import to_tuple, lock
 from runtools.runcore.util.socket import DatagramSocketClient
 from runtools.runjob import instance
 from runtools.runjob.events import EventDispatcher
 from runtools.runjob.server import LocalInstanceServer
-
-from runtools.runcore import plugins, paths, connector, db, util
-from runtools.runcore.db import sqlite, PersistingObserver, NullPersistence, PERSISTING_OBSERVER_PRIORITY
-from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
-    InProcessEnvironmentConfig, get_env_config, EnvironmentNotFoundError, DEFAULT_LOCAL_ENVIRONMENT
-from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
-from runtools.runcore.paths import ConfigFileNotFoundError
-from runtools.runcore.plugins import Plugin
 
 log = logging.getLogger(__name__)
 
@@ -442,6 +442,7 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         self._listener_phase_socket_name = "listener-phase.sock"
         self._listener_output_socket_name = "listener-output.sock"
         self._listener_control_socket_name = "listener-control.sock"
+        self._listener_status_socket_name = "listener-status.sock"
 
     @classmethod
     def create(cls, env_id: str, root_dir: Optional[Path] = None, node_dir_prefix: str = "node_"):
@@ -514,6 +515,14 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         """
         return self._provider_sockets_listener(self._listener_control_socket_name)
 
+    @property
+    def listener_status_sockets_provider(self) -> Callable:
+        """
+        Returns:
+            Callable: A provider function that generates paths to status listener socket files
+        """
+        return self._provider_sockets_listener(self._listener_status_socket_name)
+
 
 def create(env_config: EnvironmentConfigUnion):
     if env_config.persistence:
@@ -542,6 +551,7 @@ def local(env_id, persistence=None, node_layout=None, *, lock_factory=None, feat
         InstancePhaseEvent.EVENT_TYPE: layout.listener_phase_sockets_provider,
         InstanceOutputEvent.EVENT_TYPE: layout.listener_output_sockets_provider,
         InstanceControlEvent.EVENT_TYPE: layout.listener_control_sockets_provider,
+        InstanceStatusEvent.EVENT_TYPE: layout.listener_status_sockets_provider,
     })
     lock_factory = lock_factory or lock.default_file_lock_factory()
     features = to_tuple(features)
