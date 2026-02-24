@@ -222,6 +222,9 @@ class OutputStorage(ABC):
 
 
 class FileOutputStorage(OutputStorage):
+    # TODO Add file size capping (max_bytes) — same semantics as TailBuffer but on disk.
+    #  This enables file output as the default (currently opt-in via --log) without risking
+    #  disk exhaustion from long-running jobs.
 
     def __init__(self, file_path: str, append: bool = True, encoding: str = "utf-8"):
         self.file_path = file_path
