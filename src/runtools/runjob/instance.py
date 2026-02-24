@@ -79,7 +79,8 @@ class JobInstanceContext(OutputContext):
 
 
 def create(instance_id, environment, root_phase, *,
-           output_sink=None, output_router=None, status_tracker=None,
+           output_sink=None, output_router=None, tail_buffer_size=2 * 1024 * 1024,
+           status_tracker=None,
            lifecycle_observers: Iterable[InstanceLifecycleObserver] = (),
            error_hook=None,
            **user_params) -> JobInstance:
@@ -92,6 +93,7 @@ def create(instance_id, environment, root_phase, *,
         output_sink: Custom output sink (created automatically if not provided).
                      For text parsing, provide OutputSink(ParsingPreprocessor([KVParser()])).
         output_router: Custom output router (created automatically if not provided)
+        tail_buffer_size: Max bytes for the in-memory tail buffer (default 2 MB). Ignored if output_router is provided.
         status_tracker: Custom status tracker (created automatically if not provided)
         lifecycle_observers: Observers for lifecycle events
         error_hook: Error handler for observer errors
@@ -100,7 +102,7 @@ def create(instance_id, environment, root_phase, *,
     if not instance_id:
         raise ValueError("Instance ID is mandatory")
     output_sink = output_sink or OutputSink()
-    output_router = output_router or OutputRouter(tail_buffer=InMemoryTailBuffer(max_capacity=50))
+    output_router = output_router or OutputRouter(tail_buffer=InMemoryTailBuffer(max_bytes=tail_buffer_size))
     status_tracker = status_tracker or StatusTracker()
 
     # Auto-wire status tracker as output observer

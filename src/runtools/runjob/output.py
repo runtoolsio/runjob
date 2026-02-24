@@ -141,20 +141,48 @@ class OutputContext(ABC):
 
 class InMemoryTailBuffer(TailBuffer):
 
-    def __init__(self, max_capacity: int = 0):
-        if max_capacity < 0:
-            raise ValueError("max_capacity cannot be negative")
-        self._max_capacity = max_capacity or None
-        self._lines = deque(maxlen=self._max_capacity)
+    def __init__(self, max_bytes: int = 0):
+        if max_bytes < 0:
+            raise ValueError("max_bytes cannot be negative")
+        self._max_bytes = max_bytes or None
+        self._lock = Lock()
+        self._lines: deque[OutputLine] = deque()
+        self._current_bytes = 0
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['_lock']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._lock = Lock()
+
+    @staticmethod
+    def _estimate_size(line: OutputLine) -> int:
+        """Estimate memory footprint of a single output line. Dominated by the message string."""
+        size = len(line.message.encode())
+        if line.source:
+            size += len(line.source.encode())
+        return size
 
     def add_line(self, output_line: OutputLine):
-        self._lines.append(output_line)
+        line_size = self._estimate_size(output_line)
+        with self._lock:
+            self._lines.append(output_line)
+            self._current_bytes += line_size
+
+            if self._max_bytes:
+                while self._current_bytes > self._max_bytes and len(self._lines) > 1:
+                    evicted = self._lines.popleft()
+                    self._current_bytes -= self._estimate_size(evicted)
 
     def get_lines(self, mode: Mode = Mode.TAIL, max_lines: int = 0) -> List[OutputLine]:
         if max_lines < 0:
             raise ValueError("Count cannot be negative")
 
-        output = list(self._lines)
+        with self._lock:
+            output = list(self._lines)
         if not max_lines:
             return output
 
