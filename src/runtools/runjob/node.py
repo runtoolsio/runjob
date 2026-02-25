@@ -14,7 +14,7 @@ from runtools.runcore.criteria import SortOption
 from runtools.runcore.db import sqlite, PersistingObserver, NullPersistence, PERSISTING_OBSERVER_PRIORITY
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
     InProcessEnvironmentConfig, FileOutputStorageConfig, get_env_config, EnvironmentNotFoundError, \
-    DEFAULT_LOCAL_ENVIRONMENT
+    DEFAULT_LOCAL_ENVIRONMENT, DEFAULT_TAIL_BUFFER_SIZE
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
     InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, InstanceControlEvent, InstanceStatusEvent, \
@@ -123,7 +123,8 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
     """
     OBSERVERS_PRIORITY = 1000
 
-    def __init__(self, output_router_factory=None, features=(), transient=True):
+    def __init__(self, env_id, output_router_factory=None, features=(), transient=True):
+        self._env_id = env_id
         self._output_router_factory = output_router_factory
         self._features = features
         self._transient = transient
@@ -134,6 +135,10 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         self._opened = False
         self._closing = False
         self._executor = None
+
+    @property
+    def env_id(self):
+        return self._env_id
 
     def _run_in_executor(self, fnc):
         with self._lock:
@@ -176,7 +181,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             ValueError: If job_id is empty or None
         """
         if output_router is None and self._output_router_factory:
-            output_router = self._output_router_factory(instance_id)
+            output_router = self._output_router_factory(self._env_id, instance_id)
         inst = instance.create(
             instance_id, self, root_phase,
             output_sink=output_sink,
@@ -327,15 +332,10 @@ class InProcessNode(EnvironmentNodeBase):
 
     def __init__(self, env_id, persistence, lock_factory, features, transient=True):
         self._notifications = InstanceObservableNotifications()
-        EnvironmentNodeBase.__init__(self, features=features, transient=transient)
-        self._env_id = env_id
+        EnvironmentNodeBase.__init__(self, env_id, features=features, transient=transient)
         self._persistence = persistence
         self._lock_factory = lock_factory
         self._persisting_observer = PersistingObserver(persistence)
-
-    @property
-    def env_id(self):
-        return self._env_id
 
     @property
     @override
@@ -531,25 +531,35 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         return self._provider_sockets_listener(self._listener_status_socket_name)
 
 
-def _create_output_router_factory(env_id, output_storage_configs):
-    """Resolve output storage configs into a factory that creates an OutputRouter per instance."""
-    resolved_dirs = []
-    for cfg in output_storage_configs:
+def default_output_router_factory(env_id, instance_id):
+    """Create a file-backed output router using the standard output directory."""
+    path = paths.output_dir(env_id, create=True) / instance_id.job_id / f"{instance_id.run_id}.jsonl"
+    os.makedirs(path.parent, exist_ok=True)
+    return OutputRouter(
+        tail_buffer=InMemoryTailBuffer(max_bytes=DEFAULT_TAIL_BUFFER_SIZE),
+        storages=[FileOutputStorage(path)])
+
+
+def _output_router_factory_from_config(env_id, output_config):
+    """Resolve output config into a factory that creates an OutputRouter per instance."""
+    file_dirs = []
+    for cfg in output_config.storages:
         if not cfg.enabled:
             continue
         if isinstance(cfg, FileOutputStorageConfig):
-            resolved_dirs.append(Path(cfg.dir).expanduser() if cfg.dir else paths.output_dir(env_id, create=True))
+            file_dirs.append(Path(cfg.dir).expanduser() if cfg.dir else paths.output_dir(env_id, create=True))
 
-    if not resolved_dirs:
-        return None
+    tail_buffer_size = output_config.tail_buffer_size
 
-    def factory(instance_id):
+    def factory(_, instance_id):
         storages = []
-        for base in resolved_dirs:
+        for base in file_dirs:
             path = base / instance_id.job_id / f"{instance_id.run_id}.jsonl"
             os.makedirs(path.parent, exist_ok=True)
             storages.append(FileOutputStorage(path))
-        return OutputRouter(tail_buffer=InMemoryTailBuffer(), storages=storages)
+        return OutputRouter(
+            tail_buffer=InMemoryTailBuffer(max_bytes=tail_buffer_size),
+            storages=storages)
 
     return factory
 
@@ -562,7 +572,7 @@ def create(env_config: EnvironmentConfigUnion):
 
     if isinstance(env_config, LocalEnvironmentConfig):
         layout = StandardLocalNodeLayout.from_config(env_config)
-        output_router_factory = _create_output_router_factory(env_config.id, env_config.output_storage)
+        output_router_factory = _output_router_factory_from_config(env_config.id, env_config.output)
         return local(env_config.id, persistence, layout, output_router_factory=output_router_factory)
 
     if isinstance(env_config, InProcessEnvironmentConfig):
@@ -572,16 +582,16 @@ def create(env_config: EnvironmentConfigUnion):
 
 
 def local(env_id, persistence=None, node_layout=None,
-          *, output_router_factory=None, lock_factory=None, features=None, transient=True):
+          *, output_router_factory=default_output_router_factory, lock_factory=None, features=None, transient=True):
     """Create a local environment node.
 
     Args:
         env_id (str): Environment identifier.
         persistence (Persistence): Persistence backend. Defaults to file-based SQLite for the given env_id.
         node_layout (LocalNodeLayout): Socket layout for the node. Defaults to a new ``StandardLocalNodeLayout``.
-        output_router_factory (Callable[[InstanceID], OutputRouter]): Factory that creates an output router
-            for each new instance. When provided, ``create_instance`` uses it to build the router automatically
-            unless the caller supplies one explicitly.
+        output_router_factory (Callable[[str, InstanceID], OutputRouter]): Factory that creates an output router
+            for each new instance. Defaults to ``default_output_router_factory`` (file-based).
+            Pass ``None`` to disable file output.
         lock_factory (Callable[[Path], ContextManager]): Factory for file-based locks. Defaults to the standard
             file lock factory.
         features (Feature | Iterable[Feature]): Features to attach to the node lifecycle.
@@ -613,17 +623,12 @@ class LocalNode(EnvironmentNodeBase):
     def __init__(self, env_id, local_connector, persistence, output_router_factory, rpc_server, event_dispatcher,
                  lock_factory, features, transient):
         EnvironmentNodeBase.__init__(
-            self, output_router_factory=output_router_factory, features=features, transient=transient)
-        self._env_id = env_id
+            self, env_id, output_router_factory=output_router_factory, features=features, transient=transient)
         self._connector = local_connector
         self._rpc_server = rpc_server
         self._event_dispatcher = event_dispatcher
         self._lock_factory = lock_factory
         self._persisting_observer = PersistingObserver(persistence)
-
-    @property
-    def env_id(self):
-        return self._env_id
 
     @property
     def persistence_enabled(self) -> bool:
