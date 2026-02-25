@@ -1,4 +1,5 @@
 import logging
+import os
 from abc import ABC, abstractmethod
 from concurrent.futures.thread import ThreadPoolExecutor
 from enum import Enum, auto
@@ -12,7 +13,8 @@ from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayou
 from runtools.runcore.criteria import SortOption
 from runtools.runcore.db import sqlite, PersistingObserver, NullPersistence, PERSISTING_OBSERVER_PRIORITY
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
-    InProcessEnvironmentConfig, get_env_config, EnvironmentNotFoundError, DEFAULT_LOCAL_ENVIRONMENT
+    InProcessEnvironmentConfig, FileOutputStorageConfig, get_env_config, EnvironmentNotFoundError, \
+    DEFAULT_LOCAL_ENVIRONMENT
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
     InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, InstanceControlEvent, InstanceStatusEvent, \
@@ -23,6 +25,7 @@ from runtools.runcore.util import to_tuple, lock
 from runtools.runcore.util.socket import DatagramSocketClient
 from runtools.runjob import instance
 from runtools.runjob.events import EventDispatcher
+from runtools.runjob.output import FileOutputStorage, OutputRouter, InMemoryTailBuffer
 from runtools.runjob.server import LocalInstanceServer
 
 log = logging.getLogger(__name__)
@@ -102,7 +105,6 @@ class JobInstanceManaged(JobInstanceDelegate):
     def _allows_env_closing(self):
         return self._state in (_InstanceState.NONE, _InstanceState.DETACHED)
 
-
 class EnvironmentNodeBase(EnvironmentNode, ABC):
     """
     Implementation details
@@ -114,13 +116,15 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
      - Thread-safe instances list creation
      - Thread-safe removal (manual and on-finished removals are safe to use together)
      - Close hook is executed only when all instances are detached
-     - Close/exit method can be called multiple times (returns immediately if closing by another thread or already closed)
+     - Close/exit method can be called multiple times
+       (returns immediately if closing by another thread or already closed)
     Condition:
      - Close/exit operations wait for all instances to be detached
     """
     OBSERVERS_PRIORITY = 1000
 
-    def __init__(self, features=(), transient=True):
+    def __init__(self, output_router_factory=None, features=(), transient=True):
+        self._output_router_factory = output_router_factory
         self._features = features
         self._transient = transient
         self._lock = Lock()
@@ -160,7 +164,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             instance_id (InstanceID): Instance identifier
             root_phase: Root phase of the job instance
             output_sink: Optional output sink (for text parsing, use OutputSink with ParsingPreprocessor)
-            output_router: Optional buffer for output tailing
+            output_router: Optional output router; built from output_router_factory when not provided
             status_tracker: Optional status tracker for the job
             user_params: Optional user-defined parameters
 
@@ -171,6 +175,8 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             InvalidStateError: If the environment is not opened or is already closed
             ValueError: If job_id is empty or None
         """
+        if output_router is None and self._output_router_factory:
+            output_router = self._output_router_factory(instance_id)
         inst = instance.create(
             instance_id, self, root_phase,
             output_sink=output_sink,
@@ -184,7 +190,8 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
     def instances(self):
         """
         Mutable list copy of all job instances currently managed by this container.
-        Note that this returns only instances inside of this container, not necessarily all instances in the environment.
+        Note that this returns only instances inside of this container, not necessarily all instances
+        in the environment.
 
         Returns:
             A list of all job instances currently managed by this container.
@@ -320,7 +327,7 @@ class InProcessNode(EnvironmentNodeBase):
 
     def __init__(self, env_id, persistence, lock_factory, features, transient=True):
         self._notifications = InstanceObservableNotifications()
-        EnvironmentNodeBase.__init__(self, features, transient=transient)
+        EnvironmentNodeBase.__init__(self, features=features, transient=transient)
         self._env_id = env_id
         self._persistence = persistence
         self._lock_factory = lock_factory
@@ -524,6 +531,29 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         return self._provider_sockets_listener(self._listener_status_socket_name)
 
 
+def _create_output_router_factory(env_id, output_storage_configs):
+    """Resolve output storage configs into a factory that creates an OutputRouter per instance."""
+    resolved_dirs = []
+    for cfg in output_storage_configs:
+        if not cfg.enabled:
+            continue
+        if isinstance(cfg, FileOutputStorageConfig):
+            resolved_dirs.append(Path(cfg.dir).expanduser() if cfg.dir else paths.output_dir(env_id, create=True))
+
+    if not resolved_dirs:
+        return None
+
+    def factory(instance_id):
+        storages = []
+        for base in resolved_dirs:
+            path = base / instance_id.job_id / f"{instance_id.run_id}.jsonl"
+            os.makedirs(path.parent, exist_ok=True)
+            storages.append(FileOutputStorage(path))
+        return OutputRouter(tail_buffer=InMemoryTailBuffer(), storages=storages)
+
+    return factory
+
+
 def create(env_config: EnvironmentConfigUnion):
     if env_config.persistence:
         persistence = db.create_persistence(env_config.id, env_config.persistence)
@@ -532,7 +562,8 @@ def create(env_config: EnvironmentConfigUnion):
 
     if isinstance(env_config, LocalEnvironmentConfig):
         layout = StandardLocalNodeLayout.from_config(env_config)
-        return local(env_config.id, persistence, layout)
+        output_router_factory = _create_output_router_factory(env_config.id, env_config.output_storage)
+        return local(env_config.id, persistence, layout, output_router_factory=output_router_factory)
 
     if isinstance(env_config, InProcessEnvironmentConfig):
         return in_process(env_config.id, persistence)
@@ -540,7 +571,22 @@ def create(env_config: EnvironmentConfigUnion):
     raise AssertionError(f"Unsupported environment config: {type(env_config)}.")
 
 
-def local(env_id, persistence=None, node_layout=None, *, lock_factory=None, features=None, transient=True):
+def local(env_id, persistence=None, node_layout=None,
+          *, output_router_factory=None, lock_factory=None, features=None, transient=True):
+    """Create a local environment node.
+
+    Args:
+        env_id (str): Environment identifier.
+        persistence (Persistence): Persistence backend. Defaults to file-based SQLite for the given env_id.
+        node_layout (LocalNodeLayout): Socket layout for the node. Defaults to a new ``StandardLocalNodeLayout``.
+        output_router_factory (Callable[[InstanceID], OutputRouter]): Factory that creates an output router
+            for each new instance. When provided, ``create_instance`` uses it to build the router automatically
+            unless the caller supplies one explicitly.
+        lock_factory (Callable[[Path], ContextManager]): Factory for file-based locks. Defaults to the standard
+            file lock factory.
+        features (Feature | Iterable[Feature]): Features to attach to the node lifecycle.
+        transient (bool): Whether instances are removed from the node after detaching. Defaults to True.
+    """
     layout = node_layout or StandardLocalNodeLayout.create(env_id)
     persistence = persistence or sqlite.create(env_id=env_id)
     local_connector = connector.local(env_id, persistence, layout)
@@ -555,7 +601,8 @@ def local(env_id, persistence=None, node_layout=None, *, lock_factory=None, feat
     })
     lock_factory = lock_factory or lock.default_file_lock_factory()
     features = to_tuple(features)
-    return LocalNode(env_id, local_connector, persistence, api, event_dispatcher, lock_factory, features, transient)
+    return LocalNode(env_id, local_connector, persistence, output_router_factory,
+                     api, event_dispatcher, lock_factory, features, transient)
 
 
 class LocalNode(EnvironmentNodeBase):
@@ -563,9 +610,10 @@ class LocalNode(EnvironmentNodeBase):
     Environment node implementation that uses composition to delegate environment connector functionality.
     """
 
-    def __init__(self, env_id, local_connector, persistence, rpc_server, event_dispatcher, lock_factory, features,
-                 transient):
-        EnvironmentNodeBase.__init__(self, features, transient=transient)
+    def __init__(self, env_id, local_connector, persistence, output_router_factory, rpc_server, event_dispatcher,
+                 lock_factory, features, transient):
+        EnvironmentNodeBase.__init__(
+            self, output_router_factory=output_router_factory, features=features, transient=transient)
         self._env_id = env_id
         self._connector = local_connector
         self._rpc_server = rpc_server
