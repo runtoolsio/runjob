@@ -431,13 +431,17 @@ class BasePhase(Phase[C], ABC):
                     if child.termination and not child.termination.status.outcome.is_success:
                         # Skip children whose failure was raised as an exception — the parent's
                         # _run() had the chance to handle it. If it returned normally, it did.
+                        # Note: this means COMPLETED only when the parent itself was not stopped.
                         if getattr(child, '_failure_raised', False):
                             continue
                         self._termination = TerminationInfo(child.termination.status, utc_now(),
                                                             child.termination.message)
                         break
                 if not self._termination:
-                    self._termination = TerminationInfo(TerminationStatus.COMPLETED, utc_now())
+                    if self._stop_reason:
+                        self._termination = TerminationInfo(self._stop_reason.termination_status, utc_now())
+                    else:
+                        self._termination = TerminationInfo(TerminationStatus.COMPLETED, utc_now())
             self._notification.observer_proxy.new_phase_transition(
                 PhaseTransitionEvent(self.snap(), Stage.ENDED, self._termination.terminated_at))
 

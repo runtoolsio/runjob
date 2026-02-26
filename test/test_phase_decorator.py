@@ -579,3 +579,41 @@ def test_checkpoint_approval_composition():
     assert cp_phase.id == "deploy_approval_checkpoint"
     assert isinstance(approval_phase, ApprovalPhase)
     assert approval_phase.children[0].id == "deploy"
+
+
+# --- Stop propagation ---
+
+def test_parent_stopped_when_child_cooperatively_stops(ctx):
+    """Parent that catches ChildPhaseTerminated still gets STOPPED when it was stopped externally.
+
+    Regression: previously the parent defaulted to COMPLETED because the handled child's
+    _failure_raised flag caused the finally-block scan to skip it.
+    """
+    stop_flag = threading.Event()
+
+    @phase
+    def cooperative_child():
+        stop_flag.wait()
+        raise PhaseTerminated(TerminationStatus.STOPPED, "cooperative stop")
+
+    def run_body():
+        try:
+            cooperative_child()
+        except ChildPhaseTerminated:
+            return None
+
+    host = HostPhase(run_body)
+
+    def stop_after_start():
+        # Wait until child is running
+        while not host.children:
+            pass
+        host.stop()
+        stop_flag.set()
+
+    t = threading.Thread(target=stop_after_start, daemon=True)
+    t.start()
+    host.run(ctx)
+    t.join(timeout=5)
+
+    assert host.termination.status == TerminationStatus.STOPPED
