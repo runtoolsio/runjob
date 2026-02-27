@@ -164,16 +164,16 @@ def test_operation_lifecycle():
     assert tracker.to_status().operations[0].finished
 
 
-def test_event_deactivates_finished_operation():
-    """New event deactivates finished operations."""
+def test_completed_operation_is_finished():
+    """Operation is finished when progress reaches total."""
     tracker = StatusTracker()
 
-    # Complete an operation
     tracker.new_output(OutputLine('msg', 1, fields={
+        'event': 'op1', 'completed': 5, 'total': 10
+    }))
+    assert not tracker.to_status().operations[0].finished
+
+    tracker.new_output(OutputLine('msg', 2, fields={
         'event': 'op1', 'completed': 10, 'total': 10
     }))
-    assert tracker.to_status().operations[0].is_active
-
-    # New event should deactivate completed operations
-    tracker.new_output(OutputLine('msg', 2, fields={'event': 'next_event'}))
-    assert not tracker.to_status().operations[0].is_active
+    assert tracker.to_status().operations[0].finished

@@ -18,7 +18,6 @@ class OperationTracker:
         self.unit = ''
         self.created_at = created_at or datetime.now(UTC).replace(tzinfo=None)
         self.updated_at = self.created_at
-        self.is_active = True
         self.result: Optional[str] = None
         self._on_update = on_update
 
@@ -52,7 +51,6 @@ class OperationTracker:
             self.unit,
             self.created_at,
             self.updated_at,
-            self.is_active,
             self.result
         )
 
@@ -121,9 +119,6 @@ class StatusTracker(OutputObserver):
     def event(self, text: str, timestamp=None) -> None:
         timestamp = ts_or_now(timestamp)
         self._last_event = Event(text, timestamp)
-        for op in self._operations:
-            if op.is_finished:
-                op.is_active = False
         if self._on_change:
             self._on_change()
 
@@ -147,8 +142,6 @@ class StatusTracker(OutputObserver):
     def result(self, result: str, timestamp=None) -> None:
         timestamp = ts_or_now(timestamp)
         self._result = Event(result, timestamp)
-        for op in self._operations:
-            op.is_active = False
         if self._on_change:
             self._on_change()
 

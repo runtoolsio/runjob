@@ -41,16 +41,15 @@ def test_operation_incr_update():
     assert op1.total == 10
 
 
-def test_inactive_operations():
+def test_finished_operations():
     tracker = StatusTracker()
 
-    # Operation becomes inactive when finished
     op = tracker.operation("copy")
-    op.update(10, 10, "files")  # Complete the operation
-    assert tracker.to_status().operations[0].is_active  # Still active until event
+    op.update(5, 10, "files")
+    assert not tracker.to_status().operations[0].finished
 
-    tracker.event("Done")  # Should deactivate finished operations
-    assert not tracker.to_status().operations[0].is_active
+    op.update(10, 10, "files")  # Complete the operation
+    assert tracker.to_status().operations[0].finished
 
 
 def test_result_handling():
