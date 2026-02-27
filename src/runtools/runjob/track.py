@@ -27,10 +27,7 @@ class OperationTracker:
                unit: Optional[str] = None,
                updated_at: Optional[datetime] = None) -> None:
         if completed is not None:
-            if self.completed is None or completed > self.completed:
-                self.completed = completed  # Assuming is total completed
-            else:
-                self.completed += completed  # Assuming it is an increment
+            self.completed = completed
         if total is not None:
             self.total = total
         if unit is not None:
@@ -41,7 +38,11 @@ class OperationTracker:
 
     @property
     def is_finished(self):
-        return self.result is not None or (self.total and (self.completed == self.total))
+        return self.result is not None or (
+                self.total is not None and
+                self.completed is not None and
+                self.completed >= self.total
+        )
 
     def to_operation(self) -> Operation:
         return Operation(
@@ -68,7 +69,8 @@ def _parse_timestamp(value):
 def field_based_handler(output_line: OutputLine, tracker: 'StatusTracker') -> None:
     """Process output lines that have structured fields.
 
-    Expects field names: event, completed, total, unit, result, timestamp, operation.
+    Expects field names: event, operation, completed, total, unit, result, timestamp.
+    ``operation`` identifies a tracked operation (progress). ``event`` is a standalone status message.
     """
     if not output_line.fields:
         return
@@ -78,11 +80,9 @@ def field_based_handler(output_line: OutputLine, tracker: 'StatusTracker') -> No
     completed = convert_if_number(fields.get('completed'))
     total = convert_if_number(fields.get('total'))
 
-    if any(v is not None for v in (completed, total, fields.get('unit'))):
-        op_name = fields.get('operation') or fields.get('event')
-        if op_name:
-            op = tracker.operation(op_name, timestamp)
-            op.update(completed, total, fields.get('unit'), timestamp)
+    if op_name := fields.get('operation'):
+        op = tracker.operation(op_name, timestamp)
+        op.update(completed, total, fields.get('unit'), timestamp)
     elif event := fields.get('event'):
         tracker.event(event, timestamp)
 

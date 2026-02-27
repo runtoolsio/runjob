@@ -66,7 +66,7 @@ def test_status_tracker_operation_from_fields():
     tracker = StatusTracker()
 
     tracker.new_output(OutputLine('msg', 1, fields={
-        'event': 'processing',
+        'operation': 'processing',
         'completed': 10,
         'total': 100,
         'unit': 'files'
@@ -100,7 +100,7 @@ def test_end_to_end_text_parsing():
     process('event=[downloading]', 1)
     assert tracker.to_status().last_event.message == 'downloading'
 
-    process('event=[processing] completed=[5] total=[10]', 2)
+    process('operation=[processing] completed=[5] total=[10]', 2)
     op = tracker.to_status().operations[0]
     assert op.name == 'processing'
     assert op.completed == 5
@@ -111,7 +111,7 @@ def test_kv_parser_aliases():
     preprocessor = ParsingPreprocessor([KVParser(aliases={'count': 'completed'})])
     tracker = StatusTracker()
 
-    line = OutputLine('event=[download] count=[50] total=[100]', 1)
+    line = OutputLine('operation=[download] count=[50] total=[100]', 1)
     processed = preprocessor(line)
     tracker.new_output(processed)
 
@@ -153,27 +153,14 @@ def test_operation_lifecycle():
 
     # Start operation
     tracker.new_output(OutputLine('msg', 1, fields={
-        'event': 'encoding', 'completed': 5, 'total': 10
+        'operation': 'encoding', 'completed': 5, 'total': 10
     }))
     assert not tracker.to_status().operations[0].finished
 
     # Complete operation
     tracker.new_output(OutputLine('msg', 2, fields={
-        'event': 'encoding', 'completed': 10, 'total': 10
+        'operation': 'encoding', 'completed': 10, 'total': 10
     }))
     assert tracker.to_status().operations[0].finished
 
 
-def test_completed_operation_is_finished():
-    """Operation is finished when progress reaches total."""
-    tracker = StatusTracker()
-
-    tracker.new_output(OutputLine('msg', 1, fields={
-        'event': 'op1', 'completed': 5, 'total': 10
-    }))
-    assert not tracker.to_status().operations[0].finished
-
-    tracker.new_output(OutputLine('msg', 2, fields={
-        'event': 'op1', 'completed': 10, 'total': 10
-    }))
-    assert tracker.to_status().operations[0].finished

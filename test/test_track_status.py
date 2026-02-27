@@ -23,21 +23,14 @@ def test_operation_updates():
     assert op1.unit == 'items'
 
 
-def test_operation_incr_update():
+def test_operation_absolute_update():
     tracker = StatusTracker()
-    tracker.operation('op1').update(1)
-    tracker.operation('op1').update(1)
+    tracker.operation('op1').update(5, 10)
+    tracker.operation('op1').update(7, 10)
 
     op1 = tracker.to_status().operations[0]
     assert op1.name == 'op1'
-    assert op1.completed == 2
-    assert op1.total is None
-    assert op1.unit == ''
-
-    tracker.operation('op2').update(5, 10)
-    tracker.operation('op2').update(4, 10)
-    op1 = tracker.to_status().operations[1]
-    assert op1.completed == 9
+    assert op1.completed == 7
     assert op1.total == 10
 
 
@@ -73,9 +66,9 @@ def test_multiple_operations_same_name():
     op2 = tracker.operation("test")
     assert op1 is op2
 
-    # Updates should accumulate on same operation
+    # Updates on same operation use absolute values
     op1.update(5, 10)
-    op2.update(3, 10)
+    op2.update(8, 10)
     status = tracker.to_status()
     assert len(status.operations) == 1
     assert status.operations[0].completed == 8
