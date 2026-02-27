@@ -436,15 +436,15 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         └── ...                                      # Other node-specific sockets
     """
 
-    def __init__(self, env_path: Path, node_path: Path):
+    def __init__(self, env_dir: Path, component_name: str):
         """
-        Initializes the node layout with environment and component directories.
+        Initializes the node layout with environment directory and component name.
 
         Args:
-            env_path (Path): Directory containing the environment structure
-            node_path (Path): Directory specific to this node instance
+            env_dir: Directory containing the environment structure.
+            component_name: Name of the node subdirectory.
         """
-        super().__init__(env_path=env_path, connector_path=node_path)
+        super().__init__(env_dir=env_dir, component_name=component_name)
         self._listener_lifecycle_socket_name = "listener-lifecycle.sock"
         self._listener_phase_socket_name = "listener-phase.sock"
         self._listener_output_socket_name = "listener-output.sock"
@@ -452,22 +452,22 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         self._listener_status_socket_name = "listener-status.sock"
 
     @classmethod
-    def create(cls, env_id: str, root_dir: Optional[Path] = None, node_dir_prefix: str = "node_"):
+    def create(cls, env_id: str, root_dir: Optional[Path] = None, component_prefix: str = "node_"):
         """
-        Creates a layout for a new node together with a new unique directory for the node.
+        Creates a layout for a new node with a unique component directory.
 
         Args:
-            env_id (str): Identifier for the environment
-            root_dir (Path, optional): Root directory containing environments or uses the default one.
-            node_dir_prefix (str): Prefix for node directories
+            env_id: Identifier for the environment.
+            root_dir: Root directory containing environments or uses the default one.
+            component_prefix: Prefix for component directories.
 
-        Returns (StandardLocalNodeLayout): Layout instance for a node
+        Returns (StandardLocalNodeLayout): Layout instance for a node.
         """
-        return cls(*ensure_component_dir(env_id, node_dir_prefix, root_dir))
+        return cls(*ensure_component_dir(env_id, component_prefix, root_dir))
 
     @classmethod
-    def from_config(cls, env_config, node_dir_prefix: str = "node_"):
-        return cls.create(env_config.id, env_config.layout.root_dir, node_dir_prefix)
+    def from_config(cls, env_config, component_prefix: str = "node_"):
+        return cls.create(env_config.id, env_config.layout.root_dir, component_prefix)
 
     @property
     def server_socket_path(self) -> Path:
@@ -475,7 +475,7 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         Returns:
             Path: Full path of server domain socket used for sending requests to RPC servers
         """
-        return self._component_path / self._server_socket_name
+        return self._component_dir / self._server_socket_name
 
     def _provider_sockets_listener(self, socket_listener_name) -> Callable:
         """
@@ -488,7 +488,7 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
             Callable: Provider function for the specified socket(s)
         """
         file_names = [self._listener_events_socket_name, socket_listener_name]
-        return paths.files_in_subdir_provider(self._env_path, file_names)
+        return paths.files_in_subdir_provider(self._env_dir, file_names)
 
     @property
     def listener_lifecycle_sockets_provider(self) -> Callable:
@@ -635,9 +635,6 @@ class LocalNode(EnvironmentNodeBase):
         return self._connector.persistence_enabled
 
     def open(self):
-        # TODO Clean up stale sockets from dead connectors on startup (e.g., call clean_stale_sockets
-        #  for the environment's listener socket directory). Currently, stale sockets cause repeated
-        #  ConnectionRefusedError on every event dispatch until the socket files are manually removed.
         EnvironmentNodeBase.open(self)  # Execute first for opened only once check
         self._connector.open()
         self._rpc_server.start()
