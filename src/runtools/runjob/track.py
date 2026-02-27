@@ -36,6 +36,12 @@ class OperationTracker:
         if self._on_update:
             self._on_update()
 
+    def finish(self, result: str, timestamp: Optional[datetime] = None) -> None:
+        self.result = result
+        self.updated_at = timestamp or datetime.now(UTC).replace(tzinfo=None)
+        if self._on_update:
+            self._on_update()
+
     @property
     def is_finished(self):
         return self.result is not None or (
@@ -70,7 +76,8 @@ def field_based_handler(output_line: OutputLine, tracker: 'StatusTracker') -> No
     """Process output lines that have structured fields.
 
     Expects field names: event, operation, completed, total, unit, result, timestamp.
-    ``operation`` identifies a tracked operation (progress). ``event`` is a standalone status message.
+    ``operation`` identifies a tracked operation. ``event`` is a standalone status message.
+    ``result`` with ``operation`` finishes that operation; ``result`` alone sets the global result.
     """
     if not output_line.fields:
         return
@@ -80,13 +87,18 @@ def field_based_handler(output_line: OutputLine, tracker: 'StatusTracker') -> No
     completed = convert_if_number(fields.get('completed'))
     total = convert_if_number(fields.get('total'))
 
+    result = fields.get('result')
+
     if op_name := fields.get('operation'):
         op = tracker.operation(op_name, timestamp)
-        op.update(completed, total, fields.get('unit'), timestamp)
+        if result:
+            op.finish(result, timestamp)
+        else:
+            op.update(completed, total, fields.get('unit'), timestamp)
     elif event := fields.get('event'):
         tracker.event(event, timestamp)
 
-    if result := fields.get('result'):
+    if result and not fields.get('operation'):
         tracker.result(result, timestamp)
 
 def message_as_event(output_line: OutputLine, tracker: 'StatusTracker') -> None:
