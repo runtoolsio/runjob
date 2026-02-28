@@ -11,7 +11,7 @@ from runtools.runcore import plugins, paths, connector, db, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
 from runtools.runcore.criteria import SortOption
-from runtools.runcore.db import sqlite, PersistingObserver, NullPersistence, PERSISTING_OBSERVER_PRIORITY
+from runtools.runcore.db import sqlite, PersistingObserver, PERSISTING_OBSERVER_PRIORITY
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
     InProcessEnvironmentConfig, FileOutputStorageConfig, get_env_config, EnvironmentNotFoundError, \
     DEFAULT_LOCAL_ENVIRONMENT, DEFAULT_TAIL_BUFFER_SIZE
@@ -310,7 +310,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
 
 def connect(env_id=None):
-    """Connect to an environment node, falling back to a local node when no config is found.
+    """Connect to an environment node, falling back to default local config when no config is found.
 
     Unlike ``connector.connect()``, this always falls back to a local node so that
     ``@job`` decorated functions work zero-config.
@@ -318,10 +318,19 @@ def connect(env_id=None):
     try:
         return create(get_env_config(env_id))
     except (EnvironmentNotFoundError, ConfigFileNotFoundError):
-        return local(env_id or DEFAULT_LOCAL_ENVIRONMENT)
+        return create(LocalEnvironmentConfig(id=env_id or DEFAULT_LOCAL_ENVIRONMENT))
 
 
 def in_process(env_id=None, persistence=None, *, lock_factory=None, features=None, transient=True) -> 'InProcessNode':
+    """Create an in-process environment node for testing and development.
+
+    Args:
+        env_id (str): Environment identifier. Defaults to a unique generated ID.
+        persistence (Persistence): Persistence backend. Defaults to in-memory SQLite.
+        lock_factory: Factory for memory-based locks. Defaults to the standard memory lock factory.
+        features: Features to attach to the node lifecycle.
+        transient (bool): Whether instances are removed from the node after detaching. Defaults to True.
+    """
     env_id = env_id or "in_process_" + util.unique_timestamp_hex()
     persistence = persistence or sqlite.create(env_id=env_id, database=':memory:')
     lock_factory = lock_factory or lock.default_memory_lock_factory()
@@ -564,16 +573,21 @@ def _output_router_factory_from_config(env_id, output_config):
     return factory
 
 
-def create(env_config: EnvironmentConfigUnion):
-    if env_config.persistence:
-        persistence = db.create_persistence(env_config.id, env_config.persistence)
-    else:
-        persistence = NullPersistence()
+def create(env_config: EnvironmentConfigUnion) -> 'EnvironmentNodeBase':
+    """Create an environment node from configuration.
+
+    Args:
+        env_config (EnvironmentConfigUnion): Environment configuration that determines the node type and settings.
+
+    Returns:
+        EnvironmentNodeBase: Configured node for the environment.
+    """
+    persistence = db.create_persistence(env_config.id, env_config.persistence)
 
     if isinstance(env_config, LocalEnvironmentConfig):
         layout = StandardLocalNodeLayout.from_config(env_config)
         output_router_factory = _output_router_factory_from_config(env_config.id, env_config.output)
-        return local(env_config.id, persistence, layout, output_router_factory=output_router_factory)
+        return _local(env_config.id, persistence, layout, output_router_factory)
 
     if isinstance(env_config, InProcessEnvironmentConfig):
         return in_process(env_config.id, persistence)
@@ -581,33 +595,17 @@ def create(env_config: EnvironmentConfigUnion):
     raise AssertionError(f"Unsupported environment config: {type(env_config)}.")
 
 
-def local(env_id, persistence=None, node_layout=None,
-          *, output_router_factory=default_output_router_factory, lock_factory=None, features=None, transient=True):
-    """Create a local environment node.
+def _local(env_id, persistence, node_layout, output_router_factory,
+           *, lock_factory=None, features=None, transient=True):
+    local_connector = connector._local(env_id, persistence, node_layout)
 
-    Args:
-        env_id (str): Environment identifier.
-        persistence (Persistence): Persistence backend. Defaults to file-based SQLite for the given env_id.
-        node_layout (LocalNodeLayout): Socket layout for the node. Defaults to a new ``StandardLocalNodeLayout``.
-        output_router_factory (Callable[[str, InstanceID], OutputRouter]): Factory that creates an output router
-            for each new instance. Defaults to ``default_output_router_factory`` (file-based).
-            Pass ``None`` to disable file output.
-        lock_factory (Callable[[Path], ContextManager]): Factory for file-based locks. Defaults to the standard
-            file lock factory.
-        features (Feature | Iterable[Feature]): Features to attach to the node lifecycle.
-        transient (bool): Whether instances are removed from the node after detaching. Defaults to True.
-    """
-    layout = node_layout or StandardLocalNodeLayout.create(env_id)
-    persistence = persistence or sqlite.create(env_id=env_id)
-    local_connector = connector.local(env_id, persistence, layout)
-
-    api = LocalInstanceServer(layout.server_socket_path)
+    api = LocalInstanceServer(node_layout.server_socket_path)
     event_dispatcher = EventDispatcher(DatagramSocketClient(), {
-        InstanceLifecycleEvent.EVENT_TYPE: layout.listener_lifecycle_sockets_provider,
-        InstancePhaseEvent.EVENT_TYPE: layout.listener_phase_sockets_provider,
-        InstanceOutputEvent.EVENT_TYPE: layout.listener_output_sockets_provider,
-        InstanceControlEvent.EVENT_TYPE: layout.listener_control_sockets_provider,
-        InstanceStatusEvent.EVENT_TYPE: layout.listener_status_sockets_provider,
+        InstanceLifecycleEvent.EVENT_TYPE: node_layout.listener_lifecycle_sockets_provider,
+        InstancePhaseEvent.EVENT_TYPE: node_layout.listener_phase_sockets_provider,
+        InstanceOutputEvent.EVENT_TYPE: node_layout.listener_output_sockets_provider,
+        InstanceControlEvent.EVENT_TYPE: node_layout.listener_control_sockets_provider,
+        InstanceStatusEvent.EVENT_TYPE: node_layout.listener_status_sockets_provider,
     })
     lock_factory = lock_factory or lock.default_file_lock_factory()
     features = to_tuple(features)
