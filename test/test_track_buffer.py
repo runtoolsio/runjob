@@ -30,7 +30,7 @@ def test_single_large_line_always_kept():
 
 
 def test_get_lines_with_max_lines():
-    output = InMemoryTailBuffer()
+    output = InMemoryTailBuffer(max_bytes=1024)
     output.add_line(OutputLine("line1", 1))
     output.add_line(OutputLine("line2", 2))
     output.add_line(OutputLine("line3", 3))
@@ -45,7 +45,7 @@ def test_get_lines_with_max_lines():
 
 
 def test_get_all_lines():
-    output = InMemoryTailBuffer()
+    output = InMemoryTailBuffer(max_bytes=1024)
     output.add_line(OutputLine("line1", 1))
     output.add_line(OutputLine("line2", 2))
 
@@ -55,6 +55,6 @@ def test_get_all_lines():
 
 
 def test_negative_max_lines():
-    output = InMemoryTailBuffer()
+    output = InMemoryTailBuffer(max_bytes=1024)
     with pytest.raises(ValueError):
         output.get_lines(max_lines=-1)

@@ -92,8 +92,9 @@ def create(instance_id, environment, root_phase, *,
         root_phase: Root phase of the job instance
         output_sink: Custom output sink (created automatically if not provided).
                      For text parsing, provide OutputSink(ParsingPreprocessor([KVParser()])).
-        output_router: Custom output router (created automatically if not provided)
-        tail_buffer_size: Max bytes for the in-memory tail buffer (default 2 MB). Ignored if output_router is provided.
+        output_router: Output router for tail buffering and storage. Built from env config when created via
+                       node; defaults to tail-only router for direct usage.
+        tail_buffer_size: Max bytes for the default tail buffer (default 2 MB). Ignored if output_router is provided.
         status_tracker: Custom status tracker (created automatically if not provided)
         lifecycle_observers: Observers for lifecycle events
         error_hook: Error handler for observer errors
@@ -102,7 +103,9 @@ def create(instance_id, environment, root_phase, *,
     if not instance_id:
         raise ValueError("Instance ID is mandatory")
     output_sink = output_sink or OutputSink()
-    output_router = output_router or OutputRouter(tail_buffer=InMemoryTailBuffer(max_bytes=tail_buffer_size))
+    if output_router is None:
+        tail_buffer = InMemoryTailBuffer(max_bytes=tail_buffer_size) if tail_buffer_size else None
+        output_router = OutputRouter(tail_buffer=tail_buffer)
     status_tracker = status_tracker or StatusTracker()
 
     # Auto-wire status tracker as output observer

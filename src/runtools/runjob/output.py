@@ -3,13 +3,21 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from collections import deque
+from pathlib import Path
 from threading import Lock, local
 from typing import Optional, Callable, List, Iterable
 
-from runtools.runcore.output import OutputLine, OutputObserver, TailBuffer, Mode, OutputLineFactory, Output, \
-    TailNotSupportedError, OutputLocation
+from runtools.runcore import paths
+from runtools.runcore.output import (OutputLine, OutputObserver, TailBuffer, Mode, OutputLineFactory, Output,
+                                     TailNotSupportedError, OutputLocation, OutputBackend, FileOutputBackend,
+                                     FileOutputStorageConfig)
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY, ObserverContext
 from runtools.runjob.phase import _current_phase
+
+from runtools.runcore.job import InstanceID
+from runtools.runcore.retention import RetentionPolicy
+
+log = logging.getLogger(__name__)
 
 _thread_local = local()
 
@@ -141,10 +149,10 @@ class OutputContext(ABC):
 
 class InMemoryTailBuffer(TailBuffer):
 
-    def __init__(self, max_bytes: int = 0):
-        if max_bytes < 0:
-            raise ValueError("max_bytes cannot be negative")
-        self._max_bytes = max_bytes or None
+    def __init__(self, max_bytes: int):
+        if max_bytes <= 0:
+            raise ValueError("max_bytes must be positive")
+        self._max_bytes = max_bytes
         self._lock = Lock()
         self._lines: deque[OutputLine] = deque()
         self._current_bytes = 0
@@ -172,10 +180,9 @@ class InMemoryTailBuffer(TailBuffer):
             self._lines.append(output_line)
             self._current_bytes += line_size
 
-            if self._max_bytes:
-                while self._current_bytes > self._max_bytes and len(self._lines) > 1:
-                    evicted = self._lines.popleft()
-                    self._current_bytes -= self._estimate_size(evicted)
+            while self._current_bytes > self._max_bytes and len(self._lines) > 1:
+                evicted = self._lines.popleft()
+                self._current_bytes -= self._estimate_size(evicted)
 
     def get_lines(self, mode: Mode = Mode.TAIL, max_lines: int = 0) -> List[OutputLine]:
         if max_lines < 0:
@@ -195,7 +202,7 @@ class InMemoryTailBuffer(TailBuffer):
                 assert False, f"Unhandled mode: {mode}"  # Should never happen
 
 
-class OutputStorage(ABC):
+class OutputWriter(ABC):
 
     @property
     @abstractmethod
@@ -221,7 +228,7 @@ class OutputStorage(ABC):
         pass
 
 
-class FileOutputStorage(OutputStorage):
+class FileOutputWriter(OutputWriter):
     # TODO Add file size capping (max_bytes) — same semantics as TailBuffer but on disk.
     #  This enables file output as the default (currently opt-in via --log) without risking
     #  disk exhaustion from long-running jobs.
@@ -272,8 +279,8 @@ class OutputRouter(OutputObserver, Output):
         super().__init__()
         self.tail_buffer = tail_buffer
         self.storages = list(storages)
-        self.realtime_storages: List[OutputStorage] = [s for s in self.storages if not s.batch_size]
-        self.batch_storages: List[OutputStorage] = [s for s in self.storages if s.batch_size]
+        self.realtime_storages: List[OutputWriter] = [s for s in self.storages if not s.batch_size]
+        self.batch_storages: List[OutputWriter] = [s for s in self.storages if s.batch_size]
         self.max_batch = max_batch
         self._batch_lock = Lock()
         self._batch_buffer: List[OutputLine] = []
@@ -342,3 +349,54 @@ class OutputRouter(OutputObserver, Output):
         # Close all storages
         for storage in self.storages:
             storage.close()
+
+
+class OutputStore(OutputBackend, ABC):
+    """Extends OutputBackend with write and retention capabilities."""
+
+    @abstractmethod
+    def create_writer(self, instance_id: InstanceID) -> OutputWriter:
+        """Create a per-instance writer for storing output lines."""
+
+    @abstractmethod
+    def enforce_retention(self, job_id: str, policy: RetentionPolicy):
+        """Prune old output for a job according to retention policy."""
+
+
+def create_stores(env_id, storage_configs) -> list['FileOutputStore']:
+    """Create output stores from storage configuration."""
+    stores: list[FileOutputStore] = []
+    for cfg in storage_configs:
+        if not cfg.enabled:
+            continue
+        if isinstance(cfg, FileOutputStorageConfig):
+            base_dir = Path(cfg.dir).expanduser() if cfg.dir else paths.output_dir(env_id, create=True)
+            stores.append(FileOutputStore(base_dir))
+        else:
+            assert False, f"Unknown output storage config type: {cfg.type}"
+    return stores
+
+
+class FileOutputStore(FileOutputBackend, OutputStore):
+    """File-backed output store. Inherits read from FileOutputBackend, adds write + retention."""
+
+    def __init__(self, base_dir: Path):
+        super().__init__(base_dir)
+
+    def create_writer(self, instance_id: InstanceID) -> FileOutputWriter:
+        path = self._base_dir / instance_id.job_id / f"{instance_id.run_id}.jsonl"
+        os.makedirs(path.parent, exist_ok=True)
+        return FileOutputWriter(str(path))
+
+    def enforce_retention(self, job_id: str, policy: RetentionPolicy):
+        job_dir = self._base_dir / job_id
+        if not job_dir.is_dir():
+            return
+
+        files = sorted(job_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
+        if policy.max_runs_per_job >= 0:
+            for f in files[policy.max_runs_per_job:]:
+                try:
+                    f.unlink()
+                except OSError:
+                    log.warning("Failed to delete output file: %s", f, exc_info=True)

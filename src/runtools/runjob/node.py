@@ -1,5 +1,4 @@
 import logging
-import os
 from abc import ABC, abstractmethod
 from concurrent.futures.thread import ThreadPoolExecutor
 from enum import Enum, auto
@@ -13,19 +12,21 @@ from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayou
 from runtools.runcore.criteria import SortOption
 from runtools.runcore.db import sqlite, PersistingObserver, PERSISTING_OBSERVER_PRIORITY
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
-    InProcessEnvironmentConfig, FileOutputStorageConfig, get_env_config, EnvironmentNotFoundError, \
-    DEFAULT_LOCAL_ENVIRONMENT, DEFAULT_TAIL_BUFFER_SIZE
+    InProcessEnvironmentConfig, get_env_config, EnvironmentNotFoundError, \
+    DEFAULT_LOCAL_ENVIRONMENT
+from runtools.runcore.output import DEFAULT_TAIL_BUFFER_SIZE
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
     InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, InstanceControlEvent, InstanceStatusEvent, \
-    JobInstanceDelegate
+    JobInstanceDelegate, InstanceLifecycleObserver
 from runtools.runcore.paths import ConfigFileNotFoundError
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.util import to_tuple, lock
 from runtools.runcore.util.socket import DatagramSocketClient
-from runtools.runjob import instance
+from runtools.runjob import instance, output
 from runtools.runjob.events import EventDispatcher
-from runtools.runjob.output import FileOutputStorage, OutputRouter, InMemoryTailBuffer
+from runtools.runcore.run import Stage
+from runtools.runjob.output import OutputRouter, InMemoryTailBuffer
 from runtools.runjob.server import LocalInstanceServer
 
 log = logging.getLogger(__name__)
@@ -123,9 +124,11 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
     """
     OBSERVERS_PRIORITY = 1000
 
-    def __init__(self, env_id, output_router_factory=None, features=(), transient=True):
+    def __init__(self, env_id, output_stores=(), tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE,
+                 features=(), transient=True):
         self._env_id = env_id
-        self._output_router_factory = output_router_factory
+        self._output_stores = tuple(output_stores)
+        self._tail_buffer_size = tail_buffer_size
         self._features = features
         self._transient = transient
         self._lock = Lock()
@@ -139,6 +142,11 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
     @property
     def env_id(self):
         return self._env_id
+
+    @property
+    @override
+    def output_backends(self):
+        return self._output_stores
 
     def _run_in_executor(self, fnc):
         with self._lock:
@@ -159,9 +167,8 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         for feature in self._features:
             feature.on_open()
 
-    def create_instance(self, instance_id, root_phase, *,
-                        output_sink=None, output_router=None, status_tracker=None,
-                        user_params=None) -> JobInstanceManaged:
+    def create_instance(self, instance_id, root_phase, *, output_sink=None, status_tracker=None, user_params=None) \
+            -> JobInstanceManaged:
         """
         Create a new job instance within this environment.
 
@@ -169,7 +176,6 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             instance_id (InstanceID): Instance identifier
             root_phase: Root phase of the job instance
             output_sink: Optional output sink (for text parsing, use OutputSink with ParsingPreprocessor)
-            output_router: Optional output router; built from output_router_factory when not provided
             status_tracker: Optional status tracker for the job
             user_params: Optional user-defined parameters
 
@@ -180,8 +186,9 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             InvalidStateError: If the environment is not opened or is already closed
             ValueError: If job_id is empty or None
         """
-        if output_router is None and self._output_router_factory:
-            output_router = self._output_router_factory(self._env_id, instance_id)
+        writers = [store.create_writer(instance_id) for store in self._output_stores]
+        tail_buffer = InMemoryTailBuffer(max_bytes=self._tail_buffer_size) if self._tail_buffer_size else None
+        output_router = OutputRouter(tail_buffer=tail_buffer, storages=writers)
         inst = instance.create(
             instance_id, self, root_phase,
             output_sink=output_sink,
@@ -307,6 +314,37 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
         if interrupt_received:
             raise KeyboardInterrupt
+
+
+RETENTION_OBSERVER_PRIORITY = PERSISTING_OBSERVER_PRIORITY + 10  # After persistence so the run is stored first
+
+
+class RetentionObserver(InstanceLifecycleObserver):
+    """Enforces retention policy on both persistence and output stores after each run ends."""
+
+    def __init__(self, persistence, output_stores, retention_policy):
+        self._persistence = persistence
+        self._output_stores = output_stores
+        self._retention_policy = retention_policy
+
+    def instance_lifecycle_update(self, event: InstanceLifecycleEvent):
+        if event.new_stage != Stage.ENDED:
+            return
+
+        job_id = event.job_run.metadata.job_id
+
+        def _enforce_persistence():
+            self._persistence.enforce_retention(job_id, self._retention_policy)
+
+        def _enforce_store(store):
+            return lambda: store.enforce_retention(job_id, self._retention_policy)
+
+        run_isolated_collect_exceptions(
+            f"Retention errors for job {job_id}",
+            _enforce_persistence,
+            *(_enforce_store(s) for s in self._output_stores),
+            suppress=True,
+        )
 
 
 def connect(env_id=None):
@@ -540,39 +578,6 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         return self._provider_sockets_listener(self._listener_status_socket_name)
 
 
-def default_output_router_factory(env_id, instance_id):
-    """Create a file-backed output router using the standard output directory."""
-    path = paths.output_dir(env_id, create=True) / instance_id.job_id / f"{instance_id.run_id}.jsonl"
-    os.makedirs(path.parent, exist_ok=True)
-    return OutputRouter(
-        tail_buffer=InMemoryTailBuffer(max_bytes=DEFAULT_TAIL_BUFFER_SIZE),
-        storages=[FileOutputStorage(path)])
-
-
-def _output_router_factory_from_config(env_id, output_config):
-    """Resolve output config into a factory that creates an OutputRouter per instance."""
-    file_dirs = []
-    for cfg in output_config.storages:
-        if not cfg.enabled:
-            continue
-        if isinstance(cfg, FileOutputStorageConfig):
-            file_dirs.append(Path(cfg.dir).expanduser() if cfg.dir else paths.output_dir(env_id, create=True))
-
-    tail_buffer_size = output_config.tail_buffer_size
-
-    def factory(_, instance_id):
-        storages = []
-        for base in file_dirs:
-            path = base / instance_id.job_id / f"{instance_id.run_id}.jsonl"
-            os.makedirs(path.parent, exist_ok=True)
-            storages.append(FileOutputStorage(path))
-        return OutputRouter(
-            tail_buffer=InMemoryTailBuffer(max_bytes=tail_buffer_size),
-            storages=storages)
-
-    return factory
-
-
 def create(env_config: EnvironmentConfigUnion) -> 'EnvironmentNodeBase':
     """Create an environment node from configuration.
 
@@ -586,8 +591,10 @@ def create(env_config: EnvironmentConfigUnion) -> 'EnvironmentNodeBase':
 
     if isinstance(env_config, LocalEnvironmentConfig):
         layout = StandardLocalNodeLayout.from_config(env_config)
-        output_router_factory = _output_router_factory_from_config(env_config.id, env_config.output)
-        return _local(env_config.id, persistence, layout, output_router_factory)
+        output_stores = output.create_stores(env_config.id, env_config.output.storages)
+        return _local(env_config.id, persistence, layout, output_stores,
+                      tail_buffer_size=env_config.output.tail_buffer_size,
+                      retention_policy=env_config.retention.to_policy())
 
     if isinstance(env_config, InProcessEnvironmentConfig):
         return in_process(env_config.id, persistence)
@@ -595,9 +602,10 @@ def create(env_config: EnvironmentConfigUnion) -> 'EnvironmentNodeBase':
     raise AssertionError(f"Unsupported environment config: {type(env_config)}.")
 
 
-def _local(env_id, persistence, node_layout, output_router_factory,
-           *, lock_factory=None, features=None, transient=True):
-    local_connector = connector._local(env_id, persistence, node_layout)
+def _local(env_id, persistence, node_layout, output_stores,
+           *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE, retention_policy=None,
+           lock_factory=None, features=None, transient=True):
+    local_connector = connector._local(env_id, persistence, node_layout, output_stores)
 
     api = LocalInstanceServer(node_layout.server_socket_path)
     event_dispatcher = EventDispatcher(DatagramSocketClient(), {
@@ -609,8 +617,9 @@ def _local(env_id, persistence, node_layout, output_router_factory,
     })
     lock_factory = lock_factory or lock.default_file_lock_factory()
     features = to_tuple(features)
-    return LocalNode(env_id, local_connector, persistence, output_router_factory,
-                     api, event_dispatcher, lock_factory, features, transient)
+    return LocalNode(env_id, local_connector, persistence, output_stores,
+                     api, event_dispatcher, lock_factory, features, transient,
+                     tail_buffer_size=tail_buffer_size, retention_policy=retention_policy)
 
 
 class LocalNode(EnvironmentNodeBase):
@@ -618,15 +627,20 @@ class LocalNode(EnvironmentNodeBase):
     Environment node implementation that uses composition to delegate environment connector functionality.
     """
 
-    def __init__(self, env_id, local_connector, persistence, output_router_factory, rpc_server, event_dispatcher,
-                 lock_factory, features, transient):
+    def __init__(self, env_id, local_connector, persistence, output_stores, rpc_server, event_dispatcher,
+                 lock_factory, features, transient, *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE,
+                 retention_policy=None):
         EnvironmentNodeBase.__init__(
-            self, env_id, output_router_factory=output_router_factory, features=features, transient=transient)
+            self, env_id, output_stores=output_stores, tail_buffer_size=tail_buffer_size,
+            features=features, transient=transient)
         self._connector = local_connector
         self._rpc_server = rpc_server
         self._event_dispatcher = event_dispatcher
         self._lock_factory = lock_factory
         self._persisting_observer = PersistingObserver(persistence)
+        self._retention_observer = (
+            RetentionObserver(persistence, output_stores, retention_policy) if retention_policy else None
+        )
 
     @property
     def persistence_enabled(self) -> bool:
@@ -666,12 +680,16 @@ class LocalNode(EnvironmentNodeBase):
 
     def _on_added(self, job_instance):
         job_instance.notifications.add_observer_lifecycle(self._persisting_observer, PERSISTING_OBSERVER_PRIORITY)
+        if self._retention_observer:
+            job_instance.notifications.add_observer_lifecycle(self._retention_observer, RETENTION_OBSERVER_PRIORITY)
         self._rpc_server.register_instance(job_instance)
         job_instance.notifications.add_observer_all_events(self._event_dispatcher)
 
     def _on_removed(self, job_instance):
         job_instance.notifications.remove_observer_all_events(self._event_dispatcher)
         self._rpc_server.unregister_instance(job_instance)
+        if self._retention_observer:
+            job_instance.notifications.remove_observer_lifecycle(self._retention_observer)
         job_instance.notifications.remove_observer_lifecycle(self._persisting_observer)
 
     def lock(self, lock_id):
