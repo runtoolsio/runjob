@@ -21,15 +21,19 @@ EXEC = 'j1'
 
 
 def test_passed_args(observer: TestLifecycleObserver):
-    instance.create(iid('j1'), None, TestPhase(EXEC), lifecycle_observers=[observer]).run()
+    job_instance = instance.create(iid('j1'), None, TestPhase(EXEC))
+    job_instance.notifications.add_observer_lifecycle(observer)
+    job_instance.run()
 
     assert observer.job_runs[0].metadata.job_id == 'j1'
     assert observer.stages == [Stage.RUNNING, Stage.ENDED]  # TODO CREATED
 
 
 def test_raise_exc(observer: TestLifecycleObserver):
+    job_instance = instance.create(iid('j1'), None, TestPhase(raise_exc=Exception))
+    job_instance.notifications.add_observer_lifecycle(observer)
     with pytest.raises(JobCompletionError) as exc_info:
-        instance.create(iid('j1'), None, TestPhase(raise_exc=Exception), lifecycle_observers=[observer]).run()
+        job_instance.run()
 
     assert isinstance(exc_info.value.__cause__, Exception)
     assert exc_info.value.termination.status == TerminationStatus.ERROR
@@ -38,8 +42,10 @@ def test_raise_exc(observer: TestLifecycleObserver):
 
 
 def test_raise_exec_terminated(observer: TestLifecycleObserver):
+    job_instance = instance.create(iid('j1'), None, TestPhase(fail=True))
+    job_instance.notifications.add_observer_lifecycle(observer)
     with pytest.raises(JobCompletionError) as exc_info:
-        instance.create(iid('j1'), None, TestPhase(fail=True), lifecycle_observers=[observer]).run()
+        job_instance.run()
 
     assert exc_info.value.termination.status == TerminationStatus.FAILED
     assert observer.stages == [Stage.RUNNING, Stage.ENDED]  # TODO CREATED
@@ -52,7 +58,8 @@ def test_observer_raises_exception():
     """
     observer = ExceptionRaisingObserver(Exception('Should be captured by runjob'))
     execution = TestPhase()
-    job_instance = instance.create(iid('j1'), None, execution, lifecycle_observers=[observer])
+    job_instance = instance.create(iid('j1'), None, execution)
+    job_instance.notifications.add_observer_lifecycle(observer)
     job_instance.run()
     assert execution.completed
     assert job_instance.snap().lifecycle.termination.status == TerminationStatus.COMPLETED

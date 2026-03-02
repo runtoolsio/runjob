@@ -10,7 +10,7 @@ from runtools.runcore import plugins, paths, connector, db, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
 from runtools.runcore.criteria import SortOption
-from runtools.runcore.db import sqlite, PersistingObserver, PERSISTING_OBSERVER_PRIORITY
+from runtools.runcore.db import sqlite, PersistingObserver, PERSISTING_OBSERVER_PRIORITY, DuplicateInstanceError
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
     InProcessEnvironmentConfig, get_env_config, EnvironmentNotFoundError, \
     DEFAULT_LOCAL_ENVIRONMENT
@@ -192,6 +192,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         output_router = OutputRouter(tail_buffer=tail_buffer, storages=writers)
         inst = instance.create(
             instance_id, self, root_phase,
+            activate=False,
             output_sink=output_sink,
             output_router=output_router,
             status_tracker=status_tracker,
@@ -224,8 +225,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
         Raises:
             InvalidStateError: If the context is not opened or is already closed.
-            ValueError: If a job instance with the same ID already exists in the environment.
-            DuplicateInstanceError: If the instance ID already exists in persistence.
+            DuplicateInstanceError: If the instance ID already exists in the environment or in persistence.
         """
         with self._lock:
             if not self._opened:
@@ -233,7 +233,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             if self._closing:
                 raise InvalidStateError("Cannot add job instance: environment container already closed")
             if job_instance.id in self._managed_instances:
-                raise ValueError("Instance with ID already exists in environment")
+                raise DuplicateInstanceError(job_instance.id)
 
             job_instance = JobInstanceManaged(self, job_instance)
             self._managed_instances[job_instance.id] = job_instance
@@ -243,6 +243,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             self._on_added(job_instance)
             for feature in self._features:
                 feature.on_instance_added(job_instance)
+            job_instance.activate()
         except Exception:
             with self._lock:
                 self._managed_instances.pop(job_instance.id, None)

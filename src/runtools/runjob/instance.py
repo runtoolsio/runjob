@@ -15,12 +15,11 @@ import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
 from threading import Thread
-from typing import Optional, List, Iterable, override
+from typing import Optional, List, override
 
 from runtools.runcore.job import (JobInstance, JobRun, JobInstanceMetadata, InstanceNotifications,
                                   InstanceObservableNotifications, InstancePhaseEvent, InstanceOutputEvent,
-                                  InstanceLifecycleObserver, InstanceLifecycleEvent,
-                                  InstanceControlEvent, ControlAction, InstanceStatusEvent)
+                                  InstanceLifecycleEvent, InstanceControlEvent, ControlAction, InstanceStatusEvent)
 from runtools.runcore.run import Fault, PhaseTransitionEvent, JobCompletionError, Stage, StopReason
 from runtools.runcore.util import utc_now
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer, OutputRouter
@@ -79,9 +78,9 @@ class JobInstanceContext(OutputContext):
 
 
 def create(instance_id, environment, root_phase, *,
+           activate=True,
            output_sink=None, output_router=None, tail_buffer_size=2 * 1024 * 1024,
            status_tracker=None,
-           lifecycle_observers: Iterable[InstanceLifecycleObserver] = (),
            error_hook=None,
            **user_params) -> JobInstance:
     """Create a job instance.
@@ -90,13 +89,14 @@ def create(instance_id, environment, root_phase, *,
         instance_id: Unique identifier for this instance
         environment: Environment configuration
         root_phase: Root phase of the job instance
+        activate: Wire phase observers and status tracking. Set to ``False`` when the caller
+                  needs to control activation timing (e.g. after a duplicate check).
         output_sink: Custom output sink (created automatically if not provided).
                      For text parsing, provide OutputSink(ParsingPreprocessor([KVParser()])).
         output_router: Output router for tail buffering and storage. Built from env config when created via
                        node; defaults to tail-only router for direct usage.
         tail_buffer_size: Max bytes for the default tail buffer (default 2 MB). Ignored if output_router is provided.
         status_tracker: Custom status tracker (created automatically if not provided)
-        lifecycle_observers: Observers for lifecycle events
         error_hook: Error handler for observer errors
         **user_params: Additional user-defined parameters stored in metadata
     """
@@ -113,10 +113,8 @@ def create(instance_id, environment, root_phase, *,
 
     inst = _JobInstance(instance_id, root_phase, environment, output_sink, output_router, status_tracker,
                         error_hook, user_params)
-    for so in lifecycle_observers:
-        inst.notifications.add_observer_lifecycle(so)
-    # noinspection PyProtectedMember
-    inst._post_created()
+    if activate:
+        inst.activate()
     return inst
 
 
@@ -137,9 +135,12 @@ class _JobInstance(JobInstance):
     def notifications(self) -> InstanceNotifications:
         return self._notifications
 
-    def _post_created(self):
-        # By observing the root phase, _JobInstance effectively receives transition events
-        # for all sub-phases within the hierarchy, as events propagate up to the root.
+    def activate(self):
+        """Wire phase observers and status tracking. Must be called before ``run()``.
+
+        Separated from construction to allow the caller to control timing — e.g. nodes call this
+        after the duplicate check so that a failed attempt doesn't leave stale observers on a shared phase.
+        """
         self._root_phase.add_phase_observer(self._on_phase_update)
         self._ctx.status_tracker._on_change = self._on_status_change
 
