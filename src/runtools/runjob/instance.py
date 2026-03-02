@@ -20,6 +20,7 @@ from typing import Optional, List, override
 from runtools.runcore.job import (JobInstance, JobRun, JobInstanceMetadata, InstanceNotifications,
                                   InstanceObservableNotifications, InstancePhaseEvent, InstanceOutputEvent,
                                   InstanceLifecycleEvent, InstanceControlEvent, ControlAction, InstanceStatusEvent)
+from runtools.runcore.err import InvalidStateError
 from runtools.runcore.run import Fault, PhaseTransitionEvent, JobCompletionError, Stage, StopReason
 from runtools.runcore.util import utc_now
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer, OutputRouter
@@ -129,6 +130,7 @@ class _JobInstance(JobInstance):
         self._output_router = output_router
         self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output_sink)
         self._faults: List[Fault] = []
+        self._activated = False
 
     @property
     @override
@@ -142,6 +144,7 @@ class _JobInstance(JobInstance):
         duplicate check and hook registration to avoid leaving stale observers on a shared phase
         if an earlier step fails.
         """
+        self._activated = True
         self._root_phase.add_phase_observer(self._on_phase_update)
         self._ctx.status_tracker._on_change = self._on_status_change
         return self
@@ -206,6 +209,8 @@ class _JobInstance(JobInstance):
                 self._faults.append(Fault.from_exception(OUTPUT_OBSERVER_ERROR, e))
 
     def run(self):
+        if not self._activated:
+            raise InvalidStateError("Instance must be activated before run()")
         with self._instance_scope():
             with self._output_router as router:
                 with self._output_sink.observer_context(self._process_output, router):
