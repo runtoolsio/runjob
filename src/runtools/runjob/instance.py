@@ -140,10 +140,23 @@ class _JobInstance(JobInstance):
 
         Separated from construction so that callers can control timing. Nodes call this after the
         duplicate check and hook registration to avoid leaving stale observers on a shared phase
-        if an earlier step fails. Future: may also fire a CREATED lifecycle event.
+        if an earlier step fails.
         """
         self._root_phase.add_phase_observer(self._on_phase_update)
         self._ctx.status_tracker._on_change = self._on_status_change
+        return self
+
+    def notify_created(self):
+        """Fire the CREATED lifecycle event. Call after ``activate()`` and all observers are registered."""
+        log.info(self._log('instance_created'))
+        try:
+            event = InstanceLifecycleEvent(self.snap(), Stage.CREATED, utc_now())
+            self._notifications.lifecycle_notification.observer_proxy.instance_lifecycle_update(event)
+        except ExceptionGroup as eg:
+            log.error("[lifecycle_observer_error]", exc_info=eg)
+            for exc in eg.exceptions:
+                self._faults.append(Fault.from_exception(LIFECYCLE_OBSERVER_ERROR, exc))
+        return self
 
     def _log(self, event: str, msg: str = '', *params):
         return ("{} instance=[{}] env=[{}] " + msg).format(

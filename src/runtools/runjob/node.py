@@ -243,7 +243,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             self._on_added(job_instance)
             for feature in self._features:
                 feature.on_instance_added(job_instance)
-            job_instance.activate()
+            job_instance.activate().notify_created()
         except Exception:
             with self._lock:
                 self._managed_instances.pop(job_instance.id, None)
