@@ -101,24 +101,11 @@ def field_based_handler(output_line: OutputLine, tracker: 'StatusTracker') -> No
     if result and not fields.get('operation'):
         tracker.result(result, timestamp)
 
-def message_as_event(output_line: OutputLine, tracker: 'StatusTracker') -> None:
-    """Treat every output message as an event."""
-    if output_line.message:
-        tracker.event(output_line.message)
-
-
-def combined_output_handler(output_line: OutputLine, tracker: 'StatusTracker') -> None:
-    """Combined handler: use fields if present, otherwise treat message as event."""
-    if output_line.fields:
-        field_based_handler(output_line, tracker)
-    elif output_line.message:
-        tracker.event(output_line.message)
-
 
 class StatusTracker(OutputObserver):
 
     def __init__(self, output_handler: OutputHandler = None, on_change: Callable[[], None] = None):
-        self._output_handler = output_handler or combined_output_handler
+        self._output_handler = output_handler or field_based_handler
         self._last_event: Optional[Event] = None
         self._operations: List[OperationTracker] = []
         self._warnings: List[Event] = []
