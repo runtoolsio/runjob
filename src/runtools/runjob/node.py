@@ -124,9 +124,10 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
     """
     OBSERVERS_PRIORITY = 1000
 
-    def __init__(self, env_id, output_stores=(), tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE,
+    def __init__(self, env_id, persistence, output_stores=(), tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE,
                  features=(), transient=True):
         self._env_id = env_id
+        self._persistence = persistence
         self._output_stores = tuple(output_stores)
         self._tail_buffer_size = tail_buffer_size
         self._features = features
@@ -224,6 +225,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         Raises:
             InvalidStateError: If the context is not opened or is already closed.
             ValueError: If a job instance with the same ID already exists in the environment.
+            DuplicateInstanceError: If the instance ID already exists in persistence.
         """
         with self._lock:
             if not self._opened:
@@ -237,6 +239,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             self._managed_instances[job_instance.id] = job_instance
 
         try:
+            self._persistence.init_job_run(job_instance.id, job_instance.metadata.user_params)
             self._on_added(job_instance)
             for feature in self._features:
                 feature.on_instance_added(job_instance)
@@ -379,8 +382,7 @@ class InProcessNode(EnvironmentNodeBase):
 
     def __init__(self, env_id, persistence, lock_factory, features, transient=True):
         self._notifications = InstanceObservableNotifications()
-        EnvironmentNodeBase.__init__(self, env_id, features=features, transient=transient)
-        self._persistence = persistence
+        EnvironmentNodeBase.__init__(self, env_id, persistence, features=features, transient=transient)
         self._lock_factory = lock_factory
         self._persisting_observer = PersistingObserver(persistence)
 
@@ -631,7 +633,7 @@ class LocalNode(EnvironmentNodeBase):
                  lock_factory, features, transient, *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE,
                  retention_policy=None):
         EnvironmentNodeBase.__init__(
-            self, env_id, output_stores=output_stores, tail_buffer_size=tail_buffer_size,
+            self, env_id, persistence, output_stores=output_stores, tail_buffer_size=tail_buffer_size,
             features=features, transient=transient)
         self._connector = local_connector
         self._rpc_server = rpc_server
