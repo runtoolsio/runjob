@@ -3,15 +3,15 @@ requires = ["flit_core >=3.2,<4"]
 build-backend = "flit_core.buildapi"
 
 [project]
-name = "runtools-runjob"
+name = "runtoolsio-runjob"
 authors = [{name = "Stan Svec", email = "dev@stansvec.com"}]
 readme = "README.md"
 license = {file = "LICENSE"}
 classifiers = ["License :: OSI Approved :: MIT License"]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dynamic = ["version", "description"]
 dependencies = [
-#    "runtools-runcore @ git+ssh://git@github.com/runtools/runcore",
+    "runtoolsio-runcore>=0.1,<0.2",
     "portalocker>=2.6.0",
     "pygrok>=1.0.0",
     "urllib3>=1.26.2",
