@@ -9,7 +9,7 @@ from typing import Dict, Optional, List, Callable, override
 from runtools.runcore import plugins, paths, connector, db, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
-from runtools.runcore.criteria import SortOption
+from runtools.runcore.criteria import JobRunCriteria, SortOption
 from runtools.runcore.db import sqlite, PersistingObserver, PERSISTING_OBSERVER_PRIORITY, DuplicateInstanceError
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
     InProcessEnvironmentConfig, get_env_config, EnvironmentNotFoundError, \
@@ -76,10 +76,18 @@ class _InstanceState(Enum):
 # noinspection PyProtectedMember
 class JobInstanceManaged(JobInstanceDelegate):
 
-    def __init__(self, env: 'EnvironmentNodeBase', wrapped: JobInstance):
+    def __init__(self, env: 'EnvironmentNodeBase', wrapped):
         super().__init__(wrapped)
         self._env: 'EnvironmentNodeBase' = env
         self._state: _InstanceState = _InstanceState.NONE
+
+    def activate(self):
+        self._wrapped.activate()
+        return self
+
+    def notify_created(self):
+        self._wrapped.notify_created()
+        return self
 
     def run(self, in_background=False):
         with self._env._lock:
@@ -429,6 +437,15 @@ class InProcessNode(EnvironmentNodeBase):
     def read_history_stats(self, run_match=None):
         return self._persistence.read_history_stats(run_match)
 
+    def remove_history_runs(self, run_match):
+        active = self.get_active_runs(run_match)
+        if active:
+            raise ValueError(f"Cannot remove active runs: {', '.join(str(r.instance_id) for r in active)}")
+        removed_ids = self._persistence.remove_job_runs(run_match)
+        for backend in self._output_stores:
+            backend.delete_output(*removed_ids)
+        return removed_ids
+
     def lock(self, lock_id):
         return self._lock_factory(lock_id)
 
@@ -675,6 +692,9 @@ class LocalNode(EnvironmentNodeBase):
 
     def read_history_stats(self, run_match=None):
         return self._connector.read_history_stats(run_match)
+
+    def remove_history_runs(self, run_match):
+        return self._connector.remove_history_runs(run_match)
 
     @property
     @override
