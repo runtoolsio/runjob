@@ -219,11 +219,11 @@ class _JobInstance(JobInstance):
                         try:
                             retval = self._root_phase.run(self._ctx)
                         except Exception as e:
-                            raise JobCompletionError(self.instance_id, self._root_phase.termination) from e
+                            raise JobCompletionError(self.id, self._root_phase.termination) from e
 
                         termination = self._root_phase.termination
                         if not termination.status.outcome.is_success:
-                            raise JobCompletionError(self.instance_id, termination)
+                            raise JobCompletionError(self.id, termination)
                         return retval
 
     def run_in_new_thread(self, daemon=False):
