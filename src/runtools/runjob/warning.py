@@ -63,9 +63,9 @@ class TimeWarningExtension(PhaseDecorator[C], Generic[C]):
         Args:
             ctx: The execution context to pass to the wrapped phase
         """
-        if not ctx or not hasattr(ctx, 'status_tracker') or not ctx.status_tracker:
+        if not ctx or not hasattr(ctx, 'tracker') or not ctx.tracker:
             log.warning(
-                f"status_tracker_unavailable phase=[{super().id}] result=[Time warning {self.warning_seconds}s ignored]")
+                f"tracker_unavailable phase=[{super().id}] result=[Time warning {self.warning_seconds}s ignored]")
         else:
             self._timer = Timer(self.warning_seconds, self._trigger_warning, args=[ctx])
             self._timer.daemon = True
@@ -85,7 +85,7 @@ class TimeWarningExtension(PhaseDecorator[C], Generic[C]):
         """
         log.warning(
             f"time_warning warn_sec=[{self.warning_seconds}] warn_text=[{self.warning_text}] phase=[{super().id}]")
-        ctx.status_tracker.warning(self.warning_text)
+        ctx.tracker.warning(self.warning_text)
 
     def _cancel_timer(self):
         """Cancel the warning timer if it's running."""
@@ -137,7 +137,7 @@ class OutputWarningExtension(PhaseDecorator[C], Generic[C]):
         Args:
             ctx: The execution context to pass to the wrapped phase
         """
-        if not ctx or not hasattr(ctx, 'status_tracker') or not ctx.status_tracker or not isinstance(ctx,
+        if not ctx or not hasattr(ctx, 'tracker') or not ctx.tracker or not isinstance(ctx,
                                                                                                      OutputContext):
             log.warning(f"incompatible_run_context phase=[{super().id}] result=[Output warning ignored]")
             return super().run(ctx)
@@ -155,7 +155,7 @@ class OutputWarningExtension(PhaseDecorator[C], Generic[C]):
                     log.warning(
                         f"output_warning pattern=[{pattern.pattern}] match=[{match.group(0)}]"
                         f" line=[{output_line.message}] phase=[{self.id}]")
-                    ctx.status_tracker.warning(warning_text)
+                    ctx.tracker.warning(warning_text)
 
         with ctx.output_sink.observer_context(pattern_output_observer):
             return super().run(ctx)
@@ -220,7 +220,7 @@ class _ExecTimeWarning(InstanceLifecycleObserver):
 
     def _check(self):
         if not self.job_instance.snap().lifecycle.termination:
-            self.job_instance.status_tracker.warning(self.text)
+            self.job_instance.tracker.warning(self.text)
 
     def __repr__(self):
         return "{}({!r}, {!r}, {!r})".format(
@@ -238,4 +238,4 @@ class _OutputMatchesWarning(InstanceOutputObserver):
     def instance_output_update(self, event: InstanceOutputEvent):
         m = self.regex.search(event.output_line.message)
         if m:
-            self.job_instance.status_tracker.warning(self.text)
+            self.job_instance.tracker.warning(self.text)

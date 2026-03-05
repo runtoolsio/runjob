@@ -55,10 +55,10 @@ class _JobInstanceLogFilter(logging.Filter):
 
 class JobInstanceContext(OutputContext):
 
-    def __init__(self, metadata, environment, status_tracker, output_sink):
+    def __init__(self, metadata, environment, tracker, output_sink):
         self._metadata = metadata
         self._environment = environment
-        self._status_tracker = status_tracker
+        self._tracker = tracker
         self._output_sink = output_sink
 
     @property
@@ -70,8 +70,8 @@ class JobInstanceContext(OutputContext):
         return self._environment
 
     @property
-    def status_tracker(self) -> StatusTracker:
-        return self._status_tracker
+    def tracker(self) -> StatusTracker:
+        return self._tracker
 
     @property
     def output_sink(self) -> OutputSink:
@@ -146,7 +146,7 @@ class _JobInstance(JobInstance):
         """
         self._activated = True
         self._root_phase.add_phase_observer(self._on_phase_update)
-        self._ctx.status_tracker._on_change = self._on_status_change
+        self._ctx.tracker._on_change = self._on_status_change
         return self
 
     def notify_created(self):
@@ -171,8 +171,8 @@ class _JobInstance(JobInstance):
         return self._metadata
 
     @property
-    def status_tracker(self):
-        return self._ctx.status_tracker
+    def tracker(self):
+        return self._ctx.tracker
 
     def find_phase_control(self, phase_filter):
         return self._root_phase.find_phase_control(phase_filter)
@@ -182,7 +182,7 @@ class _JobInstance(JobInstance):
         return self._output_router
 
     def snap(self) -> JobRun:
-        status = self._ctx.status_tracker.to_status() if self.status_tracker else None
+        status = self._ctx.tracker.to_status() if self.tracker else None
         return JobRun(
             self.metadata,
             self._root_phase.snap(),
