@@ -10,7 +10,7 @@ from typing import Optional, Callable, List, Iterable
 from runtools.runcore import paths
 from runtools.runcore.output import (OutputLine, OutputObserver, TailBuffer, Mode, OutputLineFactory, Output,
                                      TailNotSupportedError, OutputLocation, OutputBackend, FileOutputBackend,
-                                     FileOutputStorageConfig)
+                                     FileOutputStorageConfig, SourceIndex, SourceIndexBuilder)
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY, ObserverContext
 from runtools.runjob.phase import _current_phase
 
@@ -233,34 +233,42 @@ class FileOutputWriter(OutputWriter):
     #  This enables file output as the default (currently opt-in via --log) without risking
     #  disk exhaustion from long-running jobs.
 
-    def __init__(self, file_path: str, append: bool = True, encoding: str = "utf-8"):
-        self.file_path = file_path
-        self._mode = "a" if append else "w"
+    def __init__(self, file_path: str, append: bool = False, encoding: str = "utf-8"):
+        self.file_path = Path(file_path)
         self._encoding = encoding
+        self._closed = False
+        self._index_builder = SourceIndexBuilder()
 
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        self._file = open(file_path, self._mode, encoding=encoding)
+        os.makedirs(self.file_path.parent, exist_ok=True)
+        self._file = open(self.file_path, "ab" if append else "wb")
 
     @property
     def location(self):
         return OutputLocation(type="file", source=str(self.file_path))
 
     def store_line(self, line: OutputLine):
-        formatted = self._format_line(line)
-        self._file.write(formatted + "\n")
-        self._file.flush()  # or buffer and batch flush if needed
+        self._write_line(line)
+        self._file.flush()
 
     def store_lines(self, lines: List[OutputLine]):
         for line in lines:
-            self._file.write(self._format_line(line) + "\n")
+            self._write_line(line)
         self._file.flush()
 
-    def _format_line(self, line: OutputLine) -> str:
-        return json.dumps(line.serialize(), ensure_ascii=False)
+    def _write_line(self, line: OutputLine):
+        raw = (json.dumps(line.serialize(), ensure_ascii=False) + "\n").encode(self._encoding)
+        self._index_builder.track(line.source, len(raw))
+        self._file.write(raw)
 
     def close(self):
-        self._file.close()
+        if self._closed:
+            return
+        try:
+            if index := self._index_builder.build():
+                index.save(self.file_path)
+        finally:
+            self._closed = True
+            self._file.close()
 
     def __del__(self):
         try:
@@ -398,5 +406,6 @@ class FileOutputStore(FileOutputBackend, OutputStore):
             for f in files[policy.max_runs_per_job:]:
                 try:
                     f.unlink()
+                    SourceIndex.path_for(f).unlink(missing_ok=True)
                 except OSError:
                     log.warning("Failed to delete output file: %s", f, exc_info=True)
