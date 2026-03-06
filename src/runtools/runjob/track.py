@@ -11,7 +11,8 @@ OutputHandler = Callable[[OutputLine, 'StatusTracker'], None]
 
 class OperationTracker:
 
-    def __init__(self, name: str, created_at: datetime = None, on_update: Callable[[], None] = None):
+    def __init__(self, name: str, created_at: datetime = None, on_update: Callable[[], None] = None,
+                 source: str | None = None):
         self.name = name
         self.completed = None
         self.total = None
@@ -19,6 +20,7 @@ class OperationTracker:
         self.created_at = created_at or datetime.now(UTC).replace(tzinfo=None)
         self.updated_at = self.created_at
         self.result: Optional[str] = None
+        self.source = source
         self._on_update = on_update
 
     def update(self,
@@ -58,7 +60,8 @@ class OperationTracker:
             self.unit,
             self.created_at,
             self.updated_at,
-            self.result
+            self.result,
+            self.source,
         )
 
 
@@ -89,17 +92,19 @@ def field_based_handler(output_line: OutputLine, tracker: 'StatusTracker') -> No
 
     result = fields.get('result')
 
+    source = output_line.source
+
     if op_name := fields.get('operation'):
-        op = tracker.operation(op_name, timestamp)
+        op = tracker.operation(op_name, timestamp, source=source)
         if result:
             op.finish(result, timestamp)
         else:
             op.update(completed, total, fields.get('unit'), timestamp)
     elif event := fields.get('event'):
-        tracker.event(event, timestamp)
+        tracker.event(event, timestamp, source=source)
 
     if result and not fields.get('operation'):
-        tracker.result(result, timestamp)
+        tracker.result(result, timestamp, source=source)
 
 
 class StatusTracker(OutputObserver):
@@ -115,22 +120,22 @@ class StatusTracker(OutputObserver):
     def new_output(self, output_line: OutputLine):
         self._output_handler(output_line, self)
 
-    def event(self, text: str, timestamp=None) -> None:
+    def event(self, text: str, timestamp=None, source: str | None = None) -> None:
         timestamp = ts_or_now(timestamp)
-        self._last_event = Event(text, timestamp)
+        self._last_event = Event(text, timestamp, source)
         if self._on_change:
             self._on_change()
 
-    def warning(self, text: str, timestamp=None) -> None:
+    def warning(self, text: str, timestamp=None, source: str | None = None) -> None:
         timestamp = ts_or_now(timestamp)
-        self._warnings.append(Event(text, timestamp))
+        self._warnings.append(Event(text, timestamp, source))
         if self._on_change:
             self._on_change()
 
-    def operation(self, name: str, timestamp=None) -> OperationTracker:
+    def operation(self, name: str, timestamp=None, source: str | None = None) -> OperationTracker:
         op = self._get_operation(name)
         if not op:
-            op = OperationTracker(name, timestamp, on_update=self._on_change)
+            op = OperationTracker(name, timestamp, on_update=self._on_change, source=source)
             self._operations.append(op)
 
         return op
@@ -138,9 +143,9 @@ class StatusTracker(OutputObserver):
     def _get_operation(self, name: str) -> Optional[OperationTracker]:
         return next((op for op in self._operations if op.name == name), None)
 
-    def result(self, result: str, timestamp=None) -> None:
+    def result(self, result: str, timestamp=None, source: str | None = None) -> None:
         timestamp = ts_or_now(timestamp)
-        self._result = Event(result, timestamp)
+        self._result = Event(result, timestamp, source)
         if self._on_change:
             self._on_change()
 
