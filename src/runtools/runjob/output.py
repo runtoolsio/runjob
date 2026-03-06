@@ -244,7 +244,7 @@ class FileOutputWriter(OutputWriter):
 
     @property
     def location(self):
-        return OutputLocation(type="file", source=str(self.file_path))
+        return OutputLocation.for_file(self.file_path)
 
     def store_line(self, line: OutputLine):
         self._write_line(line)
