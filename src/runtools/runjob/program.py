@@ -11,7 +11,6 @@ from threading import Lock, Thread
 from typing import Optional
 
 import sys
-from runtools.runcore.output import OutputLineFactory
 from runtools.runcore.run import TerminationStatus
 from runtools.runjob.output import OutputContext
 from runtools.runjob.phase import BasePhase, PhaseTerminated
@@ -28,7 +27,6 @@ class ProgramPhase(BasePhase[OutputContext]):
         super().__init__(phase_id, ProgramPhase.TYPE)
         self.args = args
         self.read_output: bool = read_output
-        self._output_line_fact = OutputLineFactory()
         self._stop_lock = Lock()
         self._popen: Optional[Popen] = None
         self._status = None
@@ -95,4 +93,4 @@ class ProgramPhase(BasePhase[OutputContext]):
                 line_stripped = line.rstrip()
                 self._status = line_stripped
                 print(line_stripped, file=sys.stderr if is_err else sys.stdout)
-                run_ctx.output_sink.new_output(self._output_line_fact(line_stripped, is_err))
+                run_ctx.output_sink.new_output(line_stripped, is_err)

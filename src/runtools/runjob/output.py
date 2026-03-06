@@ -69,15 +69,16 @@ class OutputSink:
     def __init__(self, output_preprocessing: Optional[OutputPreprocessing] = None):
         self.preprocessing: Optional[OutputPreprocessing] = output_preprocessing
         self._output_notification = ObservableNotification[OutputObserver]()
+        self._line_factory = OutputLineFactory()
 
-    def new_output(self, output_line):
+    def new_output(self, message: str, is_error: bool = False, fields: dict | None = None):
         if getattr(_thread_local, 'processing_output', False):
             return
         _thread_local.processing_output = True
 
         try:
-            if output_line.source is None and (current := _current_phase.get(None)):
-                output_line = output_line.with_source(current.id)
+            phase = _current_phase.get(None)
+            output_line = self._line_factory(message, is_error, phase.id if phase else None, fields)
 
             if self.preprocessing:
                 output_line = self.preprocessing(output_line)
@@ -113,13 +114,12 @@ class OutputSink:
             def __init__(self, sink):
                 super().__init__()
                 self.sink = sink
-                self._output_line_fact = OutputLineFactory()
 
             def emit(self, record):
                 message = self.format(record) if format_record else record.getMessage()
                 is_error = record.levelno >= logging.ERROR
                 fields = self._extract_extras(record)
-                self.sink.new_output(self._output_line_fact(message, is_error, fields=fields))
+                self.sink.new_output(message, is_error, fields)
 
             def _extract_extras(self, record):
                 """Extract user-defined extras from LogRecord."""

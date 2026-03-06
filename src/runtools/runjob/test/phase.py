@@ -2,7 +2,7 @@ from threading import Event
 from typing import Optional
 
 from runtools.runcore.err import InvalidStateError
-from runtools.runcore.output import OutputLine
+
 from runtools.runcore.run import TerminationStatus, control_api
 from runtools.runjob.instance import JobInstanceContext
 from runtools.runjob.output import OutputSink, OutputContext
@@ -59,7 +59,7 @@ class TestPhase(BasePhase[JobInstanceContext]):
             self.wait.wait(2)
 
         if ctx and self.output_text and isinstance(ctx, OutputContext):
-            ctx.output_sink.new_output(OutputLine(self.output_text, ordinal=1, is_error=False))
+            ctx.output_sink.new_output(self.output_text)
 
         if self.exception:
             raise self.exception
