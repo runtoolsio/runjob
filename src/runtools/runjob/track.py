@@ -54,14 +54,14 @@ class OperationTracker:
 
     def to_operation(self) -> Operation:
         return Operation(
-            self.name,
-            self.completed,
-            self.total,
-            self.unit,
-            self.created_at,
-            self.updated_at,
-            self.result,
-            self.source,
+            name=self.name,
+            completed=self.completed,
+            total=self.total,
+            unit=self.unit,
+            created_at=self.created_at,
+            updated_at=self.updated_at,
+            result=self.result,
+            source=self.source,
         )
 
 
