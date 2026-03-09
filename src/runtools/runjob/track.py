@@ -96,7 +96,8 @@ def field_based_handler(output_line: OutputLine, tracker: 'StatusTracker') -> No
 
     if op_name := fields.get('operation'):
         op = tracker.operation(op_name, timestamp, source=source)
-        op.update(completed, total, fields.get('unit'), timestamp)
+        if completed is not None or total is not None or fields.get('unit') is not None:
+            op.update(completed, total, fields.get('unit'), timestamp)
         if result:
             op.finish(result, timestamp)
     elif event := fields.get('event'):
