@@ -89,6 +89,8 @@ def field_based_handler(output_line: OutputLine, tracker: 'StatusTracker') -> No
     timestamp = _parse_timestamp(fields.get('timestamp'))
     completed = convert_if_number(fields.get('completed'))
     total = convert_if_number(fields.get('total'))
+    if total == 0:
+        total = None  # Zero total means caller doesn't know the total
 
     result = fields.get('result')
 
