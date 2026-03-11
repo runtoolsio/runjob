@@ -20,6 +20,7 @@ class OperationTracker:
         self.created_at = created_at or datetime.now(UTC).replace(tzinfo=None)
         self.updated_at = self.created_at
         self.result: Optional[str] = None
+        self.failed: bool = False
         self.source = source
         self._on_update = on_update
 
@@ -38,8 +39,9 @@ class OperationTracker:
         if self._on_update:
             self._on_update()
 
-    def finish(self, result: str, timestamp: Optional[datetime] = None) -> None:
+    def finish(self, result: str, timestamp: Optional[datetime] = None, failed: bool = False) -> None:
         self.result = result
+        self.failed = failed
         self.updated_at = timestamp or datetime.now(UTC).replace(tzinfo=None)
         if self._on_update:
             self._on_update()
@@ -61,6 +63,7 @@ class OperationTracker:
             created_at=self.created_at,
             updated_at=self.updated_at,
             result=self.result,
+            failed=self.failed,
             source=self.source,
         )
 
@@ -78,9 +81,10 @@ def _parse_timestamp(value):
 def field_based_handler(output_line: OutputLine, tracker: 'StatusTracker') -> None:
     """Process output lines that have structured fields.
 
-    Expects field names: event, operation, completed, total, unit, result, timestamp.
+    Expects field names: event, operation, completed, total, unit, result, failed, timestamp.
     ``operation`` identifies a tracked operation. ``event`` is a standalone status message.
     ``result`` with ``operation`` finishes that operation; ``result`` alone sets the global result.
+    ``failed`` with ``operation`` finishes that operation as failed (result=failed value, failed=True).
     """
     if not output_line.fields:
         return
@@ -100,7 +104,9 @@ def field_based_handler(output_line: OutputLine, tracker: 'StatusTracker') -> No
         op = tracker.operation(op_name, timestamp, source=source)
         if completed is not None or total is not None or fields.get('unit') is not None:
             op.update(completed, total, fields.get('unit'), timestamp)
-        if result:
+        if failed := fields.get('failed'):
+            op.finish(failed, timestamp, failed=True)
+        elif result:
             op.finish(result, timestamp)
     elif event := fields.get('event'):
         tracker.event(event, timestamp, source=source)

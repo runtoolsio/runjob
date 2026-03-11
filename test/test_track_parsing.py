@@ -164,3 +164,47 @@ def test_operation_lifecycle():
     assert tracker.to_status().operations[0].finished
 
 
+def test_operation_failed():
+    """Operations can be marked as failed via the 'failed' field."""
+    tracker = StatusTracker()
+
+    tracker.new_output(OutputLine('msg', 1, fields={
+        'operation': 'uploading', 'completed': 50, 'total': 100
+    }))
+    op = tracker.to_status().operations[0]
+    assert not op.finished
+    assert not op.failed
+
+    tracker.new_output(OutputLine('msg', 2, fields={
+        'operation': 'uploading', 'failed': 'connection timeout'
+    }))
+    op = tracker.to_status().operations[0]
+    assert op.finished
+    assert op.failed
+    assert op.result == 'connection timeout'
+
+
+def test_failed_takes_precedence_over_result():
+    """When both 'failed' and 'result' are present, 'failed' wins."""
+    tracker = StatusTracker()
+
+    tracker.new_output(OutputLine('msg', 1, fields={
+        'operation': 'upload', 'failed': 'error', 'result': 'done'
+    }))
+    op = tracker.to_status().operations[0]
+    assert op.failed
+    assert op.result == 'error'
+
+
+def test_zero_total_treated_as_none():
+    """Total of 0 is treated as unknown (None)."""
+    tracker = StatusTracker()
+
+    tracker.new_output(OutputLine('msg', 1, fields={
+        'operation': 'parsing', 'completed': 50, 'total': 0
+    }))
+    op = tracker.to_status().operations[0]
+    assert op.total is None
+    assert op.completed == 50
+
+
