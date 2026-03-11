@@ -16,7 +16,7 @@ class OperationTracker:
         self.name = name
         self.completed = None
         self.total = None
-        self.unit = ''
+        self.unit = None
         self.created_at = created_at or datetime.now(UTC).replace(tzinfo=None)
         self.updated_at = self.created_at
         self.result: Optional[str] = None
@@ -104,8 +104,8 @@ def field_based_handler(output_line: OutputLine, tracker: 'StatusTracker') -> No
         op = tracker.operation(op_name, timestamp, source=source)
         if completed is not None or total is not None or fields.get('unit') is not None:
             op.update(completed, total, fields.get('unit'), timestamp)
-        if failed := fields.get('failed'):
-            op.finish(failed, timestamp, failed=True)
+        if fail_reason := fields.get('failed'):
+            op.finish(fail_reason, timestamp, failed=True)
         elif result:
             op.finish(result, timestamp)
     elif event := fields.get('event'):
