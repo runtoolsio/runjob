@@ -8,14 +8,13 @@ from threading import Lock, local
 from typing import Optional, Callable, List, Iterable
 
 from runtools.runcore import paths
+from runtools.runcore.job import InstanceID
 from runtools.runcore.output import (OutputLine, OutputObserver, TailBuffer, Mode, OutputLineFactory, Output,
                                      TailNotSupportedError, OutputLocation, OutputBackend, FileOutputBackend,
                                      FileOutputStorageConfig, SourceIndex, SourceIndexBuilder)
+from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY, ObserverContext
 from runtools.runjob.phase import _current_phase
-
-from runtools.runcore.job import InstanceID
-from runtools.runcore.retention import RetentionPolicy
 
 log = logging.getLogger(__name__)
 
@@ -392,7 +391,7 @@ class FileOutputStore(FileOutputBackend, OutputStore):
         super().__init__(base_dir)
 
     def create_writer(self, instance_id: InstanceID) -> FileOutputWriter:
-        path = self._base_dir / instance_id.job_id / f"{instance_id.run_id}.jsonl"
+        path = self._output_path(instance_id)
         os.makedirs(path.parent, exist_ok=True)
         return FileOutputWriter(str(path))
 

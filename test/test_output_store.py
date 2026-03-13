@@ -23,7 +23,7 @@ def _touch(path: Path, content=""):
 
 def test_create_writer(store, tmp_path):
     writer = store.create_writer(iid('myjob', 'run1'))
-    assert writer.file_path == tmp_path / 'myjob' / 'run1.jsonl'
+    assert writer.file_path == tmp_path / 'myjob' / 'run1__1.jsonl'
 
 
 def test_enforce_retention_prunes_oldest_files(store, tmp_path):
