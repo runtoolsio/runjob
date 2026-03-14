@@ -10,14 +10,15 @@ from runtools.runcore import plugins, paths, connector, db, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
 from runtools.runcore.criteria import SortOption
-from runtools.runcore.db import sqlite, PersistingObserver, PERSISTING_OBSERVER_PRIORITY, DuplicateInstanceError
+from runtools.runcore.db import sqlite, PersistingObserver, PERSISTING_OBSERVER_PRIORITY
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
     InProcessEnvironmentConfig, get_env_config, EnvironmentNotFoundError, \
     DEFAULT_LOCAL_ENVIRONMENT
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
     InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, InstanceControlEvent, InstanceStatusEvent, \
-    JobInstanceDelegate, InstanceLifecycleObserver, InstanceID, DuplicateStrategy
+    JobInstanceDelegate, InstanceLifecycleObserver, InstanceID, DuplicateStrategy, \
+    DuplicateInstanceError, SuppressedDuplicate, MaxRerunReached
 from runtools.runcore.output import DEFAULT_TAIL_BUFFER_SIZE
 from runtools.runcore.paths import ConfigFileNotFoundError
 from runtools.runcore.plugins import Plugin
@@ -141,7 +142,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         self._idle_condition = Condition(self._lock)
         # Fields guarded by lock below:
         self._admitting_ids: Set[InstanceID] = set()
-        self._managed_instances: Dict[str, JobInstanceManaged] = {}
+        self._managed_instances: Dict[InstanceID, JobInstanceManaged] = {}
         self._opened = False
         self._closing = False
         self._executor = None
@@ -203,18 +204,21 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
     def _handle_duplicate(self, instance_id, user_params, duplicate_strategy):
         if duplicate_strategy == DuplicateStrategy.RERUN:
-            if instance_id.ordinal > 10:  # TODO
-                raise DuplicateInstanceError(instance_id)
+            if instance_id.ordinal > 10:  # TODO: configurable per job
+                self._persistence.record_duplicate_submission(instance_id.job_id, instance_id.run_id,
+                                                              duplicate_strategy)
+                raise MaxRerunReached(instance_id, instance_id.ordinal)
             return self._admit_instance(instance_id.increment_ordinal(), user_params, duplicate_strategy)
 
-        if duplicate_strategy == DuplicateStrategy.IGNORE:
-            pass
-        if duplicate_strategy == DuplicateStrategy.SKIP:
-            pass
+        if duplicate_strategy == DuplicateStrategy.SUPPRESS:
+            self._persistence.record_duplicate_submission(instance_id.job_id, instance_id.run_id, duplicate_strategy)
+            raise SuppressedDuplicate(instance_id)
 
+        self._persistence.record_duplicate_submission(instance_id.job_id, instance_id.run_id, duplicate_strategy)
         raise DuplicateInstanceError(instance_id)
 
-    def create_instance(self, instance_id, root_phase, *, duplicate_strategy=DuplicateStrategy.SKIP, output_sink=None,
+    def create_instance(self, instance_id, root_phase, *, duplicate_strategy=DuplicateStrategy.DUPLICATE,
+                        output_sink=None,
                         status_tracker=None, user_params=None) \
             -> JobInstanceManaged:
         """
