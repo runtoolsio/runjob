@@ -117,12 +117,12 @@ def test_duplicate_instance_raises(env):
 
 
 def test_duplicate_rerun_increments_ordinal(env):
-    """With RERUN strategy, a duplicate admission succeeds with incremented ordinal."""
+    """With RERUN policy, a duplicate admission succeeds with incremented ordinal."""
     instance_id = InstanceID("rerun_job", "run1")
-    first = env.create_instance(instance_id, TestPhase(), duplicate_strategy=DuplicateStrategy.RERUN)
+    first = env.create_instance(instance_id, TestPhase(), on_duplicate=DuplicateStrategy.rerun())
     first.run()
 
-    second = env.create_instance(instance_id, TestPhase(), duplicate_strategy=DuplicateStrategy.RERUN)
+    second = env.create_instance(instance_id, TestPhase(), on_duplicate=DuplicateStrategy.rerun())
     assert second.id.ordinal == 2
     second.run()
 
@@ -133,7 +133,7 @@ def test_rerun_multiple_ordinals(env):
     ordinals = []
 
     for _ in range(3):
-        inst = env.create_instance(instance_id, TestPhase(), duplicate_strategy=DuplicateStrategy.RERUN)
+        inst = env.create_instance(instance_id, TestPhase(), on_duplicate=DuplicateStrategy.rerun())
         ordinals.append(inst.id.ordinal)
         inst.run()
 

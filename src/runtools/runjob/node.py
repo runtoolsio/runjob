@@ -10,6 +10,7 @@ from runtools.runcore import plugins, paths, connector, db, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
 from runtools.runcore.criteria import SortOption
+from runtools.runcore.db import DuplicateSubmission
 from runtools.runcore.db import sqlite, PersistingObserver, PERSISTING_OBSERVER_PRIORITY
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
     InProcessEnvironmentConfig, get_env_config, EnvironmentNotFoundError, \
@@ -17,13 +18,14 @@ from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig,
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
     InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, InstanceControlEvent, InstanceStatusEvent, \
-    JobInstanceDelegate, InstanceLifecycleObserver, InstanceID, DuplicateStrategy, \
-    DuplicateInstanceError, SuppressedDuplicate, MaxRerunReached
+    JobInstanceDelegate, InstanceLifecycleObserver, InstanceID, \
+    DuplicateInstanceError, DuplicateStrategy
 from runtools.runcore.output import DEFAULT_TAIL_BUFFER_SIZE
 from runtools.runcore.paths import ConfigFileNotFoundError
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import Stage
 from runtools.runcore.util import to_tuple, lock
+from runtools.runcore.util.dt import utc_now
 from runtools.runcore.util.socket import DatagramSocketClient
 from runtools.runjob import instance, output
 from runtools.runjob.events import EventDispatcher
@@ -175,7 +177,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         for feature in self._features:
             feature.on_open()
 
-    def _admit_instance(self, instance_id, user_params, duplicate_strategy):
+    def _admit_instance(self, instance_id, user_params, on_duplicate):
         is_duplicate = False
         with self._lock:
             if not self._opened:
@@ -189,7 +191,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
         if is_duplicate:
             # Call outside the lock to avoid self-deadlock during recursive admission
-            return self._handle_duplicate(instance_id, user_params, duplicate_strategy)
+            return self._handle_duplicate(instance_id, user_params, on_duplicate)
 
         try:
             self._persistence.init_job_run(instance_id, user_params)
@@ -199,26 +201,19 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
                 self._admitting_ids.remove(instance_id)
                 self._idle_condition.notify()
             if isinstance(e, DuplicateInstanceError):
-                return self._handle_duplicate(instance_id, user_params, duplicate_strategy)
+                return self._handle_duplicate(instance_id, user_params, on_duplicate)
             raise
 
-    def _handle_duplicate(self, instance_id, user_params, duplicate_strategy):
-        if duplicate_strategy == DuplicateStrategy.RERUN:
-            if instance_id.ordinal > 10:  # TODO: configurable per job
-                self._persistence.record_duplicate_submission(instance_id.job_id, instance_id.run_id,
-                                                              duplicate_strategy)
-                raise MaxRerunReached(instance_id, instance_id.ordinal)
-            return self._admit_instance(instance_id.increment_ordinal(), user_params, duplicate_strategy)
+    def _handle_duplicate(self, instance_id, user_params, on_duplicate):
+        try:
+            next_id = on_duplicate(instance_id)
+        except DuplicateInstanceError as e:
+            submission = DuplicateSubmission(instance_id.job_id, instance_id.run_id, utc_now(), e.duplicate_type)
+            self._persistence.record_duplicate_submission(submission)
+            raise
+        return self._admit_instance(next_id, user_params, on_duplicate)
 
-        if duplicate_strategy == DuplicateStrategy.SUPPRESS:
-            self._persistence.record_duplicate_submission(instance_id.job_id, instance_id.run_id, duplicate_strategy)
-            raise SuppressedDuplicate(instance_id)
-
-        self._persistence.record_duplicate_submission(instance_id.job_id, instance_id.run_id, duplicate_strategy)
-        raise DuplicateInstanceError(instance_id)
-
-    def create_instance(self, instance_id, root_phase, *, duplicate_strategy=DuplicateStrategy.DUPLICATE,
-                        output_sink=None,
+    def create_instance(self, instance_id, root_phase, *, on_duplicate=None, output_sink=None,
                         status_tracker=None, user_params=None) \
             -> JobInstanceManaged:
         """
@@ -227,7 +222,9 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         Args:
             instance_id (InstanceID): Instance identifier
             root_phase: Root phase of the job instance
-            duplicate_strategy (DuplicateStrategy): Policy for handling duplicate instance IDs during admission
+            on_duplicate: Duplicate policy callable. Called with the conflicting InstanceID; should return
+                the next InstanceID to try, or raise a DuplicateInstanceError subclass. Defaults to
+                ``DuplicateStrategy.duplicate`` which always raises.
             output_sink: Optional output sink (for text parsing, use OutputSink with ParsingPreprocessor)
             status_tracker: Optional status tracker for the job
             user_params: Optional user-defined parameters
@@ -237,9 +234,10 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
         Raises:
             InvalidStateError: If the environment is not opened or is already closed
-            DuplicateInstanceError: If duplicate detected and strategy does not resolve it
+            DuplicateInstanceError: If duplicate detected and policy does not resolve it
         """
-        instance_id = self._admit_instance(instance_id, user_params, duplicate_strategy)
+        on_duplicate = on_duplicate or DuplicateStrategy.duplicate
+        instance_id = self._admit_instance(instance_id, user_params, on_duplicate)
         job_instance = None
         try:
             writers = [store.create_writer(instance_id) for store in self._output_stores]
