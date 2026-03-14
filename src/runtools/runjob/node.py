@@ -4,28 +4,28 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from enum import Enum, auto
 from pathlib import Path
 from threading import Lock, Condition
-from typing import Dict, Optional, List, Callable, override
+from typing import Dict, Optional, List, Callable, override, Set
 
 from runtools.runcore import plugins, paths, connector, db, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
-from runtools.runcore.criteria import JobRunCriteria, SortOption
+from runtools.runcore.criteria import SortOption
 from runtools.runcore.db import sqlite, PersistingObserver, PERSISTING_OBSERVER_PRIORITY, DuplicateInstanceError
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
     InProcessEnvironmentConfig, get_env_config, EnvironmentNotFoundError, \
     DEFAULT_LOCAL_ENVIRONMENT
-from runtools.runcore.output import DEFAULT_TAIL_BUFFER_SIZE
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
     InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, InstanceControlEvent, InstanceStatusEvent, \
-    JobInstanceDelegate, InstanceLifecycleObserver
+    JobInstanceDelegate, InstanceLifecycleObserver, InstanceID, DuplicateStrategy
+from runtools.runcore.output import DEFAULT_TAIL_BUFFER_SIZE
 from runtools.runcore.paths import ConfigFileNotFoundError
 from runtools.runcore.plugins import Plugin
+from runtools.runcore.run import Stage
 from runtools.runcore.util import to_tuple, lock
 from runtools.runcore.util.socket import DatagramSocketClient
 from runtools.runjob import instance, output
 from runtools.runjob.events import EventDispatcher
-from runtools.runcore.run import Stage
 from runtools.runjob.output import OutputRouter, InMemoryTailBuffer
 from runtools.runjob.server import LocalInstanceServer
 
@@ -114,6 +114,7 @@ class JobInstanceManaged(JobInstanceDelegate):
     def _allows_env_closing(self):
         return self._state in (_InstanceState.NONE, _InstanceState.DETACHED)
 
+
 class EnvironmentNodeBase(EnvironmentNode, ABC):
     """
     Implementation details
@@ -141,8 +142,9 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         self._features = features
         self._transient = transient
         self._lock = Lock()
-        self._detached_condition = Condition(self._lock)
+        self._idle_condition = Condition(self._lock)
         # Fields guarded by lock below:
+        self._admitting_ids: Set[InstanceID] = set()
         self._managed_instances: Dict[str, JobInstanceManaged] = {}
         self._opened = False
         self._closing = False
@@ -176,7 +178,48 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         for feature in self._features:
             feature.on_open()
 
-    def create_instance(self, instance_id, root_phase, *, output_sink=None, status_tracker=None, user_params=None) \
+    def _admit_instance(self, instance_id, user_params, duplicate_strategy):
+        is_duplicate = False
+        with self._lock:
+            if not self._opened:
+                raise InvalidStateError("Cannot add job instance: environment container not opened")
+            if self._closing:
+                raise InvalidStateError("Cannot add job instance: environment container already closed")
+            if instance_id in self._admitting_ids or instance_id in self._managed_instances:
+                is_duplicate = True
+            else:
+                self._admitting_ids.add(instance_id)
+
+        if is_duplicate:
+            # Call outside the lock to avoid self-deadlock during recursive admission
+            return self._handle_duplicate(instance_id, user_params, duplicate_strategy)
+
+        try:
+            self._persistence.init_job_run(instance_id, user_params)
+            return instance_id
+        except BaseException as e:
+            with self._idle_condition:
+                self._admitting_ids.remove(instance_id)
+                self._idle_condition.notify()
+            if isinstance(e, DuplicateInstanceError):
+                return self._handle_duplicate(instance_id, user_params, duplicate_strategy)
+            raise
+
+    def _handle_duplicate(self, instance_id, user_params, duplicate_strategy):
+        if duplicate_strategy == DuplicateStrategy.RERUN:
+            if instance_id.ordinal > 10:  # TODO
+                raise DuplicateInstanceError(instance_id)
+            return self._admit_instance(instance_id.increment_ordinal(), user_params, duplicate_strategy)
+
+        if duplicate_strategy == DuplicateStrategy.IGNORE:
+            pass
+        if duplicate_strategy == DuplicateStrategy.SKIP:
+            pass
+
+        raise DuplicateInstanceError(instance_id)
+
+    def create_instance(self, instance_id, root_phase, *, duplicate_strategy=DuplicateStrategy.SKIP, output_sink=None,
+                        status_tracker=None, user_params=None) \
             -> JobInstanceManaged:
         """
         Create a new job instance within this environment.
@@ -184,6 +227,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         Args:
             instance_id (InstanceID): Instance identifier
             root_phase: Root phase of the job instance
+            duplicate_strategy (DuplicateStrategy): Policy for handling duplicate instance IDs during admission
             output_sink: Optional output sink (for text parsing, use OutputSink with ParsingPreprocessor)
             status_tracker: Optional status tracker for the job
             user_params: Optional user-defined parameters
@@ -193,20 +237,45 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
         Raises:
             InvalidStateError: If the environment is not opened or is already closed
-            ValueError: If job_id is empty or None
+            DuplicateInstanceError: If duplicate detected and strategy does not resolve it
         """
-        writers = [store.create_writer(instance_id) for store in self._output_stores]
-        tail_buffer = InMemoryTailBuffer(max_bytes=self._tail_buffer_size) if self._tail_buffer_size else None
-        output_router = OutputRouter(tail_buffer=tail_buffer, storages=writers)
-        inst = instance.create(
-            instance_id, self, root_phase,
-            activate=False,
-            output_sink=output_sink,
-            output_router=output_router,
-            status_tracker=status_tracker,
-            **(user_params or {})
-        )
-        return self._add_instance(inst)
+        instance_id = self._admit_instance(instance_id, user_params, duplicate_strategy)
+        job_instance = None
+        try:
+            writers = [store.create_writer(instance_id) for store in self._output_stores]
+            tail_buffer = InMemoryTailBuffer(max_bytes=self._tail_buffer_size) if self._tail_buffer_size else None
+            output_router = OutputRouter(tail_buffer=tail_buffer, storages=writers)
+            inst = instance.create(
+                instance_id, self, root_phase,
+                activate=False,
+                output_sink=output_sink,
+                output_router=output_router,
+                status_tracker=status_tracker,
+                **(user_params or {})
+            )
+
+            with self._lock:
+                self._admitting_ids.remove(instance_id)
+                job_instance = JobInstanceManaged(self, inst)
+                self._managed_instances[job_instance.id] = job_instance
+
+            self._on_added(job_instance)
+            for feature in self._features:
+                feature.on_instance_added(job_instance)
+
+            job_instance.activate().notify_created()
+        except:
+            with self._idle_condition:
+                if job_instance:
+                    self._managed_instances.pop(job_instance.id, None)
+                self._admitting_ids.discard(instance_id)
+                self._idle_condition.notify()
+            raise
+
+        return job_instance
+
+    def _on_added(self, job_instance):
+        pass
 
     @property
     def instances(self):
@@ -220,47 +289,6 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         """
         with self._lock:
             return list(self._managed_instances.values())
-
-    def _add_instance(self, job_instance) -> JobInstanceManaged:
-        """
-        Add a job instance to the environment.
-
-        Args:
-            job_instance (JobInstance): The job instance to be added.
-
-        Returns:
-            JobInstance: The added job instance.
-
-        Raises:
-            InvalidStateError: If the context is not opened or is already closed.
-            DuplicateInstanceError: If the instance ID already exists in the environment or in persistence.
-        """
-        with self._lock:
-            if not self._opened:
-                raise InvalidStateError("Cannot add job instance: environment container not opened")
-            if self._closing:
-                raise InvalidStateError("Cannot add job instance: environment container already closed")
-            if job_instance.id in self._managed_instances:
-                raise DuplicateInstanceError(job_instance.id)
-
-            job_instance = JobInstanceManaged(self, job_instance)
-            self._managed_instances[job_instance.id] = job_instance
-
-        try:
-            self._persistence.init_job_run(job_instance.id, job_instance.metadata.user_params)
-            self._on_added(job_instance)
-            for feature in self._features:
-                feature.on_instance_added(job_instance)
-            job_instance.activate().notify_created()
-        except Exception:
-            with self._lock:
-                self._managed_instances.pop(job_instance.id, None)
-            raise
-
-        return job_instance
-
-    def _on_added(self, job_instance):
-        pass
 
     def _detach_instance(self, job_instance_id, remove):
         """
@@ -287,9 +315,9 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
                 feature.on_instance_removed(job_instance)
 
         if detach:
-            with self._detached_condition:
+            with self._idle_condition:
                 job_instance._state = _InstanceState.DETACHED
-                self._detached_condition.notify()
+                self._idle_condition.notify()
 
         return job_instance
 
@@ -302,16 +330,17 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
     def close(self):
         interrupt_received = False
-        with self._detached_condition:
+        with self._idle_condition:
             # TODO Consider adding a timeout to prevent indefinite blocking if an instance never reaches DETACHED
             if self._closing:
                 return
 
             self._closing = True
             # noinspection PyProtectedMember
-            while not all((i._allows_env_closing() for i in self._managed_instances.values())):
+            while self._admitting_ids or not all(
+                    i._allows_env_closing() for i in self._managed_instances.values()):
                 try:
-                    self._detached_condition.wait()
+                    self._idle_condition.wait()
                 except KeyboardInterrupt:
                     interrupt_received = True
                     break
