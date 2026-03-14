@@ -81,10 +81,6 @@ class JobInstanceManaged(JobInstanceDelegate):
         self._env: 'EnvironmentNodeBase' = env
         self._state: _InstanceState = _InstanceState.NONE
 
-    def activate(self):
-        self._wrapped.activate()
-        return self
-
     def notify_created(self):
         self._wrapped.notify_created()
         return self
@@ -247,7 +243,6 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             output_router = OutputRouter(tail_buffer=tail_buffer, storages=writers)
             inst = instance.create(
                 instance_id, self, root_phase,
-                activate=False,
                 output_sink=output_sink,
                 output_router=output_router,
                 status_tracker=status_tracker,
@@ -263,7 +258,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             for feature in self._features:
                 feature.on_instance_added(job_instance)
 
-            job_instance.activate().notify_created()
+            job_instance.notify_created()
         except:
             with self._idle_condition:
                 if job_instance:

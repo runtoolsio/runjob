@@ -20,7 +20,6 @@ from typing import Optional, List, override
 from runtools.runcore.job import (JobInstance, JobRun, JobInstanceMetadata, InstanceNotifications,
                                   InstanceObservableNotifications, InstancePhaseEvent, InstanceOutputEvent,
                                   InstanceLifecycleEvent, InstanceControlEvent, ControlAction, InstanceStatusEvent)
-from runtools.runcore.err import InvalidStateError
 from runtools.runcore.run import Fault, PhaseTransitionEvent, JobCompletionError, Stage, StopReason
 from runtools.runcore.util import utc_now
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer, OutputRouter
@@ -79,7 +78,6 @@ class JobInstanceContext(OutputContext):
 
 
 def create(instance_id, environment, root_phase, *,
-           activate=True,
            output_sink=None, output_router=None, tail_buffer_size=2 * 1024 * 1024,
            status_tracker=None,
            error_hook=None,
@@ -90,8 +88,6 @@ def create(instance_id, environment, root_phase, *,
         instance_id: Unique identifier for this instance
         environment: Environment configuration
         root_phase: Root phase of the job instance
-        activate: Wire phase observers and status tracking. Set to ``False`` when the caller
-                  needs to control activation timing (e.g. after a duplicate check).
         output_sink: Custom output sink (created automatically if not provided).
                      For text parsing, provide OutputSink(ParsingPreprocessor([KVParser()])).
         output_router: Output router for tail buffering and storage. Built from env config when created via
@@ -114,8 +110,8 @@ def create(instance_id, environment, root_phase, *,
 
     inst = _JobInstance(instance_id, root_phase, environment, output_sink, output_router, status_tracker,
                         error_hook, user_params)
-    if activate:
-        inst.activate()
+    # noinspection PyProtectedMember
+    inst._activate()
     return inst
 
 
@@ -130,24 +126,17 @@ class _JobInstance(JobInstance):
         self._output_router = output_router
         self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output_sink)
         self._faults: List[Fault] = []
-        self._activated = False
+
+    def _activate(self):
+        """Called at the end of ``create()`` to avoid exposing a partially initialized instance."""
+        self._root_phase.add_phase_observer(self._on_phase_update)
+        self._ctx.tracker._on_change = self._on_status_change
+        return self
 
     @property
     @override
     def notifications(self) -> InstanceNotifications:
         return self._notifications
-
-    def activate(self):
-        """Wire phase observers and status tracking. Must be called before ``run()``.
-
-        Separated from construction so that callers can control timing. Nodes call this after the
-        duplicate check and hook registration to avoid leaving stale observers on a shared phase
-        if an earlier step fails.
-        """
-        self._activated = True
-        self._root_phase.add_phase_observer(self._on_phase_update)
-        self._ctx.tracker._on_change = self._on_status_change
-        return self
 
     def notify_created(self):
         """Fire the CREATED lifecycle event. Call after ``activate()`` and all observers are registered."""
@@ -209,8 +198,6 @@ class _JobInstance(JobInstance):
                 self._faults.append(Fault.from_exception(OUTPUT_OBSERVER_ERROR, e))
 
     def run(self):
-        if not self._activated:
-            raise InvalidStateError("Instance must be activated before run()")
         with self._instance_scope():
             with self._output_router as router:
                 with self._output_sink.observer_context(self._process_output, router):
