@@ -454,8 +454,8 @@ class InProcessNode(EnvironmentNodeBase):
     def get_instances(self, run_match=None) -> List[JobInstance]:
         return [i for i in self.instances if not run_match or run_match(i.snap())]
 
-    def read_history_runs(self, run_match, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._persistence.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+    def read_history(self, run_match, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._persistence.read_history(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
     def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._persistence.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
@@ -710,8 +710,8 @@ class LocalNode(EnvironmentNodeBase):
 
         return self._connector.get_instance(instance_id)
 
-    def read_history_runs(self, run_match, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._connector.read_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+    def read_history(self, run_match, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._connector.read_history(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
     def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._connector.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
