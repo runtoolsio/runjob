@@ -4,13 +4,12 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from enum import Enum, auto
 from pathlib import Path
 from threading import Lock, Condition
-from typing import Dict, Optional, List, Callable, override, Set
+from typing import Dict, Optional, List, Callable, override, Set, Tuple
 
 from runtools.runcore import plugins, paths, connector, db, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
 from runtools.runcore.criteria import SortOption
-from runtools.runcore.db import DuplicateSubmission
 from runtools.runcore.db import sqlite, PersistingObserver, PERSISTING_OBSERVER_PRIORITY
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
     InProcessEnvironmentConfig, get_env_config, EnvironmentNotFoundError, \
@@ -24,8 +23,7 @@ from runtools.runcore.output import DEFAULT_TAIL_BUFFER_SIZE
 from runtools.runcore.paths import ConfigFileNotFoundError
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import Stage
-from runtools.runcore.util import to_tuple, lock
-from runtools.runcore.util.dt import utc_now
+from runtools.runcore.util import to_tuple, lock, unique_timestamp_hex
 from runtools.runcore.util.socket import DatagramSocketClient
 from runtools.runjob import instance, output
 from runtools.runjob.events import EventDispatcher
@@ -44,7 +42,7 @@ def _create_plugins(names):
 class EnvironmentNode(EnvironmentConnector, ABC):
 
     @abstractmethod
-    def create_instance(self, instance_id, root_phase, **kwargs):
+    def create_instance(self, job_id, run_id, root_phase, **kwargs):
         pass
 
     @abstractmethod
@@ -143,7 +141,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         self._lock = Lock()
         self._idle_condition = Condition(self._lock)
         # Fields guarded by lock below:
-        self._admitting_ids: Set[InstanceID] = set()
+        self._reserved_runs: List[Tuple[str, str]] = []
         self._managed_instances: Dict[InstanceID, JobInstanceManaged] = {}
         self._opened = False
         self._closing = False
@@ -177,54 +175,33 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         for feature in self._features:
             feature.on_open()
 
-    def _admit_instance(self, instance_id, user_params, on_duplicate):
-        is_duplicate = False
+    def _admit_instance(self, job_id, run_id, user_params, *, auto_increment=False):
         with self._lock:
             if not self._opened:
                 raise InvalidStateError("Cannot add job instance: environment container not opened")
             if self._closing:
                 raise InvalidStateError("Cannot add job instance: environment container already closed")
-            if instance_id in self._admitting_ids or instance_id in self._managed_instances:
-                is_duplicate = True
-            else:
-                self._admitting_ids.add(instance_id)
-
-        if is_duplicate:
-            # Call outside the lock to avoid self-deadlock during recursive admission
-            return self._handle_duplicate(instance_id, user_params, on_duplicate)
+            self._reserved_runs.append((job_id, run_id))
 
         try:
-            self._persistence.init_job_run(instance_id, user_params)
-            return instance_id
-        except BaseException as e:
+            return self._persistence.init_run(job_id, run_id, user_params, auto_increment=auto_increment)
+        except BaseException:
             with self._idle_condition:
-                self._admitting_ids.remove(instance_id)
+                self._reserved_runs.remove((job_id, run_id))
                 self._idle_condition.notify()
-            if isinstance(e, DuplicateInstanceError):
-                return self._handle_duplicate(instance_id, user_params, on_duplicate)
             raise
 
-    def _handle_duplicate(self, instance_id, user_params, on_duplicate):
-        try:
-            next_id = on_duplicate(instance_id)
-        except DuplicateInstanceError as e:
-            submission = DuplicateSubmission(instance_id.job_id, instance_id.run_id, utc_now(), e.duplicate_type)
-            self._persistence.record_duplicate_submission(submission)
-            raise
-        return self._admit_instance(next_id, user_params, on_duplicate)
-
-    def create_instance(self, instance_id, root_phase, *, on_duplicate=None, output_sink=None,
-                        status_tracker=None, user_params=None) \
+    def create_instance(self, job_id, run_id=None, root_phase=None, *, duplicate_strategy=DuplicateStrategy.RAISE,
+                        output_sink=None, status_tracker=None, user_params=None) \
             -> JobInstanceManaged:
         """
         Create a new job instance within this environment.
 
         Args:
-            instance_id (InstanceID): Instance identifier
+            job_id: Job identifier
+            run_id: Run identifier (generated if None)
             root_phase: Root phase of the job instance
-            on_duplicate: Duplicate policy callable. Called with the conflicting InstanceID; should return
-                the next InstanceID to try, or raise a DuplicateInstanceError subclass. Defaults to
-                ``DuplicateStrategy.duplicate`` which always raises.
+            duplicate_strategy: How to handle duplicates. Defaults to RAISE.
             output_sink: Optional output sink (for text parsing, use OutputSink with ParsingPreprocessor)
             status_tracker: Optional status tracker for the job
             user_params: Optional user-defined parameters
@@ -234,10 +211,12 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
         Raises:
             InvalidStateError: If the environment is not opened or is already closed
-            DuplicateInstanceError: If duplicate detected and policy does not resolve it
+            DuplicateInstanceError: If duplicate detected and strategy is RAISE
         """
-        on_duplicate = on_duplicate or DuplicateStrategy.duplicate
-        instance_id = self._admit_instance(instance_id, user_params, on_duplicate)
+        run_id = run_id or unique_timestamp_hex()
+        reserved = (job_id, run_id)
+        instance_id = self._admit_instance(
+            job_id, run_id, user_params, auto_increment=(duplicate_strategy != DuplicateStrategy.RAISE))
         job_instance = None
         try:
             writers = [store.create_writer(instance_id) for store in self._output_stores]
@@ -252,7 +231,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             )
 
             with self._lock:
-                self._admitting_ids.remove(instance_id)
+                self._reserved_runs.remove(reserved)
                 job_instance = JobInstanceManaged(self, inst)
                 self._managed_instances[job_instance.id] = job_instance
 
@@ -261,11 +240,16 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
                 feature.on_instance_added(job_instance)
 
             job_instance.notify_created()
+
+            if instance_id.ordinal > 1 and duplicate_strategy.stop_reason:
+                job_instance.stop(duplicate_strategy.stop_reason)
+                self._detach_instance(job_instance.id, self._transient)
         except:
             with self._idle_condition:
                 if job_instance:
                     self._managed_instances.pop(job_instance.id, None)
-                self._admitting_ids.discard(instance_id)
+                else:
+                    self._reserved_runs.remove(reserved)
                 self._idle_condition.notify()
             raise
 
@@ -334,7 +318,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
             self._closing = True
             # noinspection PyProtectedMember
-            while self._admitting_ids or not all(
+            while self._reserved_runs or not all(
                     i._allows_env_closing() for i in self._managed_instances.values()):
                 try:
                     self._idle_condition.wait()
@@ -454,20 +438,20 @@ class InProcessNode(EnvironmentNodeBase):
     def get_instances(self, run_match=None) -> List[JobInstance]:
         return [i for i in self.instances if not run_match or run_match(i.snap())]
 
-    def read_history(self, run_match, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._persistence.read_history(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+    def read_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._persistence.read_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
-    def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._persistence.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+    def iter_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._persistence.iter_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
-    def read_history_stats(self, run_match=None):
-        return self._persistence.read_history_stats(run_match)
+    def read_run_stats(self, run_match=None):
+        return self._persistence.read_run_stats(run_match)
 
     def remove_history_runs(self, run_match):
         active = self.get_active_runs(run_match)
         if active:
             raise ValueError(f"Cannot remove active runs: {', '.join(str(r.instance_id) for r in active)}")
-        removed_ids = self._persistence.remove_job_runs(run_match)
+        removed_ids = self._persistence.remove_runs(run_match)
         for backend in self._output_stores:
             backend.delete_output(*removed_ids)
         return removed_ids
@@ -710,14 +694,14 @@ class LocalNode(EnvironmentNodeBase):
 
         return self._connector.get_instance(instance_id)
 
-    def read_history(self, run_match, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._connector.read_history(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+    def read_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._connector.read_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
-    def iter_history_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._connector.iter_history_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+    def iter_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._connector.iter_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
-    def read_history_stats(self, run_match=None):
-        return self._connector.read_history_stats(run_match)
+    def read_run_stats(self, run_match=None):
+        return self._connector.read_run_stats(run_match)
 
     def remove_history_runs(self, run_match):
         return self._connector.remove_history_runs(run_match)

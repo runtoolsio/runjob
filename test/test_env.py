@@ -3,7 +3,7 @@ from typing import List
 
 import pytest
 
-from runtools.runcore.job import DuplicateInstanceError, DuplicateStrategy, InstanceID, JobInstance, iid
+from runtools.runcore.job import DuplicateInstanceError, DuplicateStrategy, JobInstance
 from runtools.runcore.run import Stage
 from runtools.runjob import node
 from runtools.runjob.node import Feature
@@ -51,8 +51,8 @@ def test_environment_lifecycle(feature):
     with node.in_process(features=feature, transient=True) as e:
         assert feature.opened
 
-        inst = e.create_instance(iid("test_job"), TestPhase())
-        inst2 = e.create_instance(iid('test_job_2'), TestPhase())
+        inst = e.create_instance("test_job", root_phase=TestPhase())
+        inst2 = e.create_instance("test_job_2", root_phase=TestPhase())
 
         assert feature.added_instances[0] == inst
         assert feature.added_instances[1] == inst2
@@ -84,7 +84,7 @@ def test_instance_stage_observer(env):
     env.notifications.add_observer_lifecycle(observer_s)
     env.notifications.add_observer_phase(observer_t)
 
-    i = env.create_instance(iid("test_job"), TestPhase())
+    i = env.create_instance("test_job", root_phase=TestPhase())
     # TODO assert transitions[-1].new_stage == Stage.CREATED + transition phases
 
     i.run()
@@ -100,7 +100,7 @@ def test_output_observer(env):
         outputs.append(e)
 
     env.notifications.add_observer_output(observer)
-    env.create_instance(iid("test_job"), TestPhase(output_text='hey more')).run()
+    env.create_instance("test_job", root_phase=TestPhase(output_text='hey more')).run()
     assert outputs[0].output_line.message == 'hey more'
 
 
@@ -109,31 +109,28 @@ def test_output_observer(env):
 
 def test_duplicate_instance_raises(env):
     """Creating the same instance_id twice with default strategy raises DuplicateInstanceError."""
-    instance_id = InstanceID("dup_job", "run1")
-    env.create_instance(instance_id, TestPhase()).run()
+    env.create_instance("dup_job", "run1", TestPhase()).run()
 
     with pytest.raises(DuplicateInstanceError):
-        env.create_instance(instance_id, TestPhase())
+        env.create_instance("dup_job", "run1", TestPhase())
 
 
-def test_duplicate_rerun_increments_ordinal(env):
-    """With RERUN policy, a duplicate admission succeeds with incremented ordinal."""
-    instance_id = InstanceID("rerun_job", "run1")
-    first = env.create_instance(instance_id, TestPhase(), on_duplicate=DuplicateStrategy.rerun())
+def test_duplicate_continue_increments_ordinal(env):
+    """With CONTINUE strategy, a duplicate admission succeeds with incremented ordinal."""
+    first = env.create_instance("rerun_job", "run1", TestPhase(), duplicate_strategy=DuplicateStrategy.ALLOW)
     first.run()
 
-    second = env.create_instance(instance_id, TestPhase(), on_duplicate=DuplicateStrategy.rerun())
+    second = env.create_instance("rerun_job", "run1", TestPhase(), duplicate_strategy=DuplicateStrategy.ALLOW)
     assert second.id.ordinal == 2
     second.run()
 
 
-def test_rerun_multiple_ordinals(env):
-    """Creating the same logical run 3 times with RERUN yields ordinals 1, 2, 3."""
-    instance_id = InstanceID("multi_job", "run1")
+def test_continue_multiple_ordinals(env):
+    """Creating the same logical run 3 times with CONTINUE yields ordinals 1, 2, 3."""
     ordinals = []
 
     for _ in range(3):
-        inst = env.create_instance(instance_id, TestPhase(), on_duplicate=DuplicateStrategy.rerun())
+        inst = env.create_instance("multi_job", "run1", TestPhase(), duplicate_strategy=DuplicateStrategy.ALLOW)
         ordinals.append(inst.id.ordinal)
         inst.run()
 
@@ -142,8 +139,8 @@ def test_rerun_multiple_ordinals(env):
 
 def test_duplicate_different_run_ids_no_conflict(env):
     """Two instances with the same job_id but different run_ids do not conflict."""
-    first = env.create_instance(InstanceID("job", "run_a"), TestPhase())
-    second = env.create_instance(InstanceID("job", "run_b"), TestPhase())
+    first = env.create_instance("job", "run_a", TestPhase())
+    second = env.create_instance("job", "run_b", TestPhase())
 
     assert first.id.run_id == "run_a"
     assert second.id.run_id == "run_b"
@@ -153,8 +150,9 @@ def test_duplicate_different_run_ids_no_conflict(env):
 
 def test_duplicate_different_ordinals_no_conflict(env):
     """Instances with same (job_id, run_id) but different ordinals do not conflict."""
-    first = env.create_instance(InstanceID("job", "run1", ordinal=1), TestPhase())
-    second = env.create_instance(InstanceID("job", "run1", ordinal=2), TestPhase())
+    first = env.create_instance("job", "run1", TestPhase())
+    second = env.create_instance("job", "run1", TestPhase(),
+                                 duplicate_strategy=DuplicateStrategy.ALLOW)
 
     assert first.id.ordinal == 1
     assert second.id.ordinal == 2

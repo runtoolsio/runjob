@@ -19,7 +19,7 @@ import inspect
 from dataclasses import dataclass
 from typing import Any
 
-from runtools.runcore.job import JobRun, iid
+from runtools.runcore.job import JobRun
 from runtools.runjob import node
 from runtools.runjob.phase import FunctionPhase
 
@@ -63,9 +63,8 @@ class _JobDecor:
         env = env or self._env
 
         root_phase = FunctionPhase(self._job_id, self._func, args, kwargs)
-        instance_id = iid(self._job_id, run_id) if run_id else iid(self._job_id)
 
         with node.connect(env) as env_node:
-            inst = env_node.create_instance(instance_id, root_phase)
+            inst = env_node.create_instance(self._job_id, run_id, root_phase)
             retval = inst.run()
             return JobResult(run=inst.snap(), retval=retval)

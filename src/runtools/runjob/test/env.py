@@ -4,7 +4,7 @@ without the overhead of a full InProcessNode.
 
 Usage:
     env = FakeEnvironment()
-    inst = env.create_instance(iid('job'), root_phase=my_phase)
+    inst = env.create_instance('job', 'run1', root_phase=my_phase)
     inst.run(in_background=True)
     ...
     inst.stop()
@@ -14,7 +14,7 @@ from threading import Thread
 from typing import List, Optional
 
 from runtools.runcore.job import (
-    JobInstance, JobInstanceDelegate, JobRun, InstanceObservableNotifications, InstanceNotifications,
+    JobInstance, JobInstanceDelegate, JobRun, InstanceObservableNotifications, InstanceNotifications, iid,
 )
 from runtools.runcore.run import StopReason
 from runtools.runjob import instance
@@ -56,7 +56,8 @@ class FakeEnvironment:
     def get_instance(self, instance_id) -> Optional[JobInstance]:
         return self._instances.get(instance_id)
 
-    def create_instance(self, instance_id, root_phase, **user_params) -> 'TestJobInstance':
+    def create_instance(self, job_id, run_id, root_phase, **user_params) -> 'TestJobInstance':
+        instance_id = iid(job_id, run_id)
         inst = instance.create(instance_id, self, root_phase, **user_params)
         managed = TestJobInstance(inst)
         self._instances[instance_id] = managed
