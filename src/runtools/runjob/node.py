@@ -88,8 +88,10 @@ class JobInstanceManaged(JobInstanceDelegate):
 
     def run(self, in_background=False):
         with self._env._lock:
-            if self._state != _InstanceState.NONE:
+            if self._state == _InstanceState.STARTED:
                 raise AlreadyStarted
+            if self._state != _InstanceState.NONE:
+                return None
             if self._env._closing:
                 raise EnvironmentClosed
             self._state = _InstanceState.STARTED
@@ -740,8 +742,10 @@ class LocalNode(EnvironmentNodeBase):
 
 
 class AlreadyStarted(InvalidStateError):
-    pass
+    def __init__(self):
+        super().__init__("Job instance already started")
 
 
 class EnvironmentClosed(InvalidStateError):
-    pass
+    def __init__(self):
+        super().__init__("Environment is closed")
