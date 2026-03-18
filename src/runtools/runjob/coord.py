@@ -1,4 +1,3 @@
-import copy
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -6,7 +5,7 @@ from enum import Enum, auto
 from threading import Condition, Event, Lock
 from typing import Any, List, Optional
 
-from runtools.runcore.criteria import JobRunCriteria, PhaseCriterion, MetadataCriterion, LifecycleCriterion
+from runtools.runcore.criteria import criteria, JobRunCriteria, PhaseCriterion, MetadataCriterion, LifecycleCriterion
 from runtools.runcore.job import JobRun, InstancePhaseEvent
 from runtools.runcore.run import TerminationStatus, control_api, Stage
 from runtools.runjob.instance import JobInstanceContext
@@ -139,10 +138,7 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
 
     @staticmethod
     def _excl_running_job_filter(ctx):
-        return JobRunCriteria(
-            metadata_criteria=MetadataCriterion.all_except(ctx.metadata.instance_id),  # Excl self
-            phase_criteria=MutualExclusionPhase.running_mutex_filter
-        )
+        return criteria().all_except(ctx.metadata.instance_id).phase(MutualExclusionPhase.running_mutex_filter).build()
 
     def _run(self, ctx: JobInstanceContext):
         excl_group = self.exclusion_group or ctx.metadata.job_id
@@ -386,8 +382,11 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
             phase_type=CoordTypes.QUEUE.value,
             attributes=self._attrs,
         )
-        self._phase_filter_running = copy.copy(self._phase_filter)
-        self._phase_filter_running.lifecycle = LifecycleCriterion(stage=Stage.RUNNING)
+        self._phase_filter_running = PhaseCriterion(
+            phase_type=CoordTypes.QUEUE.value,
+            attributes=self._attrs,
+            lifecycle=LifecycleCriterion(stage=Stage.RUNNING),
+        )
 
         self._queue_change_condition = Condition()
         self._rescan_timeout = queue_rescan_timeout
@@ -466,7 +465,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
 
     def _dispatch_next(self, ctx):
         filter_ = self._phase_filter_running
-        runs: List[JobRun] = ctx.environment.get_active_runs(JobRunCriteria(phase_criteria=filter_))
+        runs: List[JobRun] = ctx.environment.get_active_runs(JobRunCriteria(phase_criteria=(filter_,)))
         runs_sorted = sorted(runs, key=lambda run: run.find_first_phase(filter_).lifecycle.created_at)
         ids_dispatched = {r.instance_id for r in runs_sorted if
                           r.find_first_phase(filter_).variables[
