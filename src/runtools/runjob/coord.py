@@ -1,15 +1,13 @@
 import logging
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 from threading import Condition, Event, Lock
-from typing import Any, List, Optional
+from typing import Any, List
 
-from runtools.runcore.criteria import criteria, JobRunCriteria, PhaseCriterion, MetadataCriterion, LifecycleCriterion
+from runtools.runcore.criteria import criteria, JobRunCriteria, PhaseCriterion, LifecycleCriterion
 from runtools.runcore.job import JobRun, InstancePhaseEvent
 from runtools.runcore.run import TerminationStatus, control_api, Stage
 from runtools.runjob.instance import JobInstanceContext
-from runtools.runjob.output import OutputContext
 from runtools.runjob.phase import BasePhase, PhaseTerminated, SequentialPhase
 
 log = logging.getLogger(__name__)
@@ -20,7 +18,7 @@ class CoordTypes(Enum):
     APPROVAL = 'APPROVAL'
     MUTEX = 'MUTEX'
     DEPENDENCY = 'DEPENDENCY'
-    WAITING = 'WAITING'
+    AWAIT = 'AWAIT'
     QUEUE = 'QUEUE'
 
 
@@ -183,121 +181,31 @@ class DependencyPhase(BasePhase[JobInstanceContext]):
         log.debug(f"[active_dependency_found] instances={[r.instance_id for r in matching_runs]}")
 
 
-class WaitingPhase(BasePhase[OutputContext]):
-    """
-    """
+class AwaitPhase(BasePhase[JobInstanceContext]):
+    """A phase that waits until each given criterion is satisfied by a matching run in the environment."""
 
-    def __init__(self, phase_id, observable_conditions, timeout=0):
-        super().__init__(phase_id, CoordTypes.WAITING.value)
-        self._observable_conditions = observable_conditions
+    def __init__(self, *criteria: JobRunCriteria, timeout=0, phase_id=None):
+        super().__init__(phase_id or 'await', CoordTypes.AWAIT.value)
+        self._criteria = criteria
         self._timeout = timeout
-        self._conditions_lock = Lock()
-        self._event = Event()
-        self._term_status: Optional[TerminationStatus] = None
+        self._watcher = None
+        self._watcher_lock = Lock()
 
     def _run(self, ctx):
-        for condition in self._observable_conditions:
-            condition.add_result_listener(self._result_observer)
-            condition.start_evaluating()
+        with self._watcher_lock:
+            self._raise_if_stopped()
+            self._watcher = ctx.environment.watcher(*self._criteria, search_past=True)
 
-        resolved = self._event.wait(self._timeout or None)
-        if not resolved:
-            self._term_status = TerminationStatus.TIMEOUT
-
-        self._stop_all()
-        if self._term_status:
-            raise PhaseTerminated(self._term_status)
-
-    def _result_observer(self, *_):
-        wait = False
-        with self._conditions_lock:
-            for condition in self._observable_conditions:
-                if not condition.result:
-                    wait = True
-                elif not condition.result.success:
-                    self._term_status = TerminationStatus.UNSATISFIED
-                    wait = False
-                    break
-
-        if not wait:
-            self._event.set()
+        if not self._watcher.wait(timeout=self._timeout or None):
+            self._raise_if_stopped()
+            if self._watcher.is_timed_out:
+                raise PhaseTerminated(TerminationStatus.TIMEOUT)
+            raise PhaseTerminated(TerminationStatus.UNSATISFIED)
 
     def _stop_running(self, reason):
-        self._stop_all()
-        self._event.set()
-
-    def _stop_all(self):
-        for condition in self._observable_conditions:
-            condition.stop()
-
-
-class ConditionResult(Enum):
-    """
-    Enum representing the result of a condition evaluation.
-
-    Attributes:
-        NONE: The condition has not been evaluated yet.
-        SATISFIED: The condition is satisfied.
-        UNSATISFIED: The condition is not satisfied.
-        EVALUATION_ERROR: The condition could not be evaluated due to an error in the evaluation logic.
-    """
-    NONE = (auto(), False)
-    SATISFIED = (auto(), True)
-    UNSATISFIED = (auto(), False)
-    EVALUATION_ERROR = (auto(), False)
-
-    def __new__(cls, value, success):
-        obj = object.__new__(cls)
-        obj._value_ = value
-        obj.success = success
-        return obj
-
-    def __bool__(self):
-        return self != ConditionResult.NONE
-
-
-class ObservableCondition(ABC):
-    """
-    Abstract base class representing a (child) waiter associated with a specific (parent) pending object.
-
-    A waiter is designed to be held by a job instance, enabling the job to enter its waiting phase
-    before actual execution. This allows for synchronization between different parts of the system.
-    Depending on the parent waiting, the waiter can either be manually released, or all associated
-    waiters can be released simultaneously when the main condition of the waiting is met.
-
-    TODO:
-    1. Add notifications to this class
-    """
-
-    @abstractmethod
-    def start_evaluation(self) -> None:
-        """
-        Instructs the waiter to begin waiting on its associated condition.
-
-        When invoked by a job instance, the job enters its pending phase, potentially waiting for
-        the overarching pending condition to be met or for a manual release.
-        """
-        pass
-
-    @property
-    @abstractmethod
-    def result(self):
-        """
-        Returns:
-            ConditionResult: The result of the evaluation or NONE if not yet evaluated.
-        """
-        pass
-
-    @abstractmethod
-    def add_result_listener(self, listener):
-        pass
-
-    @abstractmethod
-    def remove_result_listener(self, listener):
-        pass
-
-    def stop(self):
-        pass
+        with self._watcher_lock:
+            if self._watcher:
+                self._watcher.cancel()
 
 
 class QueuedState(Enum):

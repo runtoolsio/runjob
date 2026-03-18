@@ -10,7 +10,7 @@ Usage:
     inst.stop()
 """
 from contextlib import contextmanager
-from threading import Thread
+from threading import Event, Thread
 from typing import List, Optional
 
 from runtools.runcore.job import (
@@ -18,6 +18,43 @@ from runtools.runcore.job import (
 )
 from runtools.runcore.run import StopReason
 from runtools.runjob import instance
+
+
+class FakeWatcher:
+    """Controllable watcher stub for testing AwaitPhase."""
+    __test__ = False
+
+    def __init__(self):
+        self._event = Event()
+        self._satisfied = False
+        self._timed_out = False
+        self._cancelled = False
+
+    @property
+    def is_timed_out(self):
+        return self._timed_out
+
+    @property
+    def is_cancelled(self):
+        return self._cancelled
+
+    def satisfy(self):
+        """Signal that all criteria are satisfied."""
+        self._satisfied = True
+        self._event.set()
+
+    def wait(self, *, timeout=None):
+        self._event.wait(timeout)
+        if self._cancelled:
+            return False
+        if self._satisfied:
+            return True
+        self._timed_out = True
+        return False
+
+    def cancel(self):
+        self._cancelled = True
+        self._event.set()
 
 
 class FakeEnvironment:
@@ -55,6 +92,10 @@ class FakeEnvironment:
 
     def get_instance(self, instance_id) -> Optional[JobInstance]:
         return self._instances.get(instance_id)
+
+    def watcher(self, *criteria, search_past=False) -> FakeWatcher:
+        self._watcher = FakeWatcher()
+        return self._watcher
 
     def create_instance(self, job_id, run_id, root_phase, **user_params) -> 'TestJobInstance':
         instance_id = iid(job_id, run_id)
