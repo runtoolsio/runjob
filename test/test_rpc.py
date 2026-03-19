@@ -2,7 +2,7 @@ from typing import List
 
 import pytest
 from runtools.runcore.client import LocalInstanceClient, TargetNotFoundError, InstanceCallResult
-from runtools.runcore.criteria import JobRunCriteria
+from runtools.runcore.matching import JobRunCriteria
 from runtools.runcore.job import JobRun, InstanceID, iid
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminationStatus

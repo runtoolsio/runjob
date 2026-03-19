@@ -7,7 +7,7 @@ from json import JSONDecodeError
 from typing import Dict, Any, List, Union, override
 
 from itertools import zip_longest
-from runtools.runcore.criteria import JobRunCriteria
+from runtools.runcore.matching import JobRunCriteria
 from runtools.runcore.job import JobInstanceManager, JobInstance, InstanceID
 from runtools.runcore.run import StopReason
 from runtools.runcore.util.json import ErrorCode, JsonRpcError

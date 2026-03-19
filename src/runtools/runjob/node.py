@@ -9,7 +9,7 @@ from typing import Dict, Optional, List, Callable, override, Set, Tuple
 from runtools.runcore import plugins, paths, connector, db, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
-from runtools.runcore.criteria import SortOption
+from runtools.runcore.matching import SortOption
 from runtools.runcore.db import sqlite, PersistingObserver, PERSISTING_OBSERVER_PRIORITY
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
     InProcessEnvironmentConfig, get_env_config, EnvironmentNotFoundError, \
