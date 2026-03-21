@@ -4,23 +4,21 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from enum import Enum, auto
 from pathlib import Path
 from threading import Lock, Condition
-from typing import Dict, Optional, List, Callable, override, Set, Tuple
+from typing import Dict, Optional, List, Callable, override, Tuple
 
-from runtools.runcore import plugins, paths, connector, db, util
+from runtools.runcore import plugins, paths, connector, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
-from runtools.runcore.matching import SortOption
 from runtools.runcore.db import sqlite, PersistingObserver, PERSISTING_OBSERVER_PRIORITY
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
-    InProcessEnvironmentConfig, get_env_config, EnvironmentNotFoundError, \
-    DEFAULT_LOCAL_ENVIRONMENT
+    InProcessEnvironmentConfig, EnvironmentEntry, _open_environment, resolve_env_ref
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
     InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, InstanceControlEvent, InstanceStatusEvent, \
     JobInstanceDelegate, InstanceLifecycleObserver, InstanceID, \
-    DuplicateInstanceError, DuplicateStrategy
+    DuplicateStrategy
+from runtools.runcore.matching import SortOption
 from runtools.runcore.output import DEFAULT_TAIL_BUFFER_SIZE
-from runtools.runcore.paths import ConfigFileNotFoundError
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.run import Stage
 from runtools.runcore.util import to_tuple, lock, unique_timestamp_hex
@@ -132,10 +130,10 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
     """
     OBSERVERS_PRIORITY = 1000
 
-    def __init__(self, env_id, persistence, output_stores=(), tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE,
+    def __init__(self, env_id, env_db, output_stores=(), tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE,
                  features=(), transient=True):
         self._env_id = env_id
-        self._persistence = persistence
+        self._db = env_db
         self._output_stores = tuple(output_stores)
         self._tail_buffer_size = tail_buffer_size
         self._features = features
@@ -186,7 +184,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             self._reserved_runs.append((job_id, run_id))
 
         try:
-            return self._persistence.init_run(job_id, run_id, user_params, auto_increment=auto_increment)
+            return self._db.init_run(job_id, run_id, user_params, auto_increment=auto_increment)
         except BaseException:
             with self._idle_condition:
                 self._reserved_runs.remove((job_id, run_id))
@@ -344,10 +342,10 @@ RETENTION_OBSERVER_PRIORITY = PERSISTING_OBSERVER_PRIORITY + 10  # After persist
 
 
 class RetentionObserver(InstanceLifecycleObserver):
-    """Enforces retention policy on both persistence and output stores after each run ends."""
+    """Enforces retention policy on both database and output stores after each run ends."""
 
-    def __init__(self, persistence, output_stores, retention_policy):
-        self._persistence = persistence
+    def __init__(self, run_storage, output_stores, retention_policy):
+        self._db = run_storage
         self._output_stores = output_stores
         self._retention_policy = retention_policy
 
@@ -357,68 +355,70 @@ class RetentionObserver(InstanceLifecycleObserver):
 
         job_id = event.job_run.metadata.job_id
 
-        def _enforce_persistence():
-            self._persistence.enforce_retention(job_id, self._retention_policy)
+        def _enforce_db_retention():
+            self._db.enforce_retention(job_id, self._retention_policy)
 
         def _enforce_store(store):
             return lambda: store.enforce_retention(job_id, self._retention_policy)
 
         run_isolated_collect_exceptions(
             f"Retention errors for job {job_id}",
-            _enforce_persistence,
+            _enforce_db_retention,
             *(_enforce_store(s) for s in self._output_stores),
             suppress=True,
         )
 
 
-def connect(env_id=None):
-    """Connect to an environment node, falling back to default local config when no config is found.
+def connect(env_ref: EnvironmentEntry | str | None = None, *,
+            disable_output: tuple[str, ...] = (), tail_buffer_size=None):
+    """Connect to an environment node.
 
-    Unlike ``connector.connect()``, this always falls back to a local node so that
-    ``@job`` decorated functions work zero-config.
+    Args:
+        env_ref: Environment entry, env_id string, or None for built-in local.
+        disable_output: Output storage types to disable for this session (e.g. ("file",), ("all",)).
+        tail_buffer_size: Override the default tail buffer size from config.
     """
+    env_db, config = _open_environment(resolve_env_ref(env_ref))
     try:
-        return create(get_env_config(env_id))
-    except (EnvironmentNotFoundError, ConfigFileNotFoundError):
-        return create(LocalEnvironmentConfig(id=env_id or DEFAULT_LOCAL_ENVIRONMENT))
+        return _create(env_db, config,
+                       disable_output=disable_output, tail_buffer_size=tail_buffer_size)
+    except BaseException:
+        env_db.close()
+        raise
 
 
-def in_process(env_id=None, persistence=None, *, lock_factory=None, features=None, transient=True) -> 'InProcessNode':
+def in_process(env_id=None, env_db=None, *, lock_factory=None, features=None, transient=True) -> 'InProcessNode':
     """Create an in-process environment node for testing and development.
 
     Args:
-        env_id (str): Environment identifier. Defaults to a unique generated ID.
-        persistence (Persistence): Persistence backend. Defaults to in-memory SQLite.
+        env_id: Environment identifier. Defaults to a unique generated ID.
+        env_db: Environment database. Defaults to in-memory SQLite.
         lock_factory: Factory for memory-based locks. Defaults to the standard memory lock factory.
         features: Features to attach to the node lifecycle.
-        transient (bool): Whether instances are removed from the node after detaching. Defaults to True.
+        transient: Whether instances are removed from the node after detaching. Defaults to True.
     """
     env_id = env_id or "in_process_" + util.unique_timestamp_hex()
-    persistence = persistence or sqlite.create(env_id=env_id, database=':memory:')
+    env_db = env_db or sqlite.create_memory(env_id)
     lock_factory = lock_factory or lock.default_memory_lock_factory()
-    return InProcessNode(env_id, persistence, lock_factory, to_tuple(features), transient)
+    return InProcessNode(env_id, env_db, lock_factory, to_tuple(features), transient)
 
 
 class InProcessNode(EnvironmentNodeBase):
 
-    def __init__(self, env_id, persistence, lock_factory, features, transient=True):
+    def __init__(self, env_id, env_db, lock_factory, features, transient=True):
         self._notifications = InstanceObservableNotifications()
-        EnvironmentNodeBase.__init__(self, env_id, persistence, features=features, transient=transient)
+        EnvironmentNodeBase.__init__(self, env_id, env_db, features=features, transient=transient)
         self._lock_factory = lock_factory
-        self._persisting_observer = PersistingObserver(persistence)
+        self._persisting_observer = PersistingObserver(env_db)
 
     @property
     @override
     def notifications(self) -> InstanceNotifications:
         return self._notifications
 
-    @property
-    def persistence_enabled(self) -> bool:
-        return self._persistence.enabled
-
     def open(self):
         EnvironmentNodeBase.open(self)  # Always first
-        self._persistence.open()
+        self._db.open()
 
     def _on_added(self, job_instance):
         job_instance.notifications.add_observer_lifecycle(self._persisting_observer, PERSISTING_OBSERVER_PRIORITY)
@@ -441,19 +441,19 @@ class InProcessNode(EnvironmentNodeBase):
         return [i for i in self.instances if not run_match or run_match(i.snap())]
 
     def read_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._persistence.read_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+        return self._db.read_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
     def iter_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._persistence.iter_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+        return self._db.iter_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
     def read_run_stats(self, run_match=None):
-        return self._persistence.read_run_stats(run_match)
+        return self._db.read_run_stats(run_match)
 
     def remove_history_runs(self, run_match):
         active = self.get_active_runs(run_match)
         if active:
             raise ValueError(f"Cannot remove active runs: {', '.join(str(r.instance_id) for r in active)}")
-        removed_ids = self._persistence.remove_runs(run_match)
+        removed_ids = self._db.remove_runs(run_match)
         for backend in self._output_stores:
             backend.delete_output(*removed_ids)
         return removed_ids
@@ -466,7 +466,7 @@ class InProcessNode(EnvironmentNodeBase):
             "Errors during closing isolated environment",
             lambda: EnvironmentNodeBase.close(self),
             # <- Always execute first as the method is waiting until it can be closed
-            self._persistence.close
+            self._db.close
         )
 
 
@@ -610,34 +610,32 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         return self._provider_sockets_listener(self._listener_status_socket_name)
 
 
-def create(env_config: EnvironmentConfigUnion) -> 'EnvironmentNodeBase':
-    """Create an environment node from configuration.
-
-    Args:
-        env_config (EnvironmentConfigUnion): Environment configuration that determines the node type and settings.
-
-    Returns:
-        EnvironmentNodeBase: Configured node for the environment.
-    """
-    persistence = db.create_persistence(env_config.id, env_config.persistence)
-
+def _create(env_db, env_config: EnvironmentConfigUnion, *,
+            disable_output: tuple[str, ...] = (), tail_buffer_size=None) -> 'EnvironmentNodeBase':
+    """Internal: create an environment node from a database and configuration with optional runtime overrides."""
     if isinstance(env_config, LocalEnvironmentConfig):
         layout = StandardLocalNodeLayout.from_config(env_config)
-        output_stores = output.create_stores(env_config.id, env_config.output.storages)
-        return _local(env_config.id, persistence, layout, output_stores,
-                      tail_buffer_size=env_config.output.tail_buffer_size,
+        if "all" in disable_output:
+            storages = []
+        else:
+            storages = [s for s in env_config.output.storages if s.type not in disable_output]
+        output_stores = output.create_stores(env_config.id, storages)
+        effective_tail_buffer_size = tail_buffer_size if tail_buffer_size is not None \
+            else env_config.output.default_tail_buffer_size
+        return _local(env_config.id, env_db, layout, output_stores,
+                      tail_buffer_size=effective_tail_buffer_size,
                       retention_policy=env_config.retention.to_policy())
 
     if isinstance(env_config, InProcessEnvironmentConfig):
-        return in_process(env_config.id, persistence)
+        return in_process(env_config.id, env_db)
 
     raise AssertionError(f"Unsupported environment config: {type(env_config)}.")
 
 
-def _local(env_id, persistence, node_layout, output_stores,
+def _local(env_id, env_db, node_layout, output_stores,
            *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE, retention_policy=None,
            lock_factory=None, features=None, transient=True):
-    local_connector = connector._local(env_id, persistence, node_layout, output_stores)
+    local_connector = connector._local(env_id, env_db, node_layout, output_stores)
 
     api = LocalInstanceServer(node_layout.server_socket_path)
     event_dispatcher = EventDispatcher(DatagramSocketClient(), {
@@ -649,7 +647,7 @@ def _local(env_id, persistence, node_layout, output_stores,
     })
     lock_factory = lock_factory or lock.default_file_lock_factory()
     features = to_tuple(features)
-    return LocalNode(env_id, local_connector, persistence, output_stores,
+    return LocalNode(env_id, local_connector, env_db, output_stores,
                      api, event_dispatcher, lock_factory, features, transient,
                      tail_buffer_size=tail_buffer_size, retention_policy=retention_policy)
 
@@ -659,24 +657,20 @@ class LocalNode(EnvironmentNodeBase):
     Environment node implementation that uses composition to delegate environment connector functionality.
     """
 
-    def __init__(self, env_id, local_connector, persistence, output_stores, rpc_server, event_dispatcher,
+    def __init__(self, env_id, local_connector, env_db, output_stores, rpc_server, event_dispatcher,
                  lock_factory, features, transient, *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE,
                  retention_policy=None):
         EnvironmentNodeBase.__init__(
-            self, env_id, persistence, output_stores=output_stores, tail_buffer_size=tail_buffer_size,
+            self, env_id, env_db, output_stores=output_stores, tail_buffer_size=tail_buffer_size,
             features=features, transient=transient)
         self._connector = local_connector
         self._rpc_server = rpc_server
         self._event_dispatcher = event_dispatcher
         self._lock_factory = lock_factory
-        self._persisting_observer = PersistingObserver(persistence)
+        self._persisting_observer = PersistingObserver(env_db)
         self._retention_observer = (
-            RetentionObserver(persistence, output_stores, retention_policy) if retention_policy else None
+            RetentionObserver(env_db, output_stores, retention_policy) if retention_policy else None
         )
-
-    @property
-    def persistence_enabled(self) -> bool:
-        return self._connector.persistence_enabled
 
     def open(self):
         EnvironmentNodeBase.open(self)  # Execute first for opened only once check
