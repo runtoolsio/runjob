@@ -11,7 +11,7 @@ from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayou
     ensure_component_dir
 from runtools.runcore.db import sqlite, PersistingObserver, PERSISTING_OBSERVER_PRIORITY
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
-    InProcessEnvironmentConfig, EnvironmentEntry, _open_environment, resolve_env_ref
+    InProcessEnvironmentConfig, EnvironmentEntry, _open_environment, resolve_env_ref, ensure_environment
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
     InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, InstanceControlEvent, InstanceStatusEvent, \
@@ -378,7 +378,9 @@ def connect(env_ref: EnvironmentEntry | str | None = None, *,
         disable_output: Output storage types to disable for this session (e.g. ("file",), ("all",)).
         tail_buffer_size: Override the default tail buffer size from config.
     """
-    env_db, config = _open_environment(resolve_env_ref(env_ref))
+    entry = resolve_env_ref(env_ref)
+    ensure_environment(entry)
+    env_db, config = _open_environment(entry)
     try:
         return _create(env_db, config,
                        disable_output=disable_output, tail_buffer_size=tail_buffer_size)
