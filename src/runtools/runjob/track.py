@@ -12,8 +12,9 @@ OutputHandler = Callable[[OutputLine, 'StatusTracker'], None]
 class OperationTracker:
 
     def __init__(self, name: str, created_at: datetime = None, on_update: Callable[[], None] = None,
-                 source: str | None = None):
+                 source: str | None = None, scope: str | None = None):
         self.name = name
+        self.scope = scope
         self.completed = None
         self.total = None
         self.unit = None
@@ -65,6 +66,7 @@ class OperationTracker:
             result=self.result,
             failed=self.failed,
             source=self.source,
+            scope=self.scope,
         )
 
 
@@ -81,27 +83,39 @@ def _parse_timestamp(value):
 def field_based_handler(output_line: OutputLine, tracker: 'StatusTracker') -> None:
     """Process output lines that have structured fields.
 
-    Expects field names: event, operation, completed, total, unit, result, failed, timestamp.
+    Expects field names: event, operation, completed, total, unit, result, failed, timestamp, scope.
     ``operation`` identifies a tracked operation. ``event`` is a standalone status message.
     ``result`` with ``operation`` finishes that operation; ``result`` alone sets the global result.
     ``failed`` with ``operation`` finishes that operation as failed (result=failed value, failed=True).
+    ``scope`` qualifies an operation with a target identifier (e.g., a site key, region, or tenant).
+    Scoped operations share a name but are tracked independently; they are excluded from the status summary.
     """
     if not output_line.fields:
         return
 
     fields = output_line.fields
     timestamp = _parse_timestamp(fields.get('timestamp'))
-    completed = convert_if_number(fields.get('completed'))
+
+    completed_raw = str(fields['completed']) if 'completed' in fields else None
+    completed_increment = False
+    if completed_raw is not None and completed_raw.startswith('+'):
+        completed_increment = True
+        completed_raw = completed_raw[1:]
+    completed = convert_if_number(completed_raw)
+
     total = convert_if_number(fields.get('total'))
     if total == 0:
         total = None  # Zero total means caller doesn't know the total
 
     result = fields.get('result')
+    scope = fields.get('scope')
 
     source = output_line.source
 
     if op_name := fields.get('operation'):
-        op = tracker.operation(op_name, timestamp, source=source)
+        op = tracker.operation(op_name, timestamp, source=source, scope=scope)
+        if completed_increment and completed is not None:
+            completed = (op.completed or 0) + completed
         if completed is not None or total is not None or fields.get('unit') is not None:
             op.update(completed, total, fields.get('unit'), timestamp)
         if fail_reason := fields.get('failed'):
@@ -140,16 +154,17 @@ class StatusTracker(OutputObserver):
         if self._on_change:
             self._on_change()
 
-    def operation(self, name: str, timestamp=None, source: str | None = None) -> OperationTracker:
-        op = self._get_operation(name)
+    def operation(self, name: str, timestamp=None, source: str | None = None,
+                  scope: str | None = None) -> OperationTracker:
+        op = self._get_operation(name, scope)
         if not op:
-            op = OperationTracker(name, timestamp, on_update=self._on_change, source=source)
+            op = OperationTracker(name, timestamp, on_update=self._on_change, source=source, scope=scope)
             self._operations.append(op)
 
         return op
 
-    def _get_operation(self, name: str) -> Optional[OperationTracker]:
-        return next((op for op in self._operations if op.name == name), None)
+    def _get_operation(self, name: str, scope: str | None = None) -> Optional[OperationTracker]:
+        return next((op for op in self._operations if op.name == name and op.scope == scope), None)
 
     def result(self, result: str, timestamp=None, source: str | None = None) -> None:
         timestamp = ts_or_now(timestamp)
