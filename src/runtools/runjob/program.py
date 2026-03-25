@@ -59,8 +59,8 @@ class ProgramPhase(BasePhase[OutputContext]):
 
         self._popen.wait()
         if self.read_output:
-            stdout_reader.join(timeout=1)
-            stderr_reader.join(timeout=1)
+            stdout_reader.join()
+            stderr_reader.join()
         if self.ret_code == 0:
             return
 
@@ -88,9 +88,15 @@ class ProgramPhase(BasePhase[OutputContext]):
                 self._popen.terminate()
 
     def _process_output(self, run_ctx, infile, is_err):
+        observer_error_logged = False
         with infile:
             for line in io.TextIOWrapper(infile, encoding="utf-8", errors="replace"):
                 line_stripped = line.rstrip()
                 self._status = line_stripped
                 print(line_stripped, file=sys.stderr if is_err else sys.stdout)
-                run_ctx.output_sink.new_output(line_stripped, is_err)
+                try:
+                    run_ctx.output_sink.new_output(line_stripped, is_err)
+                except Exception:
+                    if not observer_error_logged:
+                        log.exception("event=[output_observer_error] line=[%s]", line_stripped[:200])
+                        observer_error_logged = True
