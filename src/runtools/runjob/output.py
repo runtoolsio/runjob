@@ -70,14 +70,16 @@ class OutputSink:
         self._output_notification = ObservableNotification[OutputObserver]()
         self._line_factory = OutputLineFactory()
 
-    def new_output(self, message: str, is_error: bool = False, fields: dict | None = None):
+    def new_output(self, message: str, is_error: bool = False, fields: dict | None = None, source: str | None = None):
         if getattr(_thread_local, 'processing_output', False):
             return
         _thread_local.processing_output = True
 
         try:
-            phase = _current_phase.get(None)
-            output_line = self._line_factory(message, is_error, phase.id if phase else None, fields)
+            if source is None:
+                phase = _current_phase.get(None)
+                source = phase.id if phase else None
+            output_line = self._line_factory(message, is_error, source, fields)
 
             if self.preprocessing:
                 output_line = self.preprocessing(output_line)
