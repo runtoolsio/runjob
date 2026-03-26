@@ -196,15 +196,16 @@ def test_failed_takes_precedence_over_result():
     assert op.result == 'error'
 
 
-def test_zero_total_treated_as_none():
-    """Total of 0 is treated as unknown (None)."""
+def test_zero_total_means_zero_work():
+    """Total of 0 means zero work exists, not unknown."""
     tracker = StatusTracker()
 
     tracker.new_output(OutputLine('msg', 1, fields={
-        'operation': 'parsing', 'completed': 50, 'total': 0
+        'operation': 'noop', 'completed': 0, 'total': 0
     }))
     op = tracker.to_status().operations[0]
-    assert op.total is None
-    assert op.completed == 50
+    assert op.total == 0
+    assert op.completed == 0
+    assert op.finished
 
 
