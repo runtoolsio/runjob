@@ -1,4 +1,5 @@
 import functools
+import inspect
 import logging
 from abc import ABC, abstractmethod
 from contextvars import ContextVar
@@ -652,10 +653,11 @@ class _PhaseDecor:
         functools.update_wrapper(self, func)
         self.func = func
         self.phase_id = phase_id or func.__name__
+        self._func_has_phase_id = 'phase_id' in inspect.signature(func).parameters
 
-    def create_phase(self, *args, **kwargs):
+    def create_phase(self, *args, _phase_id_override=None, **kwargs):
         """Create the FunctionPhase for this call. Subclasses/extensions can wrap the result."""
-        return FunctionPhase(self.phase_id, self.func, args, kwargs)
+        return FunctionPhase(_phase_id_override or self.phase_id, self.func, args, kwargs)
 
     def __call__(self, *args, **kwargs):
         parent = _current_phase.get(None)
@@ -664,6 +666,11 @@ class _PhaseDecor:
                 f"@phase function '{self.func.__name__}' called outside a running phase. "
                 f"It must be called from within a phase's _run() method."
             )
+        phase_id_override = None
+        if not self._func_has_phase_id and 'phase_id' in kwargs:
+            phase_id_override = kwargs.pop('phase_id')
+        if phase_id_override:
+            kwargs['_phase_id_override'] = phase_id_override
         child = self.create_phase(*args, **kwargs)
         result = parent.run_child(child)
         # Uncaught exceptions already propagated with their original type (never reaches here).

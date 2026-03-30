@@ -617,3 +617,65 @@ def test_parent_stopped_when_child_cooperatively_stops(ctx):
     t.join(timeout=5)
 
     assert host.termination.status == TerminationStatus.STOPPED
+
+
+# --- phase_id override tests ---
+
+def test_phase_id_override_at_call_site(ctx):
+    """Calling a @phase function with phase_id= overrides the default phase ID."""
+    @phase
+    def work():
+        return "done"
+
+    host = HostPhase(lambda: work(phase_id="custom-id"))
+    host.run(ctx)
+
+    child = host.children[0]
+    assert child.id == "custom-id"
+
+
+def test_phase_id_override_does_not_affect_next_call(ctx):
+    """Override is call-local — subsequent calls use the default phase ID."""
+    @phase
+    def work():
+        return "done"
+
+    def run_body():
+        work(phase_id="first-call")
+        work()
+        return "ok"
+
+    host = HostPhase(run_body)
+    host.run(ctx)
+
+    assert host.children[0].id == "first-call"
+    assert host.children[1].id == "work"
+
+
+def test_phase_id_not_hijacked_when_func_has_phase_id_param(ctx):
+    """If the wrapped function declares phase_id as a parameter, it receives the value normally."""
+    @phase
+    def work(phase_id):
+        return f"received: {phase_id}"
+
+    host = HostPhase(lambda: work(phase_id="my-value"))
+    result = host.run(ctx)
+
+    assert result == "received: my-value"
+    assert host.children[0].id == "work"  # default, not overridden
+
+
+def test_phase_id_override_composes_with_timeout(ctx):
+    """phase_id override flows through stacked decorators like @timeout."""
+    @timeout(10)
+    @phase
+    def work():
+        return "done"
+
+    host = HostPhase(lambda: work(phase_id="custom-id"))
+    host.run(ctx)
+
+    # @timeout wraps FunctionPhase in TimeoutExtension — id delegates to inner phase
+    timeout_phase = host.children[0]
+    assert isinstance(timeout_phase, TimeoutExtension)
+    assert timeout_phase.id == "custom-id"
