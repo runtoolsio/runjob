@@ -8,7 +8,7 @@ from typing import Dict, Any, List, Union, override
 
 from itertools import zip_longest
 from runtools.runcore.matching import JobRunCriteria
-from runtools.runcore.job import JobInstanceManager, JobInstance, InstanceID
+from runtools.runcore.job import JobInstance, InstanceID
 from runtools.runcore.run import StopReason
 from runtools.runcore.util.json import ErrorCode, JsonRpcError
 from runtools.runcore.util.socket import StreamSocketServer
@@ -262,7 +262,7 @@ def validate_params(parameters, arguments: Union[List, Dict[str, Any]]) -> List[
     return validated_args
 
 
-class LocalInstanceServer(StreamSocketServer, JobInstanceManager):
+class LocalInstanceServer(StreamSocketServer):
     """
     Server for handling requests to job instances in a local environment via Unix domain sockets (JSON-RPC 2.0).
 
