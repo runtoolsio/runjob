@@ -6,7 +6,7 @@ from pathlib import Path
 from threading import Lock, Condition
 from typing import Dict, Optional, List, Callable, override, Tuple
 
-from runtools.runcore import plugins, paths, connector, util
+from runtools.runcore import paths, connector, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
 from runtools.runcore.db import sqlite, PersistingObserver, PERSISTING_OBSERVER_PRIORITY
@@ -16,7 +16,7 @@ from runtools.runcore.err import InvalidStateError, run_isolated_collect_excepti
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
     InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, InstanceControlEvent, InstanceStatusEvent, \
     JobInstanceDelegate, InstanceLifecycleObserver, InstanceID, \
-    DuplicateStrategy, Feature
+    DuplicateStrategy
 from runtools.runcore.matching import SortOption
 from runtools.runcore.output import DEFAULT_TAIL_BUFFER_SIZE
 from runtools.runcore.plugins import Plugin
@@ -29,13 +29,6 @@ from runtools.runjob.output import OutputRouter, InMemoryTailBuffer
 from runtools.runjob.server import LocalInstanceServer
 
 log = logging.getLogger(__name__)
-
-
-def _create_plugins(plugin_configs: dict[str, dict]) -> tuple[Feature, ...]:
-    """Load, instantiate, and return plugins as Features."""
-    plugins.load_modules(list(plugin_configs))
-    fetched = Plugin.fetch_plugins(plugin_configs)
-    return tuple(fetched.values())
 
 
 class EnvironmentNode(EnvironmentConnector, ABC):
@@ -608,14 +601,14 @@ def _create(env_db, env_config: EnvironmentConfigUnion, *,
         output_stores = output.create_stores(env_config.id, storages)
         effective_tail_buffer_size = tail_buffer_size if tail_buffer_size is not None \
             else env_config.output.default_tail_buffer_size
-        plugin_features = _create_plugins(env_config.plugins) if env_config.plugins else ()
+        plugin_features = Plugin.create_all(env_config.plugins) if env_config.plugins else ()
         return _local(env_config.id, env_db, layout, output_stores,
                       tail_buffer_size=effective_tail_buffer_size,
                       retention_policy=env_config.retention.to_policy(),
                       features=plugin_features)
 
     if isinstance(env_config, InProcessEnvironmentConfig):
-        plugin_features = _create_plugins(env_config.plugins) if env_config.plugins else ()
+        plugin_features = Plugin.create_all(env_config.plugins) if env_config.plugins else ()
         return in_process(env_config.id, env_db, features=plugin_features)
 
     raise AssertionError(f"Unsupported environment config: {type(env_config)}.")
