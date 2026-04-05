@@ -6,7 +6,7 @@ import pytest
 from runtools.runcore.job import DuplicateInstanceError, DuplicateStrategy, JobInstance
 from runtools.runcore.run import Stage
 from runtools.runjob import node
-from runtools.runjob.node import Feature
+from runtools.runcore.job import Feature
 from runtools.runjob.test.phase import TestPhase
 
 

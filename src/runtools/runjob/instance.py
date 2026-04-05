@@ -81,6 +81,7 @@ def create(instance_id, environment, root_phase, *,
            output_sink=None, output_router=None, tail_buffer_size=2 * 1024 * 1024,
            status_tracker=None,
            error_hook=None,
+           features=(),
            **user_params) -> JobInstance:
     """Create a job instance.
 
@@ -95,6 +96,7 @@ def create(instance_id, environment, root_phase, *,
         tail_buffer_size: Max bytes for the default tail buffer (default 2 MB). Ignored if output_router is provided.
         status_tracker: Custom status tracker (created automatically if not provided)
         error_hook: Error handler for observer errors
+        features: Names of active features/plugins applied to this instance
         **user_params: Additional user-defined parameters stored in metadata
     """
     if not instance_id:
@@ -109,7 +111,7 @@ def create(instance_id, environment, root_phase, *,
     output_sink.add_observer(status_tracker)
 
     inst = _JobInstance(instance_id, root_phase, environment, output_sink, output_router, status_tracker,
-                        error_hook, user_params)
+                        error_hook, user_params, features)
     # noinspection PyProtectedMember
     inst._activate()
     return inst
@@ -118,9 +120,9 @@ def create(instance_id, environment, root_phase, *,
 class _JobInstance(JobInstance):
 
     def __init__(self, instance_id, root_phase, env, output_sink, output_router, status_tracker,
-                 error_hook, user_params):
+                 error_hook, user_params, features=()):
         self._notifications = InstanceObservableNotifications(error_hook=error_hook, force_reraise=True)
-        self._metadata = JobInstanceMetadata(instance_id, user_params)
+        self._metadata = JobInstanceMetadata(instance_id, user_params, tuple(features))
         self._root_phase: Phase = root_phase
         self._output_sink: OutputSink = output_sink
         self._output_router = output_router

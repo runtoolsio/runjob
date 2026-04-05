@@ -114,6 +114,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         self._output_stores = tuple(output_stores)
         self._tail_buffer_size = tail_buffer_size
         self._features = features
+        self._feature_names = tuple(f.name or type(f).__name__ for f in features)
         self._transient = transient
         self._lock = Lock()
         self._idle_condition = Condition(self._lock)
@@ -204,6 +205,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
                 output_sink=output_sink,
                 output_router=output_router,
                 status_tracker=status_tracker,
+                features=self._feature_names,
                 **(user_params or {})
             )
 
