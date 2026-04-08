@@ -22,13 +22,14 @@ from runtools.runcore.job import (JobInstance, JobRun, JobInstanceMetadata, Inst
                                   InstanceLifecycleEvent, InstanceControlEvent, ControlAction, InstanceStatusEvent)
 from runtools.runcore.run import Fault, PhaseTransitionEvent, JobCompletionError, Stage, StopReason
 from runtools.runcore.util import utc_now
-from runtools.runjob.capture import log_capture
+from runtools.runjob.capture import StdLogOutputLink
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer, OutputRouter
 from runtools.runjob.phase import Phase
 from runtools.runjob.track import StatusTracker
 
 log = logging.getLogger(__name__)
 
+_UNSET = object()
 LIFECYCLE_OBSERVER_ERROR = "LIFECYCLE_OBSERVER_ERROR"
 PHASE_OBSERVER_ERROR = "PHASE_OBSERVER_ERROR"
 OUTPUT_OBSERVER_ERROR = "OUTPUT_OBSERVER_ERROR"
@@ -65,7 +66,7 @@ class JobInstanceContext(OutputContext):
 
 
 def create(instance_id, environment, root_phase, *,
-           tail_buffer_size=2 * 1024 * 1024, output_router=None, output_processors=(), output_link=log_capture,
+           tail_buffer_size=2 * 1024 * 1024, output_router=None, output_processors=(), output_link=_UNSET,
            status_tracker=None,
            error_hook=None,
            features=(),
@@ -82,7 +83,7 @@ def create(instance_id, environment, root_phase, *,
             node; defaults to tail-only router for direct usage.
         tail_buffer_size: Max bytes for the default tail buffer (default 2 MB). Ignored if output_router is provided.
         status_tracker: Custom status tracker (created automatically if not provided).
-        output_link: Callable for capturing external output. Defaults to log_capture (Python logging).
+        output_link: Callable for capturing external output. Defaults to StdLogOutputLink (Python logging).
             Pass None to disable. Custom: any callable with signature (sink, *, capture_filter) -> ContextManager.
         error_hook: Error handler for observer errors.
         features: Names of active features/plugins applied to this instance.
@@ -90,6 +91,8 @@ def create(instance_id, environment, root_phase, *,
     """
     if not instance_id:
         raise ValueError("Instance ID is mandatory")
+    if output_link is _UNSET:
+        output_link = StdLogOutputLink()
     if output_router is None:
         tail_buffer = InMemoryTailBuffer(max_bytes=tail_buffer_size) if tail_buffer_size else None
         output_router = OutputRouter(tail_buffer=tail_buffer)

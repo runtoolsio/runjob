@@ -24,7 +24,6 @@ from runtools.runcore.run import Stage
 from runtools.runcore.util import to_tuple, lock, unique_timestamp_hex
 from runtools.runcore.util.socket import DatagramSocketClient
 from runtools.runjob import instance, output
-from runtools.runjob.capture import log_capture
 from runtools.runjob.events import EventDispatcher
 from runtools.runjob.output import OutputRouter, InMemoryTailBuffer
 from runtools.runjob.server import LocalInstanceServer
@@ -171,7 +170,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             raise
 
     def create_instance(self, job_id, run_id=None, root_phase=None, *, duplicate_strategy=DuplicateStrategy.RAISE,
-                        output_processors=(), output_link=log_capture, status_tracker=None,
+                        output_processors=(), output_link=None, status_tracker=None,
                         user_params=None) -> JobInstanceManaged:
         """
         Create a new job instance within this environment.
@@ -195,15 +194,16 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             writers = [store.create_writer(instance_id) for store in self._output_stores]
             tail_buffer = InMemoryTailBuffer(max_bytes=self._tail_buffer_size) if self._tail_buffer_size else None
             output_router = OutputRouter(tail_buffer=tail_buffer, storages=writers)
-            inst = instance.create(
-                instance_id, self, root_phase,
+            create_kwargs = dict(
                 output_router=output_router,
                 output_processors=output_processors,
-                output_link=output_link,
                 status_tracker=status_tracker,
                 features=self._feature_names,
                 **(user_params or {})
             )
+            if output_link is not None:
+                create_kwargs['output_link'] = output_link
+            inst = instance.create(instance_id, self, root_phase, **create_kwargs)
 
             with self._lock:
                 self._reserved_runs.remove(reserved)
