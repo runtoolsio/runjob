@@ -22,6 +22,7 @@ from runtools.runcore.job import (JobInstance, JobRun, JobInstanceMetadata, Inst
                                   InstanceLifecycleEvent, InstanceControlEvent, ControlAction, InstanceStatusEvent)
 from runtools.runcore.run import Fault, PhaseTransitionEvent, JobCompletionError, Stage, StopReason
 from runtools.runcore.util import utc_now
+from runtools.runjob.capture import log_capture
 from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer, OutputRouter
 from runtools.runjob.phase import Phase
 from runtools.runjob.track import StatusTracker
@@ -36,20 +37,6 @@ STATUS_OBSERVER_ERROR = "STATUS_OBSERVER_ERROR"
 
 current_job_instance: ContextVar[Optional[JobInstanceMetadata]] = ContextVar('current_job_instance', default=None)
 
-
-class _JobInstanceLogFilter(logging.Filter):
-    """Filter that only allows logs from the current job instance"""
-
-    def __init__(self, instance_id):
-        super().__init__()
-        self.instance_id = instance_id
-
-    def filter(self, record):
-        metadata = current_job_instance.get()
-        if metadata is None:
-            return False
-
-        return self.instance_id == metadata.instance_id
 
 
 class JobInstanceContext(OutputContext):
@@ -78,7 +65,7 @@ class JobInstanceContext(OutputContext):
 
 
 def create(instance_id, environment, root_phase, *,
-           output_sink=None, output_router=None, tail_buffer_size=2 * 1024 * 1024,
+           tail_buffer_size=2 * 1024 * 1024, output_router=None, output_processors=(), output_link=log_capture,
            status_tracker=None,
            error_hook=None,
            features=(),
@@ -86,32 +73,30 @@ def create(instance_id, environment, root_phase, *,
     """Create a job instance.
 
     Args:
-        instance_id: Unique identifier for this instance
-        environment: Environment configuration
-        root_phase: Root phase of the job instance
-        output_sink: Custom output sink (created automatically if not provided).
-                     For text parsing, provide OutputSink(ParsingPreprocessor([KVParser()])).
+        instance_id: Unique identifier for this instance.
+        environment: Environment configuration.
+        root_phase: Root phase of the job instance.
+        output_processors (Sequence[OutputProcessor]): Processors for the output chain (e.g., ParsingProcessor).
+            StatusTracker is always appended as the last processor.
         output_router: Output router for tail buffering and storage. Built from env config when created via
-                       node; defaults to tail-only router for direct usage.
+            node; defaults to tail-only router for direct usage.
         tail_buffer_size: Max bytes for the default tail buffer (default 2 MB). Ignored if output_router is provided.
-        status_tracker: Custom status tracker (created automatically if not provided)
-        error_hook: Error handler for observer errors
-        features: Names of active features/plugins applied to this instance
-        **user_params: Additional user-defined parameters stored in metadata
+        status_tracker: Custom status tracker (created automatically if not provided).
+        output_link: Callable for capturing external output. Defaults to log_capture (Python logging).
+            Pass None to disable. Custom: any callable with signature (sink, *, capture_filter) -> ContextManager.
+        error_hook: Error handler for observer errors.
+        features: Names of active features/plugins applied to this instance.
+        **user_params: Additional user-defined parameters stored in metadata.
     """
     if not instance_id:
         raise ValueError("Instance ID is mandatory")
-    output_sink = output_sink or OutputSink()
     if output_router is None:
         tail_buffer = InMemoryTailBuffer(max_bytes=tail_buffer_size) if tail_buffer_size else None
         output_router = OutputRouter(tail_buffer=tail_buffer)
-    status_tracker = status_tracker or StatusTracker()
 
-    # Auto-wire status tracker as output observer
-    output_sink.add_observer(status_tracker)
-
-    inst = _JobInstance(instance_id, root_phase, environment, output_sink, output_router, status_tracker,
-                        error_hook, user_params, features)
+    inst = _JobInstance(instance_id, root_phase, environment,
+                        output_router, output_processors, output_link,
+                        status_tracker, error_hook, user_params, features)
     # noinspection PyProtectedMember
     inst._activate()
     return inst
@@ -119,13 +104,16 @@ def create(instance_id, environment, root_phase, *,
 
 class _JobInstance(JobInstance):
 
-    def __init__(self, instance_id, root_phase, env, output_sink, output_router, status_tracker,
-                 error_hook, user_params, features=()):
+    def __init__(self, instance_id, root_phase, env,
+                 output_router, output_processors, output_link,
+                 status_tracker, error_hook, user_params, features=()):
+        status_tracker = status_tracker or StatusTracker()
         self._notifications = InstanceObservableNotifications(error_hook=error_hook, force_reraise=True)
         self._metadata = JobInstanceMetadata(instance_id, user_params, tuple(features))
         self._root_phase: Phase = root_phase
-        self._output_sink: OutputSink = output_sink
+        self._output_sink = OutputSink((*output_processors, status_tracker))
         self._output_router = output_router
+        self._output_link = output_link
         self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output_sink)
         self._faults: List[Fault] = []
 
@@ -208,17 +196,28 @@ class _JobInstance(JobInstance):
         with self._instance_scope():
             with self._output_router as router:
                 with self._output_sink.observer_context(self._process_output, router):
-                    log_filter = _JobInstanceLogFilter(self.id)
-                    with self._output_sink.capture_logs_from(logging.getLogger(), log_filter=log_filter):
-                        try:
-                            retval = self._root_phase.run(self._ctx)
-                        except Exception as e:
-                            raise JobCompletionError(self.id, self._root_phase.termination) from e
+                    return self._run_with_output_link()
 
-                        termination = self._root_phase.termination
-                        if not termination.status.outcome.is_success:
-                            raise JobCompletionError(self.id, termination)
-                        return retval
+    def _run_with_output_link(self):
+        if self._output_link:
+            def capture_filter():
+                current = current_job_instance.get(None)
+                return current is not None and current.instance_id == self.id
+
+            with self._output_link(self._output_sink, capture_filter=capture_filter):
+                return self._execute()
+        return self._execute()
+
+    def _execute(self):
+        try:
+            retval = self._root_phase.run(self._ctx)
+        except Exception as e:
+            raise JobCompletionError(self.id, self._root_phase.termination) from e
+
+        termination = self._root_phase.termination
+        if not termination.status.outcome.is_success:
+            raise JobCompletionError(self.id, termination)
+        return retval
 
     def run_in_new_thread(self, daemon=False):
         t = Thread(target=self.run, daemon=daemon)

@@ -1,75 +1,71 @@
-"""Tests for the new output-to-status tracking architecture.
+"""Tests for the output-to-status tracking architecture.
 
-The new architecture:
-1. ParsingPreprocessor parses text into OutputLine.fields
-2. StatusTracker.new_output() reads fields directly
+The architecture:
+1. ParsingProcessor parses text into OutputLine.fields
+2. StatusTracker.new_output() reads rt_-prefixed fields for tracking
 """
 from datetime import datetime
 
 from runtools.runcore.output import OutputLine
 from runtools.runcore.util import KVParser, iso_date_time_parser
-from runtools.runjob.output import ParsingPreprocessor
+from runtools.runjob.output import ParsingProcessor
 from runtools.runjob.track import StatusTracker, field_based_handler
 
 
 def test_parsing_preprocessor_extracts_fields():
-    """ParsingPreprocessor extracts fields from text using parsers."""
-    preprocessor = ParsingPreprocessor([KVParser()])
+    """ParsingProcessor extracts fields from text using parsers."""
+    preprocessor = ParsingProcessor([KVParser()])
 
-    line = OutputLine('event=[downloading] completed=[5]', 1)
+    line = OutputLine('rt_event=[downloading] rt_completed=[5]', 1)
     processed = preprocessor(line)
 
-    assert processed.fields == {'event': 'downloading', 'completed': '5'}
-    assert processed.message == line.message  # Original message preserved
+    assert processed.fields == {'rt_event': 'downloading', 'rt_completed': '5'}
+    assert processed.message == line.message
 
 
 def test_parsing_preprocessor_skips_if_fields_exist():
-    """ParsingPreprocessor doesn't overwrite existing fields (struct logging)."""
-    preprocessor = ParsingPreprocessor([KVParser()])
+    """ParsingProcessor doesn't overwrite existing fields (structured logging)."""
+    preprocessor = ParsingProcessor([KVParser()])
 
-    # Simulate structured logging - fields already set
-    line = OutputLine('some message', 1, fields={'event': 'upload'})
+    line = OutputLine('some message', 1, fields={'rt_event': 'upload'})
     processed = preprocessor(line)
 
-    assert processed.fields == {'event': 'upload'}  # Unchanged
+    assert processed.fields == {'rt_event': 'upload'}
 
 
 def test_parsing_preprocessor_returns_unchanged_if_no_match():
-    """ParsingPreprocessor returns original line if parsers find nothing."""
-    preprocessor = ParsingPreprocessor([KVParser()])
+    """ParsingProcessor returns original line if parsers find nothing."""
+    preprocessor = ParsingProcessor([KVParser()])
 
     line = OutputLine('no key-value pairs here', 1)
     processed = preprocessor(line)
 
-    assert processed is line  # Same object, no change
+    assert processed is line
 
 
 def test_status_tracker_event_from_fields():
-    """StatusTracker with field_based_handler extracts event from OutputLine fields."""
+    """StatusTracker extracts event from rt_event field."""
     tracker = StatusTracker(output_handler=field_based_handler)
 
-    # No fields - no event
-    tracker.new_output(OutputLine('no fields', 1))
+    tracker(OutputLine('no fields', 1))
     assert tracker.to_status().last_event is None
 
-    # Fields without 'event' - no event
-    tracker.new_output(OutputLine('msg', 2, fields={'other': 'value'}))
+    tracker(OutputLine('msg', 2, fields={'other': 'value'}))
     assert tracker.to_status().last_event is None
 
-    # Fields with 'event' - event set
-    tracker.new_output(OutputLine('msg', 3, fields={'event': 'downloading'}))
+    tracker(OutputLine('msg', 3, fields={'rt_event': 'downloading'}))
     assert tracker.to_status().last_event.message == 'downloading'
 
 
 def test_status_tracker_operation_from_fields():
-    """StatusTracker extracts operation progress from OutputLine fields."""
+    """StatusTracker extracts operation progress from rt_ fields."""
     tracker = StatusTracker()
 
-    tracker.new_output(OutputLine('msg', 1, fields={
-        'operation': 'processing',
-        'completed': 10,
-        'total': 100,
-        'unit': 'files'
+    tracker(OutputLine('msg', 1, fields={
+        'rt_operation': 'processing',
+        'rt_completed': 10,
+        'rt_total': 100,
+        'rt_unit': 'files'
     }))
 
     op = tracker.to_status().operations[0]
@@ -80,53 +76,53 @@ def test_status_tracker_operation_from_fields():
 
 
 def test_status_tracker_result_from_fields():
-    """StatusTracker extracts result from OutputLine fields."""
+    """StatusTracker extracts result from rt_result field."""
     tracker = StatusTracker()
 
-    tracker.new_output(OutputLine('msg', 1, fields={'result': 'success'}))
+    tracker(OutputLine('msg', 1, fields={'rt_result': 'success'}))
     assert tracker.to_status().result.message == 'success'
 
 
 def test_end_to_end_text_parsing():
-    """Full flow: text → ParsingPreprocessor → StatusTracker."""
-    preprocessor = ParsingPreprocessor([KVParser()])
+    """Full flow: text → ParsingProcessor → StatusTracker."""
+    preprocessor = ParsingProcessor([KVParser()])
     tracker = StatusTracker()
 
     def process(text, ordinal):
         line = OutputLine(text, ordinal)
         processed = preprocessor(line)
-        tracker.new_output(processed)
+        tracker(processed)
 
-    process('event=[downloading]', 1)
+    process('rt_event=[downloading]', 1)
     assert tracker.to_status().last_event.message == 'downloading'
 
-    process('operation=[processing] completed=[5] total=[10]', 2)
+    process('rt_operation=[processing] rt_completed=[5] rt_total=[10]', 2)
     op = tracker.to_status().operations[0]
     assert op.name == 'processing'
     assert op.completed == 5
 
 
 def test_kv_parser_aliases():
-    """KVParser aliases convert parsed keys to canonical names."""
-    preprocessor = ParsingPreprocessor([KVParser(aliases={'count': 'completed'})])
+    """KVParser aliases convert parsed keys to rt_ tracking names."""
+    preprocessor = ParsingProcessor([KVParser(aliases={'count': 'rt_completed'})])
     tracker = StatusTracker()
 
-    line = OutputLine('operation=[download] count=[50] total=[100]', 1)
+    line = OutputLine('rt_operation=[download] count=[50] rt_total=[100]', 1)
     processed = preprocessor(line)
-    tracker.new_output(processed)
+    tracker(processed)
 
     op = tracker.to_status().operations[0]
-    assert op.completed == 50  # 'count' was aliased to 'completed'
+    assert op.completed == 50
 
 
 def test_timestamp_parsing():
     """Timestamp parser extracts datetime from text."""
-    preprocessor = ParsingPreprocessor([iso_date_time_parser('timestamp'), KVParser()])
+    preprocessor = ParsingProcessor([iso_date_time_parser('rt_timestamp'), KVParser()])
     tracker = StatusTracker()
 
-    line = OutputLine('2020-10-01 10:30:30 event=[started]', 1)
+    line = OutputLine('2020-10-01 10:30:30 rt_event=[started]', 1)
     processed = preprocessor(line)
-    tracker.new_output(processed)
+    tracker(processed)
 
     event = tracker.to_status().last_event
     assert event.message == 'started'
@@ -135,15 +131,14 @@ def test_timestamp_parsing():
 
 def test_multiple_parsers():
     """Multiple parsers can be chained."""
-    preprocessor = ParsingPreprocessor([
-        KVParser(value_split=":"),  # Parses "task:value"
-        KVParser(field_split="&"),  # Parses "key1=v1&key2=v2"
+    preprocessor = ParsingProcessor([
+        KVParser(value_split=":"),
+        KVParser(field_split="&"),
     ])
     tracker = StatusTracker()
 
     line = OutputLine('task:mytask', 1)
     processed = preprocessor(line)
-    # 'task' should be parsed but it's not a recognized field for StatusTracker
     assert processed.fields.get('task') == 'mytask'
 
 
@@ -151,32 +146,30 @@ def test_operation_lifecycle():
     """Operations track progress and can be marked finished."""
     tracker = StatusTracker()
 
-    # Start operation
-    tracker.new_output(OutputLine('msg', 1, fields={
-        'operation': 'encoding', 'completed': 5, 'total': 10
+    tracker(OutputLine('msg', 1, fields={
+        'rt_operation': 'encoding', 'rt_completed': 5, 'rt_total': 10
     }))
     assert not tracker.to_status().operations[0].finished
 
-    # Complete operation
-    tracker.new_output(OutputLine('msg', 2, fields={
-        'operation': 'encoding', 'completed': 10, 'total': 10
+    tracker(OutputLine('msg', 2, fields={
+        'rt_operation': 'encoding', 'rt_completed': 10, 'rt_total': 10
     }))
     assert tracker.to_status().operations[0].finished
 
 
 def test_operation_failed():
-    """Operations can be marked as failed via the 'failed' field."""
+    """Operations can be marked as failed via the rt_failed field."""
     tracker = StatusTracker()
 
-    tracker.new_output(OutputLine('msg', 1, fields={
-        'operation': 'uploading', 'completed': 50, 'total': 100
+    tracker(OutputLine('msg', 1, fields={
+        'rt_operation': 'uploading', 'rt_completed': 50, 'rt_total': 100
     }))
     op = tracker.to_status().operations[0]
     assert not op.finished
     assert not op.failed
 
-    tracker.new_output(OutputLine('msg', 2, fields={
-        'operation': 'uploading', 'failed': 'connection timeout'
+    tracker(OutputLine('msg', 2, fields={
+        'rt_operation': 'uploading', 'rt_failed': 'connection timeout'
     }))
     op = tracker.to_status().operations[0]
     assert op.finished
@@ -185,11 +178,11 @@ def test_operation_failed():
 
 
 def test_failed_takes_precedence_over_result():
-    """When both 'failed' and 'result' are present, 'failed' wins."""
+    """When both rt_failed and rt_result are present, rt_failed wins."""
     tracker = StatusTracker()
 
-    tracker.new_output(OutputLine('msg', 1, fields={
-        'operation': 'upload', 'failed': 'error', 'result': 'done'
+    tracker(OutputLine('msg', 1, fields={
+        'rt_operation': 'upload', 'rt_failed': 'error', 'rt_result': 'done'
     }))
     op = tracker.to_status().operations[0]
     assert op.failed
@@ -200,12 +193,10 @@ def test_zero_total_means_zero_work():
     """Total of 0 means zero work exists, not unknown."""
     tracker = StatusTracker()
 
-    tracker.new_output(OutputLine('msg', 1, fields={
-        'operation': 'noop', 'completed': 0, 'total': 0
+    tracker(OutputLine('msg', 1, fields={
+        'rt_operation': 'noop', 'rt_completed': 0, 'rt_total': 0
     }))
     op = tracker.to_status().operations[0]
     assert op.total == 0
     assert op.completed == 0
     assert op.finished
-
-

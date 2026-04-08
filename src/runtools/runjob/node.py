@@ -24,6 +24,7 @@ from runtools.runcore.run import Stage
 from runtools.runcore.util import to_tuple, lock, unique_timestamp_hex
 from runtools.runcore.util.socket import DatagramSocketClient
 from runtools.runjob import instance, output
+from runtools.runjob.capture import log_capture
 from runtools.runjob.events import EventDispatcher
 from runtools.runjob.output import OutputRouter, InMemoryTailBuffer
 from runtools.runjob.server import LocalInstanceServer
@@ -170,26 +171,20 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             raise
 
     def create_instance(self, job_id, run_id=None, root_phase=None, *, duplicate_strategy=DuplicateStrategy.RAISE,
-                        output_sink=None, status_tracker=None, user_params=None) \
-            -> JobInstanceManaged:
+                        output_processors=(), output_link=log_capture, status_tracker=None,
+                        user_params=None) -> JobInstanceManaged:
         """
         Create a new job instance within this environment.
 
         Args:
-            job_id: Job identifier
-            run_id: Run identifier (generated if None)
-            root_phase: Root phase of the job instance
+            job_id: Job identifier.
+            run_id: Run identifier (generated if None).
+            root_phase: Root phase of the job instance.
             duplicate_strategy: How to handle duplicates. Defaults to RAISE.
-            output_sink: Optional output sink (for text parsing, use OutputSink with ParsingPreprocessor)
-            status_tracker: Optional status tracker for the job
-            user_params: Optional user-defined parameters
-
-        Returns:
-            JobInstance: The created job instance
-
-        Raises:
-            InvalidStateError: If the environment is not opened or is already closed
-            DuplicateInstanceError: If duplicate detected and strategy is RAISE
+            output_processors (Sequence[OutputProcessor]): Processors for the output chain.
+            output_link: Callable for capturing external output (e.g., log_capture). None to disable.
+            status_tracker: Optional status tracker for the job.
+            user_params: Optional user-defined parameters.
         """
         run_id = run_id or unique_timestamp_hex()
         reserved = (job_id, run_id)
@@ -202,8 +197,9 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             output_router = OutputRouter(tail_buffer=tail_buffer, storages=writers)
             inst = instance.create(
                 instance_id, self, root_phase,
-                output_sink=output_sink,
                 output_router=output_router,
+                output_processors=output_processors,
+                output_link=output_link,
                 status_tracker=status_tracker,
                 features=self._feature_names,
                 **(user_params or {})

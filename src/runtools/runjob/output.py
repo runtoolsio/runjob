@@ -21,34 +21,17 @@ log = logging.getLogger(__name__)
 _thread_local = local()
 
 
-class LogHandlerContext:
-
-    def __init__(self, loggers: Iterable[logging.Logger], temp_handlers: Iterable[logging.Handler]):
-        self.loggers = loggers
-        self.temp_handlers = temp_handlers
-
-    def __enter__(self):
-        for logger in self.loggers:
-            for handler in self.temp_handlers:
-                logger.addHandler(handler)
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        for logger in self.loggers:
-            for handler in self.temp_handlers:
-                logger.removeHandler(handler)
+OutputProcessor = Callable[[OutputLine], Optional[OutputLine]]
 
 
-OutputPreprocessing = Callable[[OutputLine], OutputLine]
-
-
-class ParsingPreprocessor:
-    """Preprocessor that parses output text into structured fields using provided parsers."""
+class ParsingProcessor:
+    """Processor that parses output text into structured fields using provided parsers."""
 
     def __init__(self, parsers):
         self.parsers = parsers
 
-    def __call__(self, output_line: OutputLine) -> OutputLine:
-        if output_line.fields:  # Already has fields (e.g., from structured logging)
+    def __call__(self, output_line: OutputLine) -> Optional[OutputLine]:
+        if output_line.fields:
             return output_line
 
         fields = {}
@@ -64,9 +47,13 @@ class ParsingPreprocessor:
 
 
 class OutputSink:
+    """Receives output lines, runs them through a processor chain, and dispatches to observers.
 
-    def __init__(self, output_preprocessing: Optional[OutputPreprocessing] = None):
-        self.preprocessing: Optional[OutputPreprocessing] = output_preprocessing
+    Processors are called in order. If any returns None, the line is dropped and observers are not notified.
+    """
+
+    def __init__(self, processors: Iterable[OutputProcessor] = ()):
+        self._processors: tuple[OutputProcessor, ...] = tuple(processors)
         self._output_notification = ObservableNotification[OutputObserver]()
         self._line_factory = OutputLineFactory()
 
@@ -81,8 +68,10 @@ class OutputSink:
                 source = phase.id if phase else None
             output_line = self._line_factory(message, is_error, source, fields)
 
-            if self.preprocessing:
-                output_line = self.preprocessing(output_line)
+            for processor in self._processors:
+                output_line = processor(output_line)
+                if output_line is None:
+                    return
             self._output_notification.observer_proxy.new_output(output_line)
         finally:
             _thread_local.processing_output = False
@@ -96,48 +85,6 @@ class OutputSink:
     def observer_context(self, *observers, priority: int = DEFAULT_OBSERVER_PRIORITY) -> ObserverContext[
         OutputObserver]:
         return self._output_notification.observer_context(*observers, priority=priority)
-
-    def capturing_log_handler(self, log_filter: Optional[logging.Filter] = None, *, format_record=True):
-        """
-        Creates and returns a logging.Handler instance that forwards log records to this sink.
-        Extracts structured fields from LogRecord extras for structured logging support.
-        """
-
-        class InternalHandler(logging.Handler):
-            # Built-in LogRecord attributes to exclude when extracting extras
-            _BUILTIN_ATTRS = {
-                'name', 'msg', 'args', 'created', 'filename', 'funcName', 'levelname',
-                'levelno', 'lineno', 'module', 'msecs', 'pathname', 'process',
-                'processName', 'relativeCreated', 'stack_info', 'exc_info', 'exc_text',
-                'thread', 'threadName', 'taskName', 'message',
-            }
-
-            def __init__(self, sink):
-                super().__init__()
-                self.sink = sink
-
-            def emit(self, record):
-                message = self.format(record) if format_record else record.getMessage()
-                is_error = record.levelno >= logging.ERROR
-                fields = self._extract_extras(record)
-                self.sink.new_output(message, is_error, fields)
-
-            def _extract_extras(self, record):
-                """Extract user-defined extras from LogRecord."""
-                extras = {
-                    k: v for k, v in record.__dict__.items()
-                    if k not in self._BUILTIN_ATTRS and not k.startswith('_')
-                }
-                return extras if extras else None
-
-        handler = InternalHandler(self)
-        if log_filter:
-            handler.addFilter(log_filter)
-        return handler
-
-    def capture_logs_from(self, *loggers, log_filter=None, format_record=True) -> LogHandlerContext:
-        handler = self.capturing_log_handler(log_filter=log_filter, format_record=format_record)
-        return LogHandlerContext(loggers, [handler])
 
 
 class OutputContext(ABC):
