@@ -11,6 +11,7 @@ import logging
 from contextlib import contextmanager
 from typing import Callable, ContextManager, Optional, Protocol
 
+from runtools.runcore.output import OutputLine
 from runtools.runjob.output import OutputSink
 
 
@@ -24,23 +25,46 @@ class StdLogOutputLink:
     """Captures Python stdlib logging records and feeds them to an OutputSink.
 
     Args:
-        formatter: If provided, format records with this formatter. If None, use record.getMessage().
+        formatter: Formatter for verbose rendering. Defaults to DEFAULT_FORMATTER.
+            Pass None to disable formatting (verbose shows raw message only).
     """
 
-    def __init__(self, formatter: logging.Formatter | None = None):
+    DEFAULT_FORMATTER = logging.Formatter(
+        "%(asctime)s %(levelname)-8s [%(name)s] [%(threadName)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    def __init__(self, formatter: logging.Formatter | None = DEFAULT_FORMATTER):
         self._formatter = formatter
 
     def __call__(self, sink: OutputSink, *, capture_filter: Callable):
         @contextmanager
         def cm():
-            handler = _SinkForwardingHandler(sink, capture_filter, self._formatter)
             root_logger = logging.getLogger()
+            # Suppress tracking-only records from existing handlers (console, file, etc.)
+            tracking_filter = _TrackingOnlyFilter()
+            existing_handlers = list(root_logger.handlers)
+            for h in existing_handlers:
+                h.addFilter(tracking_filter)
+            # Add capture handler (without the filter — it sees everything)
+            handler = _SinkForwardingHandler(sink, capture_filter, self._formatter)
             root_logger.addHandler(handler)
             try:
                 yield
             finally:
                 root_logger.removeHandler(handler)
+                for h in existing_handlers:
+                    h.removeFilter(tracking_filter)
         return cm()
+
+
+class _TrackingOnlyFilter(logging.Filter):
+    """Rejects log records that are tracking-only (empty message + rt_ fields)."""
+
+    def filter(self, record):
+        if not record.getMessage().strip():
+            return not any(k.startswith("rt_") for k in record.__dict__)
+        return True
 
 
 class _SinkForwardingHandler(logging.Handler):
@@ -57,10 +81,17 @@ class _SinkForwardingHandler(logging.Handler):
     def emit(self, record):
         if not self._capture_filter():
             return
-        message = self.format(record) if self._use_formatter else record.getMessage()
+        message = record.getMessage()
         is_error = record.levelno >= logging.ERROR
         fields = self._extract_tracking_fields(record)
-        self._sink.new_output(message, is_error, fields)
+        formatted = self._build_formatted_template(record, message) if self._use_formatter else None
+        self._sink.new_output(message, is_error, fields, formatted=formatted)
+
+    def _build_formatted_template(self, record, message: str) -> str:
+        formatted = self.format(record)
+        if message and message in formatted:
+            return formatted.replace(message, OutputLine.MESSAGE_TOKEN, 1)
+        return formatted
 
     @staticmethod
     def _extract_tracking_fields(record) -> Optional[dict]:
