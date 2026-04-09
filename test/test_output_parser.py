@@ -104,7 +104,17 @@ def test_kv_fallback():
     parser = OutputParser(kv_parser=KVParser())
     line = OutputLine('rt_event=[downloading] rt_completed=[5]', 1)
     result = parser(line)
+    assert result.message == ''
     assert result.fields == {'rt_event': 'downloading', 'rt_completed': '5'}
+    assert result.is_tracking_only
+
+
+def test_kv_mixed_text_and_fields():
+    parser = OutputParser(kv_parser=KVParser())
+    line = OutputLine('Processing site_key=[ABC] total=[100]', 1)
+    result = parser(line)
+    assert result.message == 'Processing'
+    assert result.fields == {'site_key': 'ABC', 'total': '100'}
 
 
 def test_kv_after_text_pattern():
@@ -113,7 +123,7 @@ def test_kv_after_text_pattern():
     result = parser(line)
     assert result.timestamp == "2024-03-15T10:30:00Z"
     assert result.level == "INFO"
-    assert result.message == "Processing site_key=[ABC] total=[100]"
+    assert result.message == "Processing"
     assert result.fields == {'site_key': 'ABC', 'total': '100'}
 
 

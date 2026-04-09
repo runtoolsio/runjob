@@ -49,6 +49,9 @@ class ParsingProcessor:
 
 # --- Smart output parsing (JSON → text log pattern → KV → plain) ---
 
+# Matches key=value, key=[bracketed], key=(parens), key=<angle> tokens
+_KV_TOKEN_PATTERN = re.compile(r'\S+=(?:\[[^\]]*\]|\([^)]*\)|<[^>]*>|\S+)')
+
 _ENVELOPE_KEY_MAP = {
     "timestamp": "timestamp", "ts": "timestamp", "time": "timestamp",
     "level": "level", "lvl": "level", "severity": "level",
@@ -106,12 +109,13 @@ class OutputParser:
             output_line = self._apply(output_line, result)
             text = output_line.message
 
-        # 3. KV on (possibly cleaned) message
+        # 3. KV on (possibly cleaned) message — strip matched pairs to produce clean text
         if self._kv_parser:
             fields = self._kv_parser(text)
             if fields:
                 existing = output_line.fields or {}
-                return output_line.with_fields({**existing, **fields})
+                cleaned = _KV_TOKEN_PATTERN.sub('', text).strip()
+                return replace(output_line, message=cleaned, fields={**existing, **fields})
 
         return output_line
 
