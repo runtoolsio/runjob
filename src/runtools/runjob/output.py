@@ -59,7 +59,7 @@ class OutputSink:
     def new_output(self, message: str, is_error: bool = False,
                    source: str | None = None, timestamp: str | None = None,
                    level: str | None = None, logger: str | None = None,
-                   fields: dict | None = None):
+                   thread: str | None = None, fields: dict | None = None):
         if getattr(_thread_local, 'processing_output', False):
             return
         _thread_local.processing_output = True
@@ -68,7 +68,7 @@ class OutputSink:
             if source is None:
                 phase = _current_phase.get(None)
                 source = phase.id if phase else None
-            output_line = self._line_factory(message, is_error, source, timestamp, level, logger, fields)
+            output_line = self._line_factory(message, is_error, source, timestamp, level, logger, thread, fields)
 
             for processor in self._processors:
                 output_line = processor(output_line)

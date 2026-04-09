@@ -49,12 +49,23 @@ class StdLogOutputLink:
         return cm()
 
 
+def _has_rt_keys(d) -> bool:
+    return any(k.startswith("rt_") for k in d)
+
+
+def _dict_message(msg_dict: dict) -> str:
+    return str(msg_dict.get("message", "") or msg_dict.get("msg", ""))
+
+
 class _TrackingOnlyFilter(logging.Filter):
     """Rejects log records that are tracking-only (empty message + rt_ fields)."""
 
     def filter(self, record):
-        if not record.getMessage().strip():
-            return not any(k.startswith("rt_") for k in record.__dict__)
+        if isinstance(record.msg, dict):
+            if not _dict_message(record.msg).strip():
+                return not _has_rt_keys(record.msg) and not _has_rt_keys(record.__dict__)
+        elif not record.getMessage().strip():
+            return not _has_rt_keys(record.__dict__)
         return True
 
 
@@ -64,6 +75,8 @@ _BUILTIN_ATTRS = frozenset({
     'processName', 'relativeCreated', 'stack_info', 'exc_info', 'exc_text',
     'thread', 'threadName', 'taskName', 'message',
 })
+
+_DICT_MESSAGE_KEYS = frozenset({"message", "msg"})
 
 
 class _SinkForwardingHandler(logging.Handler):
@@ -77,18 +90,40 @@ class _SinkForwardingHandler(logging.Handler):
     def emit(self, record):
         if not self._capture_filter():
             return
-        message = record.getMessage()
         is_error = record.levelno >= logging.ERROR
         ts = datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(timespec='milliseconds')
         timestamp = ts[:-6] + 'Z' if ts.endswith('+00:00') else ts
         level = record.levelname
         logger_name = record.name
-        fields = self._extract_fields(record)
+        thread_name = record.threadName
+
+        if isinstance(record.msg, dict):
+            message, fields = self._extract_dict_message(record)
+        else:
+            message = record.getMessage()
+            fields = self._extract_extra_fields(record)
+
         self._sink.new_output(message, is_error,
-                              timestamp=timestamp, level=level, logger=logger_name, fields=fields)
+                              timestamp=timestamp, level=level, logger=logger_name, thread=thread_name, fields=fields)
 
     @staticmethod
-    def _extract_fields(record) -> Optional[dict]:
+    def _extract_dict_message(record) -> tuple[str, Optional[dict]]:
+        """Extract message and fields from a dict-style log record.
+
+        Supports python-json-logger pattern: ``logger.info({"message": "...", "key": "val"})``.
+        Recognizes ``message``/``msg`` as the output message; everything else becomes fields.
+        """
+        msg_dict = record.msg
+        message = _dict_message(msg_dict)
+        fields = {k: v for k, v in msg_dict.items() if k not in _DICT_MESSAGE_KEYS}
+        # Merge extra= kwargs from the logging call
+        for k, v in record.__dict__.items():
+            if k not in _BUILTIN_ATTRS and not k.startswith('_'):
+                fields[k] = v
+        return message, fields or None
+
+    @staticmethod
+    def _extract_extra_fields(record) -> Optional[dict]:
         """Extract rt_ tracking fields and user extras from LogRecord."""
         extras = {
             k: v for k, v in record.__dict__.items()
