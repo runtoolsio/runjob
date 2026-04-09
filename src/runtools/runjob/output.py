@@ -42,8 +42,7 @@ class ParsingProcessor:
         if not fields:
             return output_line
 
-        return OutputLine(output_line.message, output_line.ordinal,
-                          output_line.is_error, output_line.source, fields)
+        return output_line.with_fields(fields)
 
 
 class OutputSink:
@@ -57,8 +56,10 @@ class OutputSink:
         self._output_notification = ObservableNotification[OutputObserver]()
         self._line_factory = OutputLineFactory()
 
-    def new_output(self, message: str, is_error: bool = False, fields: dict | None = None,
-                   source: str | None = None, formatted: str | None = None):
+    def new_output(self, message: str, is_error: bool = False,
+                   source: str | None = None, timestamp: str | None = None,
+                   level: str | None = None, logger: str | None = None,
+                   fields: dict | None = None):
         if getattr(_thread_local, 'processing_output', False):
             return
         _thread_local.processing_output = True
@@ -67,7 +68,7 @@ class OutputSink:
             if source is None:
                 phase = _current_phase.get(None)
                 source = phase.id if phase else None
-            output_line = self._line_factory(message, is_error, source, fields, formatted)
+            output_line = self._line_factory(message, is_error, source, timestamp, level, logger, fields)
 
             for processor in self._processors:
                 output_line = processor(output_line)

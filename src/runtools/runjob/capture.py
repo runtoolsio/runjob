@@ -9,9 +9,9 @@ Custom output links implement ``__call__(self, sink, *, capture_filter) -> Conte
 
 import logging
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Callable, ContextManager, Optional, Protocol
 
-from runtools.runcore.output import OutputLine
 from runtools.runjob.output import OutputSink
 
 
@@ -24,18 +24,9 @@ class OutputLink(Protocol):
 class StdLogOutputLink:
     """Captures Python stdlib logging records and feeds them to an OutputSink.
 
-    Args:
-        formatter: Formatter for verbose rendering. Defaults to DEFAULT_FORMATTER.
-            Pass None to disable formatting (verbose shows raw message only).
+    Extracts canonical envelope fields (timestamp, level, logger) from LogRecord.
+    Extracts ``rt_``-prefixed tracking fields and user extras into fields dict.
     """
-
-    DEFAULT_FORMATTER = logging.Formatter(
-        "%(asctime)s %(levelname)-8s [%(name)s] [%(threadName)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    def __init__(self, formatter: logging.Formatter | None = DEFAULT_FORMATTER):
-        self._formatter = formatter
 
     def __call__(self, sink: OutputSink, *, capture_filter: Callable):
         @contextmanager
@@ -47,7 +38,7 @@ class StdLogOutputLink:
             for h in existing_handlers:
                 h.addFilter(tracking_filter)
             # Add capture handler (without the filter — it sees everything)
-            handler = _SinkForwardingHandler(sink, capture_filter, self._formatter)
+            handler = _SinkForwardingHandler(sink, capture_filter)
             root_logger.addHandler(handler)
             try:
                 yield
@@ -67,34 +58,40 @@ class _TrackingOnlyFilter(logging.Filter):
         return True
 
 
-class _SinkForwardingHandler(logging.Handler):
-    """Forwards log records to an OutputSink, extracting rt_ tracking fields."""
+_BUILTIN_ATTRS = frozenset({
+    'name', 'msg', 'args', 'created', 'filename', 'funcName', 'levelname',
+    'levelno', 'lineno', 'module', 'msecs', 'pathname', 'process',
+    'processName', 'relativeCreated', 'stack_info', 'exc_info', 'exc_text',
+    'thread', 'threadName', 'taskName', 'message',
+})
 
-    def __init__(self, sink: OutputSink, capture_filter: Callable, formatter: logging.Formatter | None):
+
+class _SinkForwardingHandler(logging.Handler):
+    """Forwards log records to an OutputSink, extracting structured fields."""
+
+    def __init__(self, sink: OutputSink, capture_filter: Callable):
         super().__init__()
         self._sink = sink
         self._capture_filter = capture_filter
-        if formatter:
-            self.setFormatter(formatter)
-        self._use_formatter = formatter is not None
 
     def emit(self, record):
         if not self._capture_filter():
             return
         message = record.getMessage()
         is_error = record.levelno >= logging.ERROR
-        fields = self._extract_tracking_fields(record)
-        formatted = self._build_formatted_template(record, message) if self._use_formatter else None
-        self._sink.new_output(message, is_error, fields, formatted=formatted)
-
-    def _build_formatted_template(self, record, message: str) -> str:
-        formatted = self.format(record)
-        if message and message in formatted:
-            return formatted.replace(message, OutputLine.MESSAGE_TOKEN, 1)
-        return formatted
+        ts = datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(timespec='milliseconds')
+        timestamp = ts[:-6] + 'Z' if ts.endswith('+00:00') else ts
+        level = record.levelname
+        logger_name = record.name
+        fields = self._extract_fields(record)
+        self._sink.new_output(message, is_error,
+                              timestamp=timestamp, level=level, logger=logger_name, fields=fields)
 
     @staticmethod
-    def _extract_tracking_fields(record) -> Optional[dict]:
-        """Extract rt_-prefixed tracking fields from LogRecord extras."""
-        extras = {k: v for k, v in record.__dict__.items() if k.startswith("rt_")}
+    def _extract_fields(record) -> Optional[dict]:
+        """Extract rt_ tracking fields and user extras from LogRecord."""
+        extras = {
+            k: v for k, v in record.__dict__.items()
+            if k not in _BUILTIN_ATTRS and not k.startswith('_')
+        }
         return extras if extras else None

@@ -148,7 +148,9 @@ class StatusTracker:
 
     def __call__(self, output_line: OutputLine) -> Optional[OutputLine]:
         self._output_handler(output_line, self)
-        return None if output_line.is_tracking_only else output_line
+        if output_line.is_tracking_only:
+            return None
+        return output_line.without_tracking_fields()
 
     def event(self, text: str, timestamp=None, source: str | None = None) -> None:
         timestamp = ts_or_now(timestamp)
