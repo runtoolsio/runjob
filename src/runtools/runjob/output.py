@@ -1,8 +1,10 @@
 import json
 import logging
 import os
+import re
 from abc import ABC, abstractmethod
 from collections import deque
+from dataclasses import replace
 from pathlib import Path
 from threading import Lock, local
 from typing import Optional, Callable, List, Iterable
@@ -43,6 +45,132 @@ class ParsingProcessor:
             return output_line
 
         return output_line.with_fields(fields)
+
+
+# --- Smart output parsing (JSON → text log pattern → KV → plain) ---
+
+_ENVELOPE_KEY_MAP = {
+    "timestamp": "timestamp", "ts": "timestamp", "time": "timestamp",
+    "level": "level", "lvl": "level", "severity": "level",
+    "logger": "logger", "logger_name": "logger",
+    "thread": "thread", "thread_name": "thread",
+}
+
+_MESSAGE_KEYS = frozenset({"message", "msg"})
+
+# Pattern A: ISO timestamp + level + optional logger
+_LOG_LINE_PATTERN = re.compile(
+    r'^(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?)'
+    r'\s+'
+    r'(?P<level>TRACE|DEBUG|INFO|NOTICE|WARN(?:ING)?|ERROR|SEVERE|FATAL|CRITICAL)'
+    r'(?:'
+        r'\s+\[(?P<logger_bracket>[^\]]+)\]'
+        r'|'
+        r'\s+(?P<logger_dotted>[a-zA-Z_][\w.]*\.[a-zA-Z_][\w.]*)'
+    r')?'
+    r'\s*[-:]?\s*'
+    r'(?P<message>.*)',
+    re.ASCII,
+)
+
+# Pattern B: Python default format LEVEL:logger:message
+_PYTHON_LOG_PATTERN = re.compile(
+    r'^(?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL):(?P<logger>[^:]+):(?P<message>.*)'
+)
+
+
+class OutputParser:
+    """Smart output parser: JSON → text log pattern → KV → plain.
+
+    Extracts envelope fields (timestamp, level, logger, thread) into OutputLine attributes
+    and application data into fields. Skips lines already parsed (e.g. from StdLogOutputLink).
+    """
+
+    def __init__(self, kv_parser=None):
+        self._kv_parser = kv_parser
+
+    def __call__(self, output_line: OutputLine) -> Optional[OutputLine]:
+        if output_line.timestamp or output_line.level or output_line.fields:
+            return output_line
+
+        text = output_line.message
+
+        # 1. JSON line
+        result = self._try_json(text)
+        if result is not None:
+            return self._apply(output_line, result)
+
+        # 2. Text log pattern → extract envelope, then KV on cleaned message
+        result = self._try_text_pattern(text)
+        if result is not None:
+            output_line = self._apply(output_line, result)
+            text = output_line.message
+
+        # 3. KV on (possibly cleaned) message
+        if self._kv_parser:
+            fields = self._kv_parser(text)
+            if fields:
+                existing = output_line.fields or {}
+                return output_line.with_fields({**existing, **fields})
+
+        return output_line
+
+    @staticmethod
+    def _try_json(text: str) -> dict | None:
+        stripped = text.strip()
+        if not stripped.startswith('{'):
+            return None
+        try:
+            data = json.loads(stripped)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        if not isinstance(data, dict):
+            return None
+
+        envelope, fields, message = {}, {}, None
+        for key, value in data.items():
+            lower = key.lower()
+            if lower in _MESSAGE_KEYS:
+                message = str(value)
+            elif lower in _ENVELOPE_KEY_MAP:
+                envelope[_ENVELOPE_KEY_MAP[lower]] = str(value) if value is not None else None
+            else:
+                fields[key] = value
+
+        result = {'envelope': envelope, 'fields': fields or None}
+        if message is not None:
+            result['message'] = message
+        return result
+
+    @staticmethod
+    def _try_text_pattern(text: str) -> dict | None:
+        m = _LOG_LINE_PATTERN.match(text)
+        if m:
+            logger = m.group('logger_bracket') or m.group('logger_dotted')
+            envelope = {'timestamp': m.group('timestamp'), 'level': m.group('level')}
+            if logger:
+                envelope['logger'] = logger
+            return {'message': m.group('message').strip(), 'envelope': envelope}
+
+        m = _PYTHON_LOG_PATTERN.match(text)
+        if m:
+            return {
+                'message': m.group('message').strip(),
+                'envelope': {'level': m.group('level'), 'logger': m.group('logger')},
+            }
+        return None
+
+    @staticmethod
+    def _apply(output_line: OutputLine, parsed: dict) -> OutputLine:
+        kwargs = {}
+        if 'message' in parsed:
+            kwargs['message'] = parsed['message']
+        for field in ('timestamp', 'level', 'logger', 'thread'):
+            if value := parsed.get('envelope', {}).get(field):
+                kwargs[field] = value
+        if parsed.get('fields'):
+            kwargs['fields'] = parsed['fields']
+        return replace(output_line, **kwargs) if kwargs else output_line
 
 
 class OutputSink:
