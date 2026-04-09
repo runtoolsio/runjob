@@ -565,7 +565,7 @@ class TimeoutExtension(PhaseDecorator[C], Generic[C]):
 
     def _on_timeout(self):
         """Handle the timeout by stopping the wrapped phase."""
-        log.warning(f"timeout after_sec=[{self.timeout_sec}] phase=[{super().id}]")
+        log.warning("Phase timeout seconds=%s phase=%s", self.timeout_sec, super().id)
         self.stop(reason=StopReason.TIMEOUT)
 
     def stop(self, reason=StopReason.STOPPED):

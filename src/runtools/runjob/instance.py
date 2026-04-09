@@ -138,12 +138,12 @@ class _JobInstance(JobInstance):
 
     def notify_created(self):
         """Fire the CREATED lifecycle event. Call after ``activate()`` and all observers are registered."""
-        log.info(self._log('instance_created'))
+        log.debug(self._log('instance_created'))
         try:
             event = InstanceLifecycleEvent(self.snap(), Stage.CREATED, utc_now())
             self._notifications.lifecycle_notification.observer_proxy.instance_lifecycle_update(event)
         except ExceptionGroup as eg:
-            log.error("[lifecycle_observer_error]", exc_info=eg)
+            log.error("Lifecycle observer error", exc_info=eg)
             for exc in eg.exceptions:
                 self._faults.append(Fault.from_exception(LIFECYCLE_OBSERVER_ERROR, exc))
         return self
@@ -191,7 +191,7 @@ class _JobInstance(JobInstance):
         try:
             self._notifications.output_notification.observer_proxy.instance_output_update(event)
         except ExceptionGroup as eg:
-            log.error("[output_observer_error]", exc_info=eg)
+            log.error("Output observer error", exc_info=eg)
             for e in eg.exceptions:
                 self._faults.append(Fault.from_exception(OUTPUT_OBSERVER_ERROR, e))
 
@@ -233,21 +233,21 @@ class _JobInstance(JobInstance):
             event = InstanceControlEvent(self.snap(), ControlAction.STOP_REQUESTED, utc_now())
             self._notifications.control_notification.observer_proxy.instance_control_update(event)
         except ExceptionGroup as eg:
-            log.error("[control_observer_error]", exc_info=eg)
+            log.error("Control observer error", exc_info=eg)
             for exc in eg.exceptions:
                 self._faults.append(Fault.from_exception(CONTROL_OBSERVER_ERROR, exc))
 
     def _on_phase_update(self, e: PhaseTransitionEvent):
-        log.debug(self._log('instance_phase_update', "event=[{}]", e))
+        log.debug(self._log('instance_phase_update', "event=%s", e))
 
         is_root_phase = e.phase_detail.phase_id == self._root_phase.id
         if is_root_phase:
             if e.new_stage == Stage.RUNNING:
-                log.info(self._log('run_started'))
+                log.debug(self._log('run_started'))
             log.debug(self._log('instance_lifecycle_update', "new_stage=[{}]", e.new_stage))
 
             if term := e.phase_detail.lifecycle.termination:
-                log.info(self._log('run_ended', "termination=[{}]", term))
+                log.debug(self._log('run_ended', "termination=[{}]", term))
 
         snapshot = self.snap()
         if is_root_phase:
@@ -255,7 +255,7 @@ class _JobInstance(JobInstance):
                 event = InstanceLifecycleEvent(snapshot, e.new_stage, e.timestamp)
                 self._notifications.lifecycle_notification.observer_proxy.instance_lifecycle_update(event)
             except ExceptionGroup as eg:
-                log.error("[stage_observer_error]", exc_info=eg)
+                log.error("Stage observer error", exc_info=eg)
                 for exc in eg.exceptions:
                     self._faults.append(Fault.from_exception(LIFECYCLE_OBSERVER_ERROR, exc))
         try:
@@ -263,7 +263,7 @@ class _JobInstance(JobInstance):
                                        e.new_stage, e.timestamp)
             self._notifications.phase_notification.observer_proxy.instance_phase_update(event)
         except ExceptionGroup as eg:
-            log.error("[phase_observer_error]", exc_info=eg)
+            log.error("Phase observer error", exc_info=eg)
             for exc in eg.exceptions:
                 self._faults.append(Fault.from_exception(PHASE_OBSERVER_ERROR, exc))
 
@@ -272,6 +272,6 @@ class _JobInstance(JobInstance):
             event = InstanceStatusEvent(self.snap(), utc_now())
             self._notifications.status_notification.observer_proxy.instance_status_update(event)
         except ExceptionGroup as eg:
-            log.error("[status_observer_error]", exc_info=eg)
+            log.error("Status observer error", exc_info=eg)
             for exc in eg.exceptions:
                 self._faults.append(Fault.from_exception(STATUS_OBSERVER_ERROR, exc))

@@ -98,5 +98,5 @@ class ProgramPhase(BasePhase[OutputContext]):
                     run_ctx.output_sink.new_output(line_stripped, is_err, source=self.id)
                 except Exception:
                     if not observer_error_logged:
-                        log.exception("event=[output_observer_error] line=[%s]", line_stripped[:200])
+                        log.exception("Output observer error line=%r", line_stripped[:200])
                         observer_error_logged = True

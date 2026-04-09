@@ -64,8 +64,7 @@ class TimeWarningExtension(PhaseDecorator[C], Generic[C]):
             ctx: The execution context to pass to the wrapped phase
         """
         if not ctx or not hasattr(ctx, 'tracker') or not ctx.tracker:
-            log.warning(
-                f"tracker_unavailable phase=[{super().id}] result=[Time warning {self.warning_seconds}s ignored]")
+            log.warning("Tracker unavailable phase=%s", super().id)
         else:
             self._timer = Timer(self.warning_seconds, self._trigger_warning, args=[ctx])
             self._timer.daemon = True
@@ -83,8 +82,7 @@ class TimeWarningExtension(PhaseDecorator[C], Generic[C]):
         Args:
             ctx: The execution context, used to access the status tracker
         """
-        log.warning(
-            f"time_warning warn_sec=[{self.warning_seconds}] warn_text=[{self.warning_text}] phase=[{super().id}]")
+        log.warning("Time warning triggered seconds=%s phase=%s", self.warning_seconds, super().id)
         ctx.tracker.warning(self.warning_text)
 
     def _cancel_timer(self):
@@ -139,7 +137,7 @@ class OutputWarningExtension(PhaseDecorator[C], Generic[C]):
         """
         if not ctx or not hasattr(ctx, 'tracker') or not ctx.tracker or not isinstance(ctx,
                                                                                                      OutputContext):
-            log.warning(f"incompatible_run_context phase=[{super().id}] result=[Output warning ignored]")
+            log.warning("Incompatible run context phase=%s", super().id)
             return super().run(ctx)
 
         def pattern_output_observer(output_line: OutputLine):
@@ -152,9 +150,7 @@ class OutputWarningExtension(PhaseDecorator[C], Generic[C]):
                     if "$LINE" in warning_text:
                         warning_text = warning_text.replace("$LINE", output_line.message)
 
-                    log.warning(
-                        f"output_warning pattern=[{pattern.pattern}] match=[{match.group(0)}]"
-                        f" line=[{output_line.message}] phase=[{self.id}]")
+                    log.warning("Output warning match pattern=%s line=%r", pattern.pattern, output_line.message)
                     ctx.tracker.warning(warning_text)
 
         with ctx.output_sink.observer_context(pattern_output_observer):

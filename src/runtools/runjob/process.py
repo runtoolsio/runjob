@@ -117,7 +117,7 @@ class _CapturingWriter:
                 self.output_queue.put_nowait((text_s, self.is_err))
             except Full:
                 # TODO what to do here?
-                log.warning("event=[output_queue_full]")
+                log.warning("Output queue full")
         self.out.write(text)
 
 

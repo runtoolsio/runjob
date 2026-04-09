@@ -337,7 +337,7 @@ class LocalInstanceServer(StreamSocketServer):
         except JsonRpcError as e:
             return _error_response(request_id, e.code, e.message, e.data)
         except Exception as e:
-            log.error("event=[json_rpc_handler_error]", exc_info=True)
+            log.error("JSON-RPC handler error", exc_info=True)
             return _error_response(request_id, ErrorCode.METHOD_EXECUTION_ERROR, f"Internal error: {str(e)}")
 
         return _success_response(request_id, {"retval": exec_retval})
