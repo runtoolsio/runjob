@@ -37,13 +37,13 @@ class CheckpointPhase(BasePhase[Any]):
         self._event = Event()
 
     def _run(self, _):
-        log.debug("Checkpoint waiting phase=%s", self.id)
+        log.debug("Checkpoint waiting", extra={"phase": self.id})
         resumed = self._event.wait(self._timeout or None)
         self._raise_if_stopped()
         if not resumed:
-            log.debug("Checkpoint timeout phase=%s", self.id)
+            log.debug("Checkpoint timeout", extra={"phase": self.id})
             raise PhaseTerminated(TerminationStatus.TIMEOUT)
-        log.debug("Checkpoint resumed phase=%s", self.id)
+        log.debug("Checkpoint resumed", extra={"phase": self.id})
 
     @control_api
     @property
@@ -78,14 +78,14 @@ class ApprovalPhase(BasePhase[Any]):
         self._event = Event()
 
     def _run(self, ctx):
-        log.debug("Approval waiting phase=%s", self.id)
+        log.debug("Approval waiting", extra={"phase": self.id})
         approved = self._event.wait(self._timeout or None)
         self._raise_if_stopped()
         if not approved:
-            log.debug("Approval skipped phase=%s", self.id)
+            log.debug("Approval skipped", extra={"phase": self.id})
             raise PhaseTerminated(TerminationStatus.SKIPPED, "TODO - can be passed via approve method")
 
-        log.debug("Approval granted phase=%s", self.id)
+        log.debug("Approval granted", extra={"phase": self.id})
         self.run_child(self._children[0])
 
     @control_api
@@ -140,15 +140,15 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
 
     def _run(self, ctx: JobInstanceContext):
         excl_group = self.exclusion_group or ctx.metadata.job_id
-        log.debug("Mutex check started group=%s", excl_group)
+        log.debug("Mutex check started", extra={"group": excl_group})
         with ctx.environment.lock(f"mutex-{excl_group}"):  # TODO Manage lock names better
             excl_runs: List[JobRun] = ctx.environment.get_active_runs(self._excl_running_job_filter(ctx))
             for excl_run in excl_runs:
                 for mutex_phase in excl_run.search_phases(MutualExclusionPhase.running_mutex_filter):
                     phase_excl_group = mutex_phase.attributes.get('exclusion_group') or excl_run.job_id
                     if phase_excl_group == excl_group:
-                        log.warning("Mutex overlap found instance=%s group=%s",
-                                    excl_run.instance_id, excl_group)
+                        log.warning("Mutex overlap found group=%s", excl_group,
+                                    extra={"instance": str(excl_run.instance_id), "group": excl_group})
                         raise PhaseTerminated(TerminationStatus.OVERLAP)
 
         self.run_child(self._children[0])
@@ -171,14 +171,14 @@ class DependencyPhase(BasePhase[JobInstanceContext]):
         return self._dependency_match
 
     def _run(self, ctx):
-        log.debug("Searching active dependency match=%s", self._dependency_match)
+        log.debug("Searching active dependency", extra={"match": str(self._dependency_match)})
 
         matching_runs = [r for r in ctx.environment.get_active_runs(self._dependency_match) if
                          r.instance_id != ctx.metadata.instance_id]
         if not matching_runs:
-            log.debug("Active dependency not found match=%s", self._dependency_match)
+            log.debug("Active dependency not found", extra={"match": str(self._dependency_match)})
             raise PhaseTerminated(TerminationStatus.UNSATISFIED)
-        log.debug("Active dependency found instances=%s", [r.instance_id for r in matching_runs])
+        log.debug("Active dependency found", extra={"instances": str([r.instance_id for r in matching_runs])})
 
 
 class AwaitPhase(BasePhase[JobInstanceContext]):
@@ -381,11 +381,11 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
         free_slots = self._group.max_executions - len(ids_dispatched)
 
         if free_slots <= 0:
-            log.debug("Exec limit reached slots=%d dispatched=%d",
-                      self._group.max_executions, len(ids_dispatched))
+            log.debug("Exec limit reached",
+                      extra={"slots": self._group.max_executions, "dispatched": len(ids_dispatched)})
             return
 
-        log.debug("Dispatching from queue slots=%d", free_slots)
+        log.debug("Dispatching from queue", extra={"slots": free_slots})
         for next_dispatch in runs_sorted:
             if next_dispatch.instance_id in ids_dispatched:
                 continue
@@ -397,12 +397,12 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
                 continue
             dispatched = ctrl.signal_dispatch()
             if dispatched:
-                log.debug("Dispatched run=%s", next_dispatch.metadata)
+                log.debug("Dispatched", extra={"run": str(next_dispatch.metadata)})
                 free_slots -= 1
                 if free_slots <= 0:
                     return
             else:
-                log.debug("Not dispatched run=%s", next_dispatch.metadata)
+                log.debug("Not dispatched", extra={"run": str(next_dispatch.metadata)})
 
     def _instance_phase_update(self, event: InstancePhaseEvent):
         with self._queue_change_condition:
@@ -413,7 +413,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
             if not ended_phase or not self._phase_filter(ended_phase):
                 return
 
-            log.debug("Queue slot freed instance=%s phase=%s", event.instance.instance_id, event.phase_id)
+            log.debug("Queue slot freed", extra={"instance": str(event.instance.instance_id), "phase": event.phase_id})
             self._queue_changed = True
             self._queue_change_condition.notify()
 

@@ -54,7 +54,10 @@ def _has_rt_keys(d) -> bool:
 
 
 def _dict_message(msg_dict: dict) -> str:
-    return str(msg_dict.get("message", "") or msg_dict.get("msg", ""))
+    msg = msg_dict.get("message")
+    if msg is None:
+        msg = msg_dict.get("msg")
+    return str(msg) if msg is not None else ""
 
 
 class _TrackingOnlyFilter(logging.Filter):

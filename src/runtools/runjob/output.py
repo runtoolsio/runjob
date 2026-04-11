@@ -490,4 +490,4 @@ class FileOutputStore(FileOutputBackend, OutputStore):
                     f.unlink()
                     SourceIndex.path_for(f).unlink(missing_ok=True)
                 except OSError:
-                    log.warning("Failed to delete output file: %s", f, exc_info=True)
+                    log.warning("Failed to delete output file", extra={"path": str(f)}, exc_info=True)

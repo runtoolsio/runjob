@@ -64,7 +64,7 @@ class TimeWarningExtension(PhaseDecorator[C], Generic[C]):
             ctx: The execution context to pass to the wrapped phase
         """
         if not ctx or not hasattr(ctx, 'tracker') or not ctx.tracker:
-            log.warning("Tracker unavailable phase=%s", super().id)
+            log.warning("Tracker unavailable phase=%s", super().id, extra={"phase": super().id})
         else:
             self._timer = Timer(self.warning_seconds, self._trigger_warning, args=[ctx])
             self._timer.daemon = True
@@ -82,7 +82,7 @@ class TimeWarningExtension(PhaseDecorator[C], Generic[C]):
         Args:
             ctx: The execution context, used to access the status tracker
         """
-        log.warning("Time warning triggered seconds=%s phase=%s", self.warning_seconds, super().id)
+        log.warning("Time warning triggered", extra={"seconds": self.warning_seconds, "phase": super().id})
         ctx.tracker.warning(self.warning_text)
 
     def _cancel_timer(self):
@@ -137,7 +137,7 @@ class OutputWarningExtension(PhaseDecorator[C], Generic[C]):
         """
         if not ctx or not hasattr(ctx, 'tracker') or not ctx.tracker or not isinstance(ctx,
                                                                                                      OutputContext):
-            log.warning("Incompatible run context phase=%s", super().id)
+            log.warning("Incompatible run context", extra={"phase": super().id})
             return super().run(ctx)
 
         def pattern_output_observer(output_line: OutputLine):
@@ -150,7 +150,7 @@ class OutputWarningExtension(PhaseDecorator[C], Generic[C]):
                     if "$LINE" in warning_text:
                         warning_text = warning_text.replace("$LINE", output_line.message)
 
-                    log.warning("Output warning match pattern=%s line=%r", pattern.pattern, output_line.message)
+                    log.warning("Output warning match", extra={"pattern": pattern.pattern, "line": output_line.message})
                     ctx.tracker.warning(warning_text)
 
         with ctx.output_sink.observer_context(pattern_output_observer):

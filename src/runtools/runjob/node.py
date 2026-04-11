@@ -301,7 +301,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
                     interrupt_received = True
                     break
 
-        log.debug("Closing environment env=%s", self)
+        log.debug("Closing environment", extra={"env": self._env_id})
         run_isolated_collect_exceptions(
             "Errors on environment features closing",
             *(feature.on_close for feature in self._features),

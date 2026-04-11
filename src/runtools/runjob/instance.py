@@ -138,7 +138,7 @@ class _JobInstance(JobInstance):
 
     def notify_created(self):
         """Fire the CREATED lifecycle event. Call after ``activate()`` and all observers are registered."""
-        log.debug(self._log('instance_created'))
+        log.debug("Instance created", extra={"instance": str(self._metadata.instance_id)})
         try:
             event = InstanceLifecycleEvent(self.snap(), Stage.CREATED, utc_now())
             self._notifications.lifecycle_notification.observer_proxy.instance_lifecycle_update(event)
@@ -147,11 +147,6 @@ class _JobInstance(JobInstance):
             for exc in eg.exceptions:
                 self._faults.append(Fault.from_exception(LIFECYCLE_OBSERVER_ERROR, exc))
         return self
-
-    def _log(self, event: str, msg: str = '', *params):
-        return ("{} instance=[{}] env=[{}] " + msg).format(
-            event, self._metadata.instance_id, self._ctx.environment.env_id if self._ctx.environment else 'N/A',
-            *params)
 
     @property
     def metadata(self):
@@ -238,16 +233,14 @@ class _JobInstance(JobInstance):
                 self._faults.append(Fault.from_exception(CONTROL_OBSERVER_ERROR, exc))
 
     def _on_phase_update(self, e: PhaseTransitionEvent):
-        log.debug(self._log('instance_phase_update', "event=%s", e))
+        log.debug("Phase update", extra={"phase": e.phase_detail.phase_id, "stage": e.new_stage.value})
 
         is_root_phase = e.phase_detail.phase_id == self._root_phase.id
         if is_root_phase:
             if e.new_stage == Stage.RUNNING:
-                log.debug(self._log('run_started'))
-            log.debug(self._log('instance_lifecycle_update', "new_stage=[{}]", e.new_stage))
-
+                log.debug("Run started")
             if term := e.phase_detail.lifecycle.termination:
-                log.debug(self._log('run_ended', "termination=[{}]", term))
+                log.debug("Run ended", extra={"termination": str(term)})
 
         snapshot = self.snap()
         if is_root_phase:
