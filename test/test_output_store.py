@@ -6,9 +6,10 @@ from unittest.mock import patch
 import pytest
 
 from runtools.runcore.job import iid
-from runtools.runcore.output import OutputLine, SourceIndex
+from runtools.runcore.output import OutputLine
+from runtools.runcore.output.file import SourceIndex
 from runtools.runcore.retention import RetentionPolicy
-from runtools.runjob.output import FileOutputStore, FileOutputWriter
+from runtools.runjob.output.file import FileOutputStore, FileOutputWriter
 
 
 @pytest.fixture

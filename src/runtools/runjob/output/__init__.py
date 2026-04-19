@@ -1,19 +1,35 @@
+"""
+Output processing, routing, and storage for job execution.
+
+Key Components:
+    OutputSink: Receives output lines, runs processors, dispatches to observers.
+    OutputRouter: Routes to tail buffer + disk/batch storages.
+    OutputStore: ABC extending OutputBackend with write + retention.
+    OutputParser: Smart output parser (JSON → text log → KV → plain).
+
+Factory Functions:
+    load_output_store_module: Dynamically loads a write-side backend module.
+    create_stores: Creates all enabled stores from storage configs.
+
+Store Module Contract:
+    Each store module (e.g., ``runtools.runjob.output.file``) must expose:
+        create_store(env_id, config) -> OutputStore
+"""
+
+import importlib
 import json
 import logging
-import os
 import re
 from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import replace
-from pathlib import Path
 from threading import Lock, local
 from typing import Optional, Callable, List, Iterable
 
-from runtools.runcore import paths
+from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import InstanceID
 from runtools.runcore.output import (OutputLine, OutputObserver, TailBuffer, Mode, OutputLineFactory, Output,
-                                     TailNotSupportedError, OutputLocation, OutputBackend, FileOutputBackend,
-                                     FileOutputStorageConfig, SourceIndex, SourceIndexBuilder)
+                                     TailNotSupportedError, OutputLocation, OutputBackend)
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY, ObserverContext
 from runtools.runjob.phase import _current_phase
@@ -281,7 +297,7 @@ class InMemoryTailBuffer(TailBuffer):
             case Mode.HEAD:
                 return output[:max_lines]
             case _:
-                assert False, f"Unhandled mode: {mode}"  # Should never happen
+                assert False, f"Unhandled mode: {mode}"
 
 
 class OutputWriter(ABC):
@@ -310,60 +326,8 @@ class OutputWriter(ABC):
         pass
 
 
-class FileOutputWriter(OutputWriter):
-    # TODO Add file size capping (max_bytes) — same semantics as TailBuffer but on disk.
-    #  This enables file output as the default (currently opt-in via --log) without risking
-    #  disk exhaustion from long-running jobs.
-
-    def __init__(self, file_path: str, append: bool = False, encoding: str = "utf-8"):
-        self.file_path = Path(file_path)
-        self._encoding = encoding
-        self._closed = False
-        self._index_builder = SourceIndexBuilder()
-
-        os.makedirs(self.file_path.parent, exist_ok=True)
-        self._file = open(self.file_path, "ab" if append else "wb")
-
-    @property
-    def location(self):
-        return OutputLocation.for_file(self.file_path)
-
-    def store_line(self, line: OutputLine):
-        self._write_line(line)
-        self._file.flush()
-
-    def store_lines(self, lines: List[OutputLine]):
-        for line in lines:
-            self._write_line(line)
-        self._file.flush()
-
-    def _write_line(self, line: OutputLine):
-        raw = (json.dumps(line.serialize(), ensure_ascii=False) + "\n").encode(self._encoding)
-        self._index_builder.track(line.source, len(raw))
-        self._file.write(raw)
-
-    def close(self):
-        if self._closed:
-            return
-        try:
-            if index := self._index_builder.build():
-                index.save(self.file_path)
-        finally:
-            self._closed = True
-            self._file.close()
-
-    def __del__(self):
-        try:
-            self.close()
-        except Exception:
-            pass
-
-
 class OutputRouter(OutputObserver, Output):
-    """
-    Routes OutputLine instances to multiple storages and an optional tail buffer,
-    supporting both immediate and batched writes.
-    """
+    """Routes OutputLine instances to multiple storages and an optional tail buffer."""
 
     def __init__(self, *, tail_buffer=None, storages=(), max_batch: int = 100):
         super().__init__()
@@ -390,22 +354,19 @@ class OutputRouter(OutputObserver, Output):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
-        return False  # Don't suppress exceptions
+        return False
 
     @property
     def locations(self):
         return self._locations
 
     def new_output(self, output_line: OutputLine):
-        # 1) tail buffering
         if self.tail_buffer:
             self.tail_buffer.add_line(output_line)
 
-        # 2) immediate stores
         for storage in self.realtime_storages:
             storage.store_line(output_line)
 
-        # 3) buffer for batch stores
         if self.batch_storages:
             with self._batch_lock:
                 self._batch_buffer.append(output_line)
@@ -432,11 +393,8 @@ class OutputRouter(OutputObserver, Output):
         return self.tail_buffer.get_lines(mode, max_lines)
 
     def close(self):
-        # Flush any remaining batched data
         if self._batch_buffer:
             self._flush_batch_buffer()
-
-        # Close all storages
         for storage in self.storages:
             storage.close()
 
@@ -453,41 +411,46 @@ class OutputStore(OutputBackend, ABC):
         """Prune old output for a job according to retention policy."""
 
 
-def create_stores(env_id, storage_configs) -> list['FileOutputStore']:
-    """Create output stores from storage configuration."""
-    stores: list[FileOutputStore] = []
+# ---------------------------------------------------------------------------
+# Store module loader (write-side, mirrors runcore's read-side loader)
+# ---------------------------------------------------------------------------
+
+class OutputStoreNotFoundError(RuntoolsException):
+
+    def __init__(self, backend_type):
+        super().__init__(f'Cannot find output store module for type {backend_type!r}. '
+                         f'Ensure the module is installed.')
+
+
+_store_modules = {}
+
+
+def load_output_store_module(backend_type: str):
+    """Load a write-side output backend module by type name.
+
+    Imports ``runtools.runjob.output.<backend_type>`` directly. The module must
+    expose a ``create_store(env_id, config)`` factory function.
+    """
+    module = _store_modules.get(backend_type)
+    if module:
+        return module
+    module_name = f"runtools.runjob.output.{backend_type}"
+    try:
+        module = importlib.import_module(module_name)
+    except ModuleNotFoundError as e:
+        if e.name == module_name:
+            raise OutputStoreNotFoundError(backend_type)
+        raise
+    _store_modules[backend_type] = module
+    return module
+
+
+def create_stores(env_id, storage_configs) -> list[OutputStore]:
+    """Create all enabled output stores from storage configurations, in config order."""
+    stores: list[OutputStore] = []
     for cfg in storage_configs:
         if not cfg.enabled:
             continue
-        if isinstance(cfg, FileOutputStorageConfig):
-            base_dir = Path(cfg.dir).expanduser() if cfg.dir else paths.output_dir(env_id, create=True)
-            stores.append(FileOutputStore(base_dir))
-        else:
-            assert False, f"Unknown output storage config type: {cfg.type}"
+        module = load_output_store_module(cfg.type)
+        stores.append(module.create_store(env_id, cfg))
     return stores
-
-
-class FileOutputStore(FileOutputBackend, OutputStore):
-    """File-backed output store. Inherits read from FileOutputBackend, adds write + retention."""
-
-    def __init__(self, base_dir: Path):
-        super().__init__(base_dir)
-
-    def create_writer(self, instance_id: InstanceID) -> FileOutputWriter:
-        path = self._output_path(instance_id)
-        os.makedirs(path.parent, exist_ok=True)
-        return FileOutputWriter(str(path))
-
-    def enforce_retention(self, job_id: str, policy: RetentionPolicy):
-        job_dir = self._base_dir / job_id
-        if not job_dir.is_dir():
-            return
-
-        files = sorted(job_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
-        if policy.max_runs_per_job >= 0:
-            for f in files[policy.max_runs_per_job:]:
-                try:
-                    f.unlink()
-                    SourceIndex.path_for(f).unlink(missing_ok=True)
-                except OSError:
-                    log.warning("Failed to delete output file", extra={"path": str(f)}, exc_info=True)
