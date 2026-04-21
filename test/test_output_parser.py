@@ -1,6 +1,8 @@
 """Tests for OutputParser — smart output parsing waterfall (JSON → text pattern → KV → plain)."""
 
-from runtools.runcore.output import OutputLine
+from datetime import datetime, timezone
+
+from runtools.runcore.output import OutputLine, parse_timestamp
 from runtools.runcore.util.parser import KVParser
 from runtools.runjob.output import OutputParser
 
@@ -10,7 +12,7 @@ def test_json_line_full():
     line = OutputLine('{"timestamp": "2024-03-15T10:30:00Z", "level": "INFO", "message": "started", "user": "alice"}', 1)
     result = parser(line)
     assert result.message == "started"
-    assert result.timestamp == "2024-03-15T10:30:00Z"
+    assert result.timestamp == datetime(2024, 3, 15, 10, 30, 0, tzinfo=timezone.utc)
     assert result.level == "INFO"
     assert result.fields == {"user": "alice"}
 
@@ -59,7 +61,7 @@ def test_text_pattern_timestamp_level():
     parser = OutputParser()
     line = OutputLine('2024-03-15T10:30:00.123Z INFO Processing request', 1)
     result = parser(line)
-    assert result.timestamp == "2024-03-15T10:30:00.123Z"
+    assert result.timestamp == parse_timestamp("2024-03-15T10:30:00.123Z")
     assert result.level == "INFO"
     assert result.message == "Processing request"
 
@@ -68,7 +70,7 @@ def test_text_pattern_timestamp_level_logger_dotted():
     parser = OutputParser()
     line = OutputLine('2024-03-15T10:30:00Z INFO com.example.App - Processing request', 1)
     result = parser(line)
-    assert result.timestamp == "2024-03-15T10:30:00Z"
+    assert result.timestamp == datetime(2024, 3, 15, 10, 30, 0, tzinfo=timezone.utc)
     assert result.level == "INFO"
     assert result.logger == "com.example.App"
     assert result.message == "Processing request"
@@ -78,7 +80,7 @@ def test_text_pattern_logger_bracket():
     parser = OutputParser()
     line = OutputLine('2024-03-15 10:30:00,123 WARNING [my.logger] Something happened', 1)
     result = parser(line)
-    assert result.timestamp == "2024-03-15 10:30:00,123"
+    assert result.timestamp == parse_timestamp("2024-03-15 10:30:00,123")
     assert result.level == "WARNING"
     assert result.logger == "my.logger"
     assert result.message == "Something happened"
@@ -121,7 +123,7 @@ def test_kv_after_text_pattern():
     parser = OutputParser(kv_parser=KVParser())
     line = OutputLine('2024-03-15T10:30:00Z INFO Processing site_key=[ABC] total=[100]', 1)
     result = parser(line)
-    assert result.timestamp == "2024-03-15T10:30:00Z"
+    assert result.timestamp == datetime(2024, 3, 15, 10, 30, 0, tzinfo=timezone.utc)
     assert result.level == "INFO"
     assert result.message == "Processing"
     assert result.fields == {'site_key': 'ABC', 'total': '100'}
@@ -136,7 +138,8 @@ def test_plain_text_unchanged():
 
 def test_skip_already_parsed_timestamp():
     parser = OutputParser()
-    line = OutputLine('{"level": "DEBUG"}', 1, timestamp="2024-01-01T00:00:00Z")
+    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    line = OutputLine('{"level": "DEBUG"}', 1, timestamp=ts)
     result = parser(line)
     assert result is line
 

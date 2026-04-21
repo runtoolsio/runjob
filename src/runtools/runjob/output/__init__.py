@@ -23,13 +23,14 @@ import re
 from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import replace
+from datetime import datetime
 from threading import Lock, local
 from typing import Optional, Callable, List, Iterable
 
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import InstanceID
 from runtools.runcore.output import (OutputLine, OutputObserver, TailBuffer, Mode, OutputLineFactory, Output,
-                                     TailNotSupportedError, OutputLocation, OutputBackend)
+                                     TailNotSupportedError, OutputBackend, parse_timestamp)
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY, ObserverContext
 from runtools.runjob.phase import _current_phase
@@ -187,7 +188,7 @@ class OutputParser:
             kwargs['message'] = parsed['message']
         for field in ('timestamp', 'level', 'logger', 'thread'):
             if value := parsed.get('envelope', {}).get(field):
-                kwargs[field] = value
+                kwargs[field] = parse_timestamp(value) if field == 'timestamp' else value
         if parsed.get('fields'):
             kwargs['fields'] = parsed['fields']
         return replace(output_line, **kwargs) if kwargs else output_line
@@ -205,7 +206,7 @@ class OutputSink:
         self._line_factory = OutputLineFactory()
 
     def new_output(self, message: str, is_error: bool = False,
-                   source: str | None = None, timestamp: str | None = None,
+                   source: str | None = None, timestamp: str | datetime | None = None,
                    level: str | None = None, logger: str | None = None,
                    thread: str | None = None, fields: dict | None = None):
         if getattr(_thread_local, 'processing_output', False):

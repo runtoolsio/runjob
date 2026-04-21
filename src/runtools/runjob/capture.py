@@ -94,8 +94,7 @@ class _SinkForwardingHandler(logging.Handler):
         if not self._capture_filter():
             return
         is_error = record.levelno >= logging.ERROR
-        ts = datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(timespec='milliseconds')
-        timestamp = ts[:-6] + 'Z' if ts.endswith('+00:00') else ts
+        timestamp = datetime.fromtimestamp(record.created, tz=timezone.utc)
         level = record.levelname
         logger_name = record.name
         thread_name = record.threadName
