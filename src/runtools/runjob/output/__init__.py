@@ -78,7 +78,7 @@ _ENVELOPE_KEY_MAP = {
 
 _MESSAGE_KEYS = frozenset({"message", "msg"})
 
-# Pattern A: ISO timestamp + level + optional logger
+# Pattern A: ISO timestamp + level + optional logger + optional thread
 _LOG_LINE_PATTERN = re.compile(
     r'^(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?)'
     r'\s+'
@@ -88,6 +88,7 @@ _LOG_LINE_PATTERN = re.compile(
         r'|'
         r'\s+(?P<logger_dotted>[a-zA-Z_][\w.]*\.[a-zA-Z_][\w.]*)'
     r')?'
+    r'(?:\s+\[(?P<thread>[^\]]+)\])?'
     r'\s*[-:]?\s*'
     r'(?P<message>.*)',
     re.ASCII,
@@ -171,6 +172,8 @@ class OutputParser:
             envelope = {'timestamp': m.group('timestamp'), 'level': m.group('level')}
             if logger:
                 envelope['logger'] = logger
+            if m.group('thread'):
+                envelope['thread'] = m.group('thread')
             return {'message': m.group('message').strip(), 'envelope': envelope}
 
         m = _PYTHON_LOG_PATTERN.match(text)
