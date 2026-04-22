@@ -73,7 +73,7 @@ class TestFileOutputWriter:
 
     def test_writes_jsonl_and_creates_index(self, tmp_path):
         path = tmp_path / "out.jsonl"
-        writer = FileOutputWriter(str(path))
+        writer = FileOutputWriter(str(path), compress=False)
         writer.store_line(OutputLine("line1", 1, source="EXEC"))
         writer.store_line(OutputLine("line2", 2, source="EXEC"))
         writer.close()
@@ -86,9 +86,22 @@ class TestFileOutputWriter:
         assert index is not None
         assert "EXEC" in index.sources
 
+    def test_compression(self, tmp_path):
+        path = tmp_path / "out.jsonl"
+        writer = FileOutputWriter(str(path), compress=True)
+        writer.store_line(OutputLine("line1", 1, source="EXEC"))
+        writer.store_line(OutputLine("line2", 2, source="EXEC"))
+        writer.close()
+
+        assert not path.exists()
+        gz_path = Path(str(path) + ".gz")
+        assert gz_path.exists()
+        # Index file still exists (byte offsets apply to decompressed content)
+        assert SourceIndex.path_for(path).exists()
+
     def test_no_index_when_no_sources(self, tmp_path):
         path = tmp_path / "out.jsonl"
-        writer = FileOutputWriter(str(path))
+        writer = FileOutputWriter(str(path), compress=False)
         writer.store_line(OutputLine("line1", 1))  # source=None
         writer.close()
 

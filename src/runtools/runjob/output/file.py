@@ -4,6 +4,7 @@ Write-side module contract:
     create_store(env_id, config) -> FileOutputStore
 """
 
+import gzip
 import json
 import logging
 import os
@@ -12,18 +13,23 @@ from typing import List
 
 from runtools.runcore.job import InstanceID
 from runtools.runcore.output import OutputLine, OutputLocation, OutputStorageConfig
-from runtools.runcore.output.file import FileOutputBackend, SourceIndex, SourceIndexBuilder, _resolve_base_dir
+from runtools.runcore.output.file import FileOutputBackend, SourceIndex, SourceIndexBuilder, _parse_file_config, _resolve_base_dir
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runjob.output import OutputWriter, OutputStore
 
 log = logging.getLogger(__name__)
 
 
+def _gz_path(jsonl_path: Path) -> Path:
+    return jsonl_path.with_suffix(jsonl_path.suffix + '.gz')
+
+
 class FileOutputWriter(OutputWriter):
 
-    def __init__(self, file_path: str, append: bool = False, encoding: str = "utf-8"):
+    def __init__(self, file_path: str, append: bool = False, encoding: str = "utf-8", compress: bool = True):
         self.file_path = Path(file_path)
         self._encoding = encoding
+        self._compress = compress
         self._closed = False
         self._index_builder = SourceIndexBuilder()
 
@@ -57,6 +63,8 @@ class FileOutputWriter(OutputWriter):
         finally:
             self._closed = True
             self._file.close()
+        if self._compress and self.file_path.exists():
+            _compress_file(self.file_path)
 
     def __del__(self):
         try:
@@ -68,30 +76,59 @@ class FileOutputWriter(OutputWriter):
 class FileOutputStore(FileOutputBackend, OutputStore):
     """File-backed output store. Inherits read from FileOutputBackend, adds write + retention."""
 
-    def __init__(self, base_dir: Path):
+    def __init__(self, base_dir: Path, *, compress: bool = True):
         super().__init__(base_dir)
+        self._compress = compress
 
     def create_writer(self, instance_id: InstanceID) -> FileOutputWriter:
         path = self._output_path(instance_id)
         os.makedirs(path.parent, exist_ok=True)
-        return FileOutputWriter(str(path))
+        return FileOutputWriter(str(path), compress=self._compress)
 
     def enforce_retention(self, job_id: str, policy: RetentionPolicy):
         job_dir = self._base_dir / job_id
         if not job_dir.is_dir():
             return
 
-        files = sorted(job_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
+        # Group files by logical run (stem without .gz), keep the newest mtime per run
+        runs: dict[Path, float] = {}
+        for f in list(job_dir.glob("*.jsonl")) + list(job_dir.glob("*.jsonl.gz")):
+            jsonl_path = Path(str(f).removesuffix('.gz'))
+            mtime = f.stat().st_mtime
+            runs[jsonl_path] = max(runs.get(jsonl_path, 0), mtime)
+
+        sorted_runs = sorted(runs, key=lambda p: runs[p], reverse=True)
         if policy.max_runs_per_job >= 0:
-            for f in files[policy.max_runs_per_job:]:
+            for jsonl_path in sorted_runs[policy.max_runs_per_job:]:
                 try:
-                    f.unlink()
-                    SourceIndex.path_for(f).unlink(missing_ok=True)
+                    jsonl_path.unlink(missing_ok=True)
+                    _gz_path(jsonl_path).unlink(missing_ok=True)
+                    SourceIndex.path_for(jsonl_path).unlink(missing_ok=True)
                 except OSError:
-                    log.warning("Failed to delete output file", extra={"path": str(f)}, exc_info=True)
+                    log.warning("Failed to delete output file", extra={"path": str(jsonl_path)}, exc_info=True)
+
+
+def _compress_file(path: Path) -> None:
+    """Gzip a file in place: write .gz.tmp, atomic rename, delete original."""
+    gz_path = _gz_path(path)
+    tmp_path = Path(str(gz_path) + ".tmp")
+    try:
+        with open(path, "rb") as f_in, gzip.open(tmp_path, "wb") as f_out:
+            while chunk := f_in.read(64 * 1024):
+                f_out.write(chunk)
+        os.replace(tmp_path, gz_path)
+    except OSError:
+        log.warning("Failed to compress output file", extra={"path": str(path)}, exc_info=True)
+        tmp_path.unlink(missing_ok=True)
+        return
+    try:
+        path.unlink()
+    except OSError:
+        log.warning("Compressed file created but failed to remove original", extra={"path": str(path)}, exc_info=True)
 
 
 def create_store(env_id: str, config: OutputStorageConfig) -> FileOutputStore:
     """Write-side module factory — part of the output store module contract."""
-    base_dir = _resolve_base_dir(env_id, config, create=True)
-    return FileOutputStore(base_dir)
+    file_cfg = _parse_file_config(config)
+    base_dir = _resolve_base_dir(env_id, file_cfg, create=True)
+    return FileOutputStore(base_dir, compress=file_cfg.compress)
