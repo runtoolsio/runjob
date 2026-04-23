@@ -342,7 +342,6 @@ class OutputRouter(OutputObserver, Output):
         self.max_batch = max_batch
         self._batch_lock = Lock()
         self._batch_buffer: List[OutputLine] = []
-        self._locations = [storage.location for storage in self.storages]
 
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -362,7 +361,7 @@ class OutputRouter(OutputObserver, Output):
 
     @property
     def locations(self):
-        return self._locations
+        return [storage.location for storage in self.storages]
 
     def new_output(self, output_line: OutputLine):
         if self.tail_buffer:

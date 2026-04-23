@@ -64,7 +64,9 @@ class FileOutputWriter(OutputWriter):
             self._closed = True
             self._file.close()
         if self._compress and self.file_path.exists():
-            _compress_file(self.file_path)
+            new_path = _compress_file(self.file_path)
+            if new_path is not None:
+                self.file_path = new_path
 
     def __del__(self):
         try:
@@ -108,8 +110,8 @@ class FileOutputStore(FileOutputBackend, OutputStore):
                     log.warning("Failed to delete output file", extra={"path": str(jsonl_path)}, exc_info=True)
 
 
-def _compress_file(path: Path) -> None:
-    """Gzip a file in place: write .gz.tmp, atomic rename, delete original."""
+def _compress_file(path: Path) -> Path | None:
+    """Gzip a file in place: write .gz.tmp, atomic rename, delete original. Returns .gz path on success."""
     gz_path = _gz_path(path)
     tmp_path = Path(str(gz_path) + ".tmp")
     try:
@@ -120,11 +122,12 @@ def _compress_file(path: Path) -> None:
     except OSError:
         log.warning("Failed to compress output file", extra={"path": str(path)}, exc_info=True)
         tmp_path.unlink(missing_ok=True)
-        return
+        return None
     try:
         path.unlink()
     except OSError:
         log.warning("Compressed file created but failed to remove original", extra={"path": str(path)}, exc_info=True)
+    return gz_path
 
 
 def create_store(env_id: str, config: OutputStorageConfig) -> FileOutputStore:
