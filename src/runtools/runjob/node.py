@@ -9,13 +9,13 @@ from typing import Dict, Optional, List, Callable, override, Tuple
 from runtools.runcore import paths, connector, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
-from runtools.runcore.db import sqlite, PersistingObserver, PERSISTING_OBSERVER_PRIORITY
+from runtools.runcore.db import sqlite
 from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
     InProcessEnvironmentConfig, EnvironmentEntry, _open_environment, resolve_env_ref, ensure_environment
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
     InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, InstanceControlEvent, InstanceStatusEvent, \
-    JobInstanceDelegate, InstanceLifecycleObserver, InstanceID, \
+    JobInstanceDelegate, InstanceID, \
     DuplicateStrategy
 from runtools.runcore.matching import SortOption
 from runtools.runcore.output import DEFAULT_TAIL_BUFFER_SIZE
@@ -83,6 +83,10 @@ class JobInstanceManaged(JobInstanceDelegate):
         try:
             return super().run()
         finally:
+            try:
+                self._env._finalize_run(self)
+            except Exception:
+                log.error("Failed to finalize run", extra={"instance": str(self.id)}, exc_info=True)
             self._env._detach_instance(self.id, self._env._transient)
 
     def _allows_env_closing(self):
@@ -230,6 +234,12 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
         return job_instance
 
+    def _finalize_run(self, job_instance):
+        """Persist the final run snapshot. Called after router close so output locations are finalized."""
+        snap = job_instance.snap()
+        if snap.lifecycle.is_ended:
+            self._db.store_runs(snap)
+
     def _on_added(self, job_instance):
         pass
 
@@ -313,37 +323,6 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             raise KeyboardInterrupt
 
 
-RETENTION_OBSERVER_PRIORITY = PERSISTING_OBSERVER_PRIORITY + 10  # After persistence so the run is stored first
-
-
-class RetentionObserver(InstanceLifecycleObserver):
-    """Enforces retention policy on both database and output stores after each run ends."""
-
-    def __init__(self, run_storage, output_stores, retention_policy):
-        self._db = run_storage
-        self._output_stores = output_stores
-        self._retention_policy = retention_policy
-
-    def instance_lifecycle_update(self, event: InstanceLifecycleEvent):
-        if event.new_stage != Stage.ENDED:
-            return
-
-        job_id = event.job_run.metadata.job_id
-
-        def _enforce_db_retention():
-            self._db.enforce_retention(job_id, self._retention_policy)
-
-        def _enforce_store(store):
-            return lambda: store.enforce_retention(job_id, self._retention_policy)
-
-        run_isolated_collect_exceptions(
-            f"Retention errors for job {job_id}",
-            _enforce_db_retention,
-            *(_enforce_store(s) for s in self._output_stores),
-            suppress=True,
-        )
-
-
 def connect(env_ref: EnvironmentEntry | str | None = None, *,
             disable_output: tuple[str, ...] = (), tail_buffer_size=None):
     """Connect to an environment node.
@@ -386,7 +365,6 @@ class InProcessNode(EnvironmentNodeBase):
         self._notifications = InstanceObservableNotifications()
         EnvironmentNodeBase.__init__(self, env_id, env_db, features=features, transient=transient)
         self._lock_factory = lock_factory
-        self._persisting_observer = PersistingObserver(env_db)
 
     @property
     @override
@@ -398,12 +376,10 @@ class InProcessNode(EnvironmentNodeBase):
         self._db.open()
 
     def _on_added(self, job_instance):
-        job_instance.notifications.add_observer_lifecycle(self._persisting_observer, PERSISTING_OBSERVER_PRIORITY)
         self._notifications.bind_to(job_instance.notifications, EnvironmentNodeBase.OBSERVERS_PRIORITY - 1)
 
     def _on_removed(self, job_instance):
         self._notifications.unbind_from(job_instance.notifications)
-        job_instance.notifications.remove_observer_lifecycle(self._persisting_observer)
 
     def get_active_runs(self, run_match=None) -> List[JobRun]:
         return [i.snap() for i in self.get_instances(run_match)]
@@ -647,10 +623,7 @@ class LocalNode(EnvironmentNodeBase):
         self._rpc_server = rpc_server
         self._event_dispatcher = event_dispatcher
         self._lock_factory = lock_factory
-        self._persisting_observer = PersistingObserver(env_db)
-        self._retention_observer = (
-            RetentionObserver(env_db, output_stores, retention_policy) if retention_policy else None
-        )
+        self._retention_policy = retention_policy
 
     def open(self):
         EnvironmentNodeBase.open(self)  # Execute first for opened only once check
@@ -687,19 +660,25 @@ class LocalNode(EnvironmentNodeBase):
     def notifications(self) -> InstanceNotifications:
         return self._connector.notifications
 
+    def _finalize_run(self, job_instance):
+        super()._finalize_run(job_instance)
+        if self._retention_policy:
+            job_id = job_instance.snap().metadata.job_id
+            run_isolated_collect_exceptions(
+                f"Retention errors for job {job_id}",
+                lambda: self._db.enforce_retention(job_id, self._retention_policy),
+                *(lambda s=s: s.enforce_retention(job_id, self._retention_policy)
+                  for s in self._output_stores),
+                suppress=True,
+            )
+
     def _on_added(self, job_instance):
-        job_instance.notifications.add_observer_lifecycle(self._persisting_observer, PERSISTING_OBSERVER_PRIORITY)
-        if self._retention_observer:
-            job_instance.notifications.add_observer_lifecycle(self._retention_observer, RETENTION_OBSERVER_PRIORITY)
         self._rpc_server.register_instance(job_instance)
         job_instance.notifications.add_observer_all_events(self._event_dispatcher)
 
     def _on_removed(self, job_instance):
         job_instance.notifications.remove_observer_all_events(self._event_dispatcher)
         self._rpc_server.unregister_instance(job_instance)
-        if self._retention_observer:
-            job_instance.notifications.remove_observer_lifecycle(self._retention_observer)
-        job_instance.notifications.remove_observer_lifecycle(self._persisting_observer)
 
     def lock(self, lock_id):
         # TODO Method to separate type
