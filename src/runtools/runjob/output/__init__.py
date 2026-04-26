@@ -78,27 +78,195 @@ _ENVELOPE_KEY_MAP = {
 
 _MESSAGE_KEYS = frozenset({"message", "msg"})
 
-# Pattern A: ISO timestamp + optional level + optional logger + optional thread
-_LOG_LINE_PATTERN = re.compile(
-    r'^(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?)'
-    r'(?:'
-        r'\s+(?P<level>TRACE|DEBUG|INFO|NOTICE|WARN(?:ING)?|ERROR|SEVERE|FATAL|CRITICAL)'
-        r'(?:'
-            r'\s+\[(?P<logger_bracket>[^\]]+)\]'
-            r'|'
-            r'\s+(?P<logger_dotted>[a-zA-Z_][\w.]*\.[a-zA-Z_][\w.]*)'
-        r')?'
-        r'(?:\s+\[(?P<thread>[^\]]+)\])?'
-    r')?'
-    r'\s*[-:]?\s*'
-    r'(?P<message>.*)',
-    re.ASCII,
-)
+# --- Token extractors for text log line parsing ---
 
-# Pattern B: Python default format LEVEL:logger:message
-_PYTHON_LOG_PATTERN = re.compile(
-    r'^(?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL):(?P<logger>[^:]+):(?P<message>.*)'
-)
+
+class TokenExtractor:
+    """Base class for extractors that pull a single field from the front of a string."""
+
+    def extract(self, text: str) -> tuple[str, str, str] | None:
+        """Try to extract a token from the start of text.
+
+        Returns:
+            (key, value, remainder) if matched, None otherwise.
+        """
+        return None
+
+
+class TimestampExtractor(TokenExtractor):
+    """Extracts a timestamp from the start: full date+time or time-only."""
+
+    _FULL = re.compile(
+        r'^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?)\s*')
+    _TIME_ONLY = re.compile(r'^(\d{2}:\d{2}:\d{2}(?:[.,]\d{1,3})?)\s*')
+
+    def extract(self, text):
+        m = self._FULL.match(text)
+        if m:
+            return 'timestamp', m.group(1), text[m.end():]
+        m = self._TIME_ONLY.match(text)
+        if m:
+            return 'timestamp', m.group(1), text[m.end():]
+        return None
+
+
+class LevelExtractor(TokenExtractor):
+    """Extracts a log level keyword (INFO, ERROR, etc.)."""
+
+    _PATTERN = re.compile(
+        r'^(TRACE|DEBUG|INFO|NOTICE|WARN(?:ING)?|ERROR|SEVERE|FATAL|CRITICAL)\b\s*', re.ASCII)
+
+    def extract(self, text):
+        m = self._PATTERN.match(text)
+        return ('level', m.group(1), text[m.end():]) if m else None
+
+
+class BracketExtractor(TokenExtractor):
+    """Extracts a bracketed token: [main], [c.t.Logger], [pool-3-thread-7]."""
+
+    _PATTERN = re.compile(r'^\[([^\]]+)\]\s*')
+
+    def extract(self, text):
+        m = self._PATTERN.match(text)
+        return ('bracket', m.group(1), text[m.end():]) if m else None
+
+
+class DottedIdentifierExtractor(TokenExtractor):
+    """Extracts a dotted identifier (logger name): com.example.App, c.t.CLI."""
+
+    _PATTERN = re.compile(r'^([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)+)\s*', re.ASCII)
+
+    def extract(self, text):
+        m = self._PATTERN.match(text)
+        return ('logger', m.group(1), text[m.end():]) if m else None
+
+
+class SeparatorExtractor(TokenExtractor):
+    """Strips leading separators (-, --, :) before the message."""
+
+    _PATTERN = re.compile(r'^[-:]+\s*')
+
+    def extract(self, text):
+        m = self._PATTERN.match(text)
+        return ('_separator', '', text[m.end():]) if m else None
+
+
+class PythonLogExtractor(TokenExtractor):
+    """Extracts Python default log format: LEVEL:logger:message."""
+
+    _PATTERN = re.compile(r'^(DEBUG|INFO|WARNING|ERROR|CRITICAL):([^:]+):(.*)', re.ASCII)
+
+    def extract(self, text):
+        m = self._PATTERN.match(text)
+        if m:
+            return '_python', f'{m.group(1)}:{m.group(2)}', m.group(3).strip()
+        return None
+
+
+# Heuristic for bracket resolution
+_THREAD_HINT = re.compile(r'(?:thread|pool|main|worker|executor|Timer|ForkJoin)', re.IGNORECASE)
+
+
+class TextEnvelopeParser:
+    """Extracts envelope fields (timestamp, level, logger, thread) from text log lines.
+
+    Runs a chain of token extractors against the front of the string, collecting
+    recognized fields. Bracketed tokens are resolved to logger/thread via heuristics.
+    """
+
+    def __init__(self):
+        self._timestamp = TimestampExtractor()
+        self._python = PythonLogExtractor()
+        # Extractors tried in a loop after timestamp (order matters: brackets and level can interleave)
+        self._mid_extractors = [BracketExtractor(), LevelExtractor()]
+        self._dotted = DottedIdentifierExtractor()
+        self._separator = SeparatorExtractor()
+
+    def parse(self, text: str) -> tuple[dict, str] | None:
+        """Extract envelope from text. Returns (envelope_dict, remaining_message) or None."""
+        # Python default format: LEVEL:logger:message
+        result = self._python.extract(text)
+        if result:
+            _, combined, message = result
+            level, logger = combined.split(':', 1)
+            return {'level': level, 'logger': logger}, message
+
+        # Timestamp is required for structured log detection
+        result = self._timestamp.extract(text)
+        if not result:
+            return None
+        envelope = {'timestamp': result[1]}
+        remaining = result[2]
+
+        # Collect brackets and level in whatever order they appear
+        brackets = []
+        for _ in range(3):
+            matched = False
+            for ext in self._mid_extractors:
+                result = ext.extract(remaining)
+                if result:
+                    key, value, remaining = result
+                    if key == 'bracket':
+                        brackets.append(value)
+                    else:
+                        envelope[key] = value
+                    matched = True
+                    break
+            if not matched:
+                break
+
+        # Dotted identifier after level → logger
+        if 'level' in envelope:
+            result = self._dotted.extract(remaining)
+            if result:
+                envelope['logger'] = result[1]
+                remaining = result[2]
+
+        # Resolve brackets to logger/thread
+        self._resolve_brackets(envelope, brackets)
+
+        # Strip separator before message
+        result = self._separator.extract(remaining)
+        if result:
+            remaining = result[2]
+
+        return envelope, remaining.strip()
+
+    @staticmethod
+    def _resolve_brackets(envelope: dict, brackets: list[str]) -> None:
+        """Assign bracketed tokens to logger/thread using heuristics."""
+        if not brackets:
+            return
+
+        if len(brackets) == 1:
+            token = brackets[0]
+            if 'level' not in envelope:
+                if _THREAD_HINT.search(token):
+                    envelope['thread'] = token
+                else:
+                    envelope['logger'] = token
+            else:
+                if '.' in token or token[0].isupper():
+                    envelope['logger'] = token
+                else:
+                    envelope['thread'] = token
+        elif len(brackets) == 2:
+            first, second = brackets
+            if _THREAD_HINT.search(first) and not _THREAD_HINT.search(second):
+                envelope['thread'] = first
+                envelope['logger'] = second
+            elif _THREAD_HINT.search(second) and not _THREAD_HINT.search(first):
+                envelope['logger'] = first
+                envelope['thread'] = second
+            else:
+                envelope['logger'] = first
+                envelope['thread'] = second
+        else:
+            envelope['logger'] = brackets[0]
+            envelope['thread'] = brackets[1]
+
+
+_text_envelope_parser = TextEnvelopeParser()
 
 
 class OutputParser:
@@ -167,23 +335,11 @@ class OutputParser:
 
     @staticmethod
     def _try_text_pattern(text: str) -> dict | None:
-        m = _LOG_LINE_PATTERN.match(text)
-        if m:
-            logger = m.group('logger_bracket') or m.group('logger_dotted')
-            envelope = {'timestamp': m.group('timestamp'), 'level': m.group('level')}
-            if logger:
-                envelope['logger'] = logger
-            if m.group('thread'):
-                envelope['thread'] = m.group('thread')
-            return {'message': m.group('message').strip(), 'envelope': envelope}
-
-        m = _PYTHON_LOG_PATTERN.match(text)
-        if m:
-            return {
-                'message': m.group('message').strip(),
-                'envelope': {'level': m.group('level'), 'logger': m.group('logger')},
-            }
-        return None
+        result = _text_envelope_parser.parse(text)
+        if result is None:
+            return None
+        envelope, message = result
+        return {'message': message, 'envelope': envelope}
 
     @staticmethod
     def _apply(output_line: OutputLine, parsed: dict) -> OutputLine:
