@@ -222,6 +222,10 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
             if instance_id.ordinal > 1 and duplicate_strategy.stop_reason:
                 job_instance.stop(duplicate_strategy.stop_reason)
+                try:
+                    self._finalize_run(job_instance)
+                except Exception:
+                    log.error("Failed to finalize run", extra={"instance": str(job_instance.id)}, exc_info=True)
                 self._detach_instance(job_instance.id, self._transient)
         except:
             with self._idle_condition:
