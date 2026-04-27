@@ -318,21 +318,25 @@ class OutputParser:
         if not isinstance(data, dict):
             return None
 
+        # Encoder metadata fields that are noise when null/empty
+        _ENCODER_NOISE = frozenset({'throwable', 'throwableproxy', 'formattedmessage', 'arguments'})
+
         envelope, fields, message = {}, {}, None
         for key, value in data.items():
             lower = key.lower()
             if lower in _MESSAGE_KEYS:
-                message = str(value)
+                message = "" if value is None or value == "null" else str(value)
             elif lower in _ENVELOPE_KEY_MAP:
                 envelope[_ENVELOPE_KEY_MAP[lower]] = value
             elif lower == 'kvplist' and isinstance(value, list):
-                # Logback JsonEncoder puts fluent addKeyValue pairs under kvpList
                 for entry in value:
                     if isinstance(entry, dict):
                         fields.update(entry)
             elif lower == 'mdc' and isinstance(value, dict):
-                # Logback JsonEncoder puts MDC entries under mdc
-                fields.update(value)
+                if value:
+                    fields.update(value)
+            elif lower in _ENCODER_NOISE and not value:
+                continue
             else:
                 fields[key] = value
 
