@@ -72,8 +72,8 @@ _KV_TOKEN_PATTERN = re.compile(r'\S+=(?:\[[^\]]*\]|\([^)]*\)|<[^>]*>|\S+)')
 _ENVELOPE_KEY_MAP = {
     "timestamp": "timestamp", "ts": "timestamp", "time": "timestamp",
     "level": "level", "lvl": "level", "severity": "level",
-    "logger": "logger", "logger_name": "logger",
-    "thread": "thread", "thread_name": "thread",
+    "logger": "logger", "logger_name": "logger", "loggername": "logger",
+    "thread": "thread", "thread_name": "thread", "threadname": "thread",
 }
 
 _MESSAGE_KEYS = frozenset({"message", "msg"})
@@ -324,7 +324,15 @@ class OutputParser:
             if lower in _MESSAGE_KEYS:
                 message = str(value)
             elif lower in _ENVELOPE_KEY_MAP:
-                envelope[_ENVELOPE_KEY_MAP[lower]] = str(value) if value is not None else None
+                envelope[_ENVELOPE_KEY_MAP[lower]] = value
+            elif lower == 'kvplist' and isinstance(value, list):
+                # Logback JsonEncoder puts fluent addKeyValue pairs under kvpList
+                for entry in value:
+                    if isinstance(entry, dict):
+                        fields.update(entry)
+            elif lower == 'mdc' and isinstance(value, dict):
+                # Logback JsonEncoder puts MDC entries under mdc
+                fields.update(value)
             else:
                 fields[key] = value
 

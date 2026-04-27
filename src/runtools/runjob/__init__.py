@@ -8,4 +8,4 @@ IMPLEMENTATION NOTE:
 """
 from runtools.runjob import instance
 from runtools.runjob.instance import _JobInstance
-__version__ = "0.2.8"
+__version__ = "0.2.9"
