@@ -33,6 +33,7 @@ _UNSET = object()
 LIFECYCLE_OBSERVER_ERROR = "LIFECYCLE_OBSERVER_ERROR"
 PHASE_OBSERVER_ERROR = "PHASE_OBSERVER_ERROR"
 OUTPUT_OBSERVER_ERROR = "OUTPUT_OBSERVER_ERROR"
+OUTPUT_PERSISTENCE_ERROR = "OUTPUT_PERSISTENCE_ERROR"
 CONTROL_OBSERVER_ERROR = "CONTROL_OBSERVER_ERROR"
 STATUS_OBSERVER_ERROR = "STATUS_OBSERVER_ERROR"
 
@@ -192,9 +193,26 @@ class _JobInstance(JobInstance):
 
     def run(self):
         with self._instance_scope():
-            with self._output_router as router:
-                with self._output_sink.observer_context(self._process_output, router):
+            try:
+                with self._output_sink.observer_context(self._process_output, self._output_router):
                     return self._run_with_output_link()
+            finally:
+                self._close_output_router()
+
+    def _close_output_router(self):
+        """Finalize output persistence; record a fault on failure.
+
+        Output persistence is end-of-run only — close() does the actual writes for any
+        flush-only storages (e.g., S3 buffer-and-PUT). A failure here means the run's
+        output didn't make it to durable storage, which is a finalization fault that
+        should surface to the caller and be recorded in history. termination_status
+        on root_phase is unaffected — it reflects what the program actually did.
+        """
+        try:
+            self._output_router.close()
+        except Exception as e:
+            self._faults.append(Fault.from_exception(OUTPUT_PERSISTENCE_ERROR, e))
+            raise
 
     def _run_with_output_link(self):
         if self._output_link:

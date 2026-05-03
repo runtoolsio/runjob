@@ -46,6 +46,20 @@ def env(feature):
         yield env
 
 
+def test_node_close_closes_output_stores():
+    """Output stores own resources (e.g. boto3 client connection pools).
+    EnvironmentNodeBase.close() must close them, mirroring how the connector
+    closes read-side backends.
+    """
+    from unittest.mock import MagicMock
+    fake_store = MagicMock()
+
+    with node.in_process(transient=True) as env:
+        env._output_stores = (fake_store,)
+
+    fake_store.close.assert_called_once()
+
+
 def test_environment_lifecycle(feature):
     """Test basic environment lifecycle - open, add instance, close"""
     with node.in_process(features=feature, transient=True) as e:

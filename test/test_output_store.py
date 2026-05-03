@@ -9,6 +9,7 @@ from runtools.runcore.job import iid
 from runtools.runcore.output import OutputLine
 from runtools.runcore.output.file import SourceIndex
 from runtools.runcore.retention import RetentionPolicy
+from runtools.runcore.util.dt import utc_now
 from runtools.runjob.output.file import FileOutputStore, FileOutputWriter
 
 
@@ -23,7 +24,7 @@ def _touch(path: Path, content=""):
 
 
 def test_create_writer(store, tmp_path):
-    writer = store.create_writer(iid('myjob', 'run1'))
+    writer = store.create_writer(iid('myjob', 'run1'), created_at=utc_now())
     assert writer.file_path == tmp_path / 'myjob' / 'run1__1.jsonl'
 
 

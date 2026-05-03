@@ -575,8 +575,17 @@ class OutputStore(OutputBackend, ABC):
     """Extends OutputBackend with write and retention capabilities."""
 
     @abstractmethod
-    def create_writer(self, instance_id: InstanceID) -> OutputWriter:
-        """Create a per-instance writer for storing output lines."""
+    def create_writer(self, instance_id: InstanceID, *, created_at: datetime) -> OutputWriter:
+        """Create a per-instance writer for storing output lines.
+
+        Args:
+            instance_id: Fully-qualified InstanceID of the run being written.
+            created_at: Canonical creation timestamp of the run (the same value
+                threaded into RunStorage.init_run, derived from
+                root_phase.created_at). Backends that record retention metadata
+                use this so DB-, lifecycle-, and store-side timestamps stay
+                consistent.
+        """
 
     @abstractmethod
     def enforce_retention(self, job_id: str, policy: RetentionPolicy):

@@ -157,7 +157,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         for feature in self._features:
             feature.on_open()
 
-    def _admit_instance(self, job_id, run_id, user_params, *, auto_increment=False):
+    def _admit_instance(self, job_id, run_id, created_at, user_params, *, auto_increment=False):
         with self._lock:
             if not self._opened:
                 raise InvalidStateError("Cannot add job instance: environment container not opened")
@@ -166,7 +166,9 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             self._reserved_runs.append((job_id, run_id))
 
         try:
-            return self._db.init_run(job_id, run_id, user_params, auto_increment=auto_increment)
+            return self._db.init_run(
+                job_id, run_id, user_params,
+                created_at=created_at, auto_increment=auto_increment)
         except BaseException:
             with self._idle_condition:
                 self._reserved_runs.remove((job_id, run_id))
@@ -191,11 +193,18 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         """
         run_id = run_id or unique_timestamp_hex()
         reserved = (job_id, run_id)
+        # Single source of truth for the run's creation moment: the root phase, from
+        # which JobRun.lifecycle.created_at also derives. Threading this same value
+        # into the partial DB row and into per-store writer metadata keeps DB,
+        # final lifecycle, and S3 retention timestamps consistent.
+        created_at = root_phase.created_at
         instance_id = self._admit_instance(
-            job_id, run_id, user_params, auto_increment=(duplicate_strategy != DuplicateStrategy.RAISE))
+            job_id, run_id, created_at, user_params,
+            auto_increment=(duplicate_strategy != DuplicateStrategy.RAISE))
         job_instance = None
         try:
-            writers = [store.create_writer(instance_id) for store in self._output_stores]
+            writers = [store.create_writer(instance_id, created_at=created_at)
+                       for store in self._output_stores]
             tail_buffer = InMemoryTailBuffer(max_bytes=self._tail_buffer_size) if self._tail_buffer_size else None
             output_router = OutputRouter(tail_buffer=tail_buffer, storages=writers)
             create_kwargs = dict(
@@ -320,6 +329,10 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             "Errors on environment features closing",
             *(feature.on_close for feature in self._features),
             self._shutdown_executor,
+            # Output stores own resources (e.g. boto3 S3 client connection pools)
+            # they created in create_store. The connector closes read-side backends;
+            # this is the parallel write-side cleanup.
+            *(store.close for store in self._output_stores),
             suppress=interrupt_received
         )
 
