@@ -46,6 +46,31 @@ def env(feature):
         yield env
 
 
+def test_create_instance_threads_tags_to_metadata_and_db():
+    """Tags passed to create_instance reach both the runtime metadata and the
+    persisted history (junction table). Normalization fires at the boundary —
+    raw inputs like '#Foo' / 'BAR' become 'foo' / 'bar', and dupes collapse.
+    """
+    with node.in_process(transient=False) as env:
+        inst = env.create_instance("test_job", root_phase=TestPhase(),
+                                   tags=("#Assistant", "ENV/prod", "assistant"))
+        assert inst.metadata.tags == ("assistant", "env/prod")
+
+        inst.run()
+
+        [restored] = env.read_runs()
+        assert restored.metadata.tags == ("assistant", "env/prod")
+
+
+def test_create_instance_rejects_invalid_tag():
+    """Validation fires at the boundary — admit/DB never sees the bad input."""
+    with node.in_process(transient=True) as env:
+        with pytest.raises(ValueError):
+            env.create_instance("test_job", root_phase=TestPhase(), tags=("BAD TAG",))
+        # No row was admitted
+        assert env.read_runs() == []
+
+
 def test_node_close_closes_output_stores():
     """Output stores own resources (e.g. boto3 client connection pools).
     EnvironmentNodeBase.close() must close them, mirroring how the connector

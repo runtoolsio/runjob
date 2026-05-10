@@ -71,6 +71,7 @@ def create(instance_id, environment, root_phase, *,
            status_tracker=None,
            error_hook=None,
            features=(),
+           tags=(),
            **user_params) -> JobInstance:
     """Create a job instance.
 
@@ -88,6 +89,8 @@ def create(instance_id, environment, root_phase, *,
             Pass None to disable. Custom: any callable with signature (sink, *, capture_filter) -> ContextManager.
         error_hook: Error handler for observer errors.
         features: Names of active features/plugins applied to this instance.
+        tags: User-set labels for grouping/filtering, normalized at the
+            ``JobInstanceMetadata`` boundary.
         **user_params: Additional user-defined parameters stored in metadata.
     """
     if not instance_id:
@@ -100,7 +103,8 @@ def create(instance_id, environment, root_phase, *,
 
     inst = _JobInstance(instance_id, root_phase, environment,
                         output_router, output_processors, output_link,
-                        status_tracker, error_hook, user_params, features)
+                        status_tracker, error_hook, user_params, features,
+                        tags=tags)
     # noinspection PyProtectedMember
     inst._activate()
     return inst
@@ -110,10 +114,10 @@ class _JobInstance(JobInstance):
 
     def __init__(self, instance_id, root_phase, env,
                  output_router, output_processors, output_link,
-                 status_tracker, error_hook, user_params, features=()):
+                 status_tracker, error_hook, user_params, features=(), *, tags=()):
         status_tracker = status_tracker or StatusTracker()
         self._notifications = InstanceObservableNotifications(error_hook=error_hook, force_reraise=True)
-        self._metadata = JobInstanceMetadata(instance_id, user_params, tuple(features))
+        self._metadata = JobInstanceMetadata(instance_id, user_params, tuple(features), tuple(tags))
         self._root_phase: Phase = root_phase
         self._output_sink = OutputSink((*output_processors, status_tracker))
         self._output_router = output_router

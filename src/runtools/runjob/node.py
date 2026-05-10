@@ -16,7 +16,7 @@ from runtools.runcore.err import InvalidStateError, run_isolated_collect_excepti
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
     InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, InstanceControlEvent, InstanceStatusEvent, \
     JobInstanceDelegate, InstanceID, \
-    DuplicateStrategy
+    DuplicateStrategy, normalize_tags
 from runtools.runcore.matching import SortOption
 from runtools.runcore.output import DEFAULT_TAIL_BUFFER_SIZE
 from runtools.runcore.plugins import Plugin
@@ -157,7 +157,8 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         for feature in self._features:
             feature.on_open()
 
-    def _admit_instance(self, job_id, run_id, created_at, user_params, *, auto_increment=False):
+    def _admit_instance(self, job_id, run_id, created_at, user_params, *,
+                        tags=(), auto_increment=False):
         with self._lock:
             if not self._opened:
                 raise InvalidStateError("Cannot add job instance: environment container not opened")
@@ -168,7 +169,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         try:
             return self._db.init_run(
                 job_id, run_id, user_params,
-                created_at=created_at, auto_increment=auto_increment)
+                created_at=created_at, tags=tags, auto_increment=auto_increment)
         except BaseException:
             with self._idle_condition:
                 self._reserved_runs.remove((job_id, run_id))
@@ -177,7 +178,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
     def create_instance(self, job_id, run_id=None, root_phase=None, *, duplicate_strategy=DuplicateStrategy.RAISE,
                         output_processors=(), output_link=None, status_tracker=None,
-                        user_params=None) -> JobInstanceManaged:
+                        user_params=None, tags=()) -> JobInstanceManaged:
         """
         Create a new job instance within this environment.
 
@@ -190,6 +191,9 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             output_link: Callable for capturing external output (e.g., log_capture). None to disable.
             status_tracker: Optional status tracker for the job.
             user_params: Optional user-defined parameters.
+            tags: User-set labels for grouping/filtering. Normalized at the
+                boundary (lowercase, ``#`` stripped, deduped) so a malformed
+                tag fails fast before the DB row or instance is constructed.
         """
         run_id = run_id or unique_timestamp_hex()
         reserved = (job_id, run_id)
@@ -198,8 +202,12 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         # into the partial DB row and into per-store writer metadata keeps DB,
         # final lifecycle, and S3 retention timestamps consistent.
         created_at = root_phase.created_at
+        # Normalize once at the boundary — fail fast on bad input, then re-pass
+        # the canonical tuple downstream (DB write + metadata are idempotent).
+        normalized_tags = normalize_tags(tags) if tags else ()
         instance_id = self._admit_instance(
             job_id, run_id, created_at, user_params,
+            tags=normalized_tags,
             auto_increment=(duplicate_strategy != DuplicateStrategy.RAISE))
         job_instance = None
         try:
@@ -212,6 +220,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
                 output_processors=output_processors,
                 status_tracker=status_tracker,
                 features=self._feature_names,
+                tags=normalized_tags,
                 **(user_params or {})
             )
             if output_link is not None:
