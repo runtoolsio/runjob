@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 import pytest
+from runtools.runcore.job import DuplicateStrategy
 from runtools.runcore.run import JobCompletionError, TerminationStatus
 from runtools.runjob import node
 from runtools.runjob.job import job
@@ -231,3 +232,176 @@ def test_env_and_run_id_both_in_signature():
 
     process(env="staging", run_id="r1")
     assert received == [("staging", "r1")]
+
+
+# --- duplicate_strategy forwarding ---
+
+def _capture_create_instance_kwargs():
+    """Patch env_node.create_instance to capture kwargs without running anything."""
+    captured = {}
+
+    def _connect(env_id=None):
+        n = node.in_process(env_id or "test")
+        n_enter = n.__enter__
+        n_exit = n.__exit__
+
+        class _CapturingCtx:
+            def __enter__(self):
+                env_node = n_enter()
+                original = env_node.create_instance
+
+                def spy(*args, **kwargs):
+                    captured['args'] = args
+                    captured['kwargs'] = kwargs
+                    return original(*args, **kwargs)
+
+                env_node.create_instance = spy
+                return env_node
+
+            def __exit__(self, *a):
+                return n_exit(*a)
+
+        return _CapturingCtx()
+
+    return captured, _connect
+
+
+def test_duplicate_strategy_default_is_raise():
+    """Bare @job forwards DuplicateStrategy.RAISE to create_instance."""
+    captured, connect_spy = _capture_create_instance_kwargs()
+
+    with patch("runtools.runjob.job.node.connect", side_effect=connect_spy):
+        @job
+        def pipeline():
+            pass
+        pipeline()
+
+    assert captured['kwargs']['duplicate_strategy'] == DuplicateStrategy.RAISE
+
+
+def test_duplicate_strategy_call_time_forwarded():
+    """Call-time duplicate_strategy reaches create_instance."""
+    captured, connect_spy = _capture_create_instance_kwargs()
+
+    with patch("runtools.runjob.job.node.connect", side_effect=connect_spy):
+        @job
+        def pipeline():
+            pass
+        pipeline(duplicate_strategy=DuplicateStrategy.ALLOW)
+
+    assert captured['kwargs']['duplicate_strategy'] == DuplicateStrategy.ALLOW
+
+
+def test_duplicate_strategy_decoration_default():
+    """Decoration-time duplicate_strategy is the default when call omits it."""
+    captured, connect_spy = _capture_create_instance_kwargs()
+
+    with patch("runtools.runjob.job.node.connect", side_effect=connect_spy):
+        @job(duplicate_strategy=DuplicateStrategy.ALLOW)
+        def pipeline():
+            pass
+        pipeline()
+
+    assert captured['kwargs']['duplicate_strategy'] == DuplicateStrategy.ALLOW
+
+
+def test_duplicate_strategy_call_overrides_decoration():
+    """Call-time duplicate_strategy beats decoration-time."""
+    captured, connect_spy = _capture_create_instance_kwargs()
+
+    with patch("runtools.runjob.job.node.connect", side_effect=connect_spy):
+        @job(duplicate_strategy=DuplicateStrategy.ALLOW)
+        def pipeline():
+            pass
+        pipeline(duplicate_strategy=DuplicateStrategy.RAISE)
+
+    assert captured['kwargs']['duplicate_strategy'] == DuplicateStrategy.RAISE
+
+
+def test_duplicate_strategy_param_not_hijacked():
+    """duplicate_strategy passes through when the function has a parameter with that name."""
+    received = []
+
+    @job
+    def process(duplicate_strategy):
+        received.append(duplicate_strategy)
+
+    process(duplicate_strategy="custom-value")
+    assert received == ["custom-value"]
+
+
+# --- tags ---
+
+def test_tags_at_call_time():
+    """tags kwarg at call time persists onto the run's metadata."""
+
+    @job
+    def pipeline():
+        pass
+
+    result = pipeline(tags=("nightly", "assistant"))
+    assert result.run.metadata.tags == ("nightly", "assistant")
+
+
+def test_tags_at_decoration_time():
+    """tags on the decorator apply to every call."""
+
+    @job(tags=("nightly",))
+    def pipeline():
+        pass
+
+    result = pipeline()
+    assert result.run.metadata.tags == ("nightly",)
+
+
+def test_tags_decoration_and_call_merge():
+    """Decoration-time tags + call-time tags merge (deduped)."""
+
+    @job(tags=("nightly",))
+    def pipeline():
+        pass
+
+    result = pipeline(tags=("urgent", "nightly"))  # 'nightly' duplicated
+    assert result.run.metadata.tags == ("nightly", "urgent")
+
+
+def test_tags_normalized():
+    """Raw tag input is normalized at the metadata boundary."""
+
+    @job
+    def pipeline():
+        pass
+
+    result = pipeline(tags=("#Foo", "BAR"))
+    assert result.run.metadata.tags == ("foo", "bar")
+
+
+def test_tags_decoration_rejects_bare_string():
+    """@job(tags="prod") would silently become ("p","r","o","d") without the guard."""
+    with pytest.raises(ValueError, match="iterable of strings"):
+        @job(tags="prod")
+        def pipeline():
+            pass
+
+
+def test_tags_call_rejects_bare_string():
+    """pipeline(tags="prod") has the same trap; rejected at the call boundary."""
+
+    @job
+    def pipeline():
+        pass
+
+    with pytest.raises(ValueError, match="iterable of strings"):
+        pipeline(tags="prod")
+
+
+def test_tags_param_not_hijacked():
+    """tags passes through when the function has a 'tags' parameter."""
+    received = []
+
+    @job
+    def process(tags):
+        received.append(tags)
+
+    process(tags=["custom"])
+    assert received == [["custom"]]
