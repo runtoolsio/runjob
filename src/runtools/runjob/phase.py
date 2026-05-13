@@ -641,6 +641,21 @@ def phase(func=None, *, phase_id=None):
 
     When called inside a running phase's ``_run()``, the decorated function automatically creates
     a child ``FunctionPhase``, registers it with the parent via ``run_child()``, and returns the result.
+
+    When NOT to use ``@phase``:
+        ``@phase`` adds a new node to the run's phase tree — each child gets its
+        own lifecycle, termination outcome, and an entry in run inspection. That
+        machinery is worth it only when the piece of work needs to be **structurally
+        distinct** from its parent. Reach for ``@phase`` when:
+
+            - The step has an independent fail/retry boundary
+            - The step is gated by mutex / queue / approval / checkpoint semantics
+            - The step's outcome should be visible separately in history
+
+        For "I just want to show what the job is doing right now" — use
+        **operations** on the status tracker (the lightweight progress channel),
+        not a child phase. Start with one ``@job`` body + operations; promote
+        to child phases as concrete needs appear.
     """
     if func is None:
         return lambda f: _PhaseDecor(f, phase_id)

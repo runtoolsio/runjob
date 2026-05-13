@@ -2,6 +2,8 @@ from unittest.mock import patch
 
 import pytest
 from runtools.runcore.job import DuplicateStrategy
+from runtools.runjob.coord import CoordTypes, mutex
+from runtools.runjob.phase import FunctionPhase
 from runtools.runcore.run import JobCompletionError, TerminationStatus
 from runtools.runjob import node
 from runtools.runjob.job import job
@@ -405,3 +407,96 @@ def test_tags_param_not_hijacked():
 
     process(tags=["custom"])
     assert received == [["custom"]]
+
+
+# --- create_phase protocol — @mutex @job composition ---
+
+def test_create_phase_returns_function_phase():
+    """create_phase() builds the root FunctionPhase — bare @job, no coordination."""
+
+    @job
+    def pipeline():
+        pass
+
+    phase = pipeline.create_phase()
+    assert isinstance(phase, FunctionPhase)
+    assert phase.id == "pipeline"
+
+
+def test_create_phase_strips_reserved_kwargs():
+    """Reserved kwargs (run_id/env/duplicate_strategy/tags) must not leak into
+    the wrapped function when create_phase() is invoked directly.
+    """
+    received = []
+
+    @job
+    def pipeline(*args, **kwargs):
+        received.append((args, kwargs))
+
+    phase = pipeline.create_phase(run_id="r", env="staging", tags=("a",),
+                                   duplicate_strategy=DuplicateStrategy.ALLOW,
+                                   user_kwarg="kept")
+    # Execute the phase's wrapped function to see what kwargs it received.
+    phase._func(*phase._args, **phase._kwargs)
+    args, kwargs = received[0]
+    assert "run_id" not in kwargs
+    assert "env" not in kwargs
+    assert "tags" not in kwargs
+    assert "duplicate_strategy" not in kwargs
+    assert kwargs == {"user_kwarg": "kept"}
+
+
+def test_create_phase_keeps_kwarg_when_function_declares_it():
+    """If the wrapped function declares a same-named param, the kwarg passes through."""
+    received = []
+
+    @job
+    def pipeline(tags):
+        received.append(tags)
+
+    phase = pipeline.create_phase(tags=["custom"])
+    phase._func(*phase._args, **phase._kwargs)
+    assert received == [["custom"]]
+
+
+def test_mutex_wraps_job_root_phase():
+    """@mutex @job: root phase becomes a MUTEX wrapping the FunctionPhase."""
+
+    @mutex
+    @job
+    def shopping_assistant():
+        pass
+
+    result = shopping_assistant()
+    root = result.run.root_phase
+    assert root.phase_type == CoordTypes.MUTEX.value
+    assert root.phase_id == "shopping_assistant_mutex"
+    # Inner FunctionPhase is the single child
+    assert len(root.children) == 1
+    assert root.children[0].phase_type == FunctionPhase.TYPE
+
+
+def test_mutex_with_group_on_job():
+    """@mutex(group=...) @job: exclusion group is carried on the wrapper phase."""
+
+    @mutex(group="shopping")
+    @job
+    def shopping_assistant():
+        pass
+
+    result = shopping_assistant()
+    root = result.run.root_phase
+    assert root.attributes.get("exclusion_group") == "shopping"
+
+
+def test_mutex_job_still_honors_decorator_kwargs():
+    """@mutex @job composition preserves job-level kwargs (tags, duplicate_strategy)."""
+
+    @mutex
+    @job(tags=("assistant",))
+    def shopping_assistant():
+        pass
+
+    result = shopping_assistant(tags=("user/alice",))
+    # Tags are still applied at the instance level despite the mutex wrapping
+    assert result.run.metadata.tags == ("assistant", "user/alice")

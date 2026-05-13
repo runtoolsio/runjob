@@ -55,6 +55,21 @@ def job(func=None, *, job_id=None, env=None,
     When the decorated function is called, it creates an environment node, wraps the function
     in a ``FunctionPhase`` as root phase, runs the instance, and returns the ``JobRun`` snapshot.
 
+    Structuring a job — phases vs operations:
+        Start simple: one ``@job`` (= one root phase) with **operations** inside for
+        progress reporting. Operations are the lightweight "what is the job doing
+        right now" channel (status tracking) — reach for them by default.
+
+        Add ``@phase`` children only when a piece of work needs its OWN lifecycle —
+        i.e. one of:
+            - independent fail/retry boundary
+            - mutex / queue / approval / checkpoint semantics
+            - distinct outcome visible in run inspection
+
+        Heuristic: if removing the structure would silently mask a real failure
+        or lose a gate the job depends on, it should be a phase. Otherwise it's
+        an operation.
+
     Args:
         func: The function to decorate (when used as ``@job`` without parentheses).
         job_id: Override job ID (defaults to function name).
@@ -72,6 +87,11 @@ def job(func=None, *, job_id=None, env=None,
 
 
 class _JobDecor:
+
+    # Decorator-level kwargs consumed by __call__. Also stripped defensively in
+    # create_phase so coordination decorators (@mutex / @queue / @timeout) that
+    # invoke the factory directly never leak them into the wrapped function.
+    _RESERVED_KWARGS = ('run_id', 'env', 'duplicate_strategy', 'tags')
 
     def __init__(self, func, job_id, env, duplicate_strategy, tags: Tuple[str, ...]):
         functools.update_wrapper(self, func)
@@ -93,6 +113,27 @@ class _JobDecor:
             return default
         return kwargs.pop(name, default)
 
+    def create_phase(self, *args, **kwargs):
+        """Build the root phase for this job's run.
+
+        Same protocol as :class:`runtools.runjob.phase._PhaseDecor.create_phase`
+        — coordination decorators (``@mutex``, ``@queue``, ``@timeout``) wrap
+        the resulting phase by replacing this method on the decor instance.
+        Letting ``@job`` and ``@phase`` share this protocol means stacking
+        ``@mutex @job`` works without coordination decorators needing to know
+        which kind of decor they wrap.
+
+        Strips runtools-reserved kwargs defensively so the wrapped function
+        never sees them, regardless of who invokes this method. Job-level
+        options (tags, duplicate_strategy, env, run_id) are applied by
+        :meth:`__call__`, not here — direct callers of create_phase get a
+        clean phase but no instance.
+        """
+        for name in self._RESERVED_KWARGS:
+            if name not in self._func_params:
+                kwargs.pop(name, None)
+        return FunctionPhase(self._job_id, self._func, args, kwargs)
+
     def __call__(self, *args, **kwargs):
         run_id = self._take(kwargs, 'run_id', None)
         env = self._take(kwargs, 'env', None) or self._env
@@ -102,7 +143,7 @@ class _JobDecor:
         # normalizes + dedupes, so passing both raw and pre-normalized is safe.
         tags = (*self._default_tags, *call_tags)
 
-        root_phase = FunctionPhase(self._job_id, self._func, args, kwargs)
+        root_phase = self.create_phase(*args, **kwargs)
 
         with node.connect(env) as env_node:
             inst = env_node.create_instance(
