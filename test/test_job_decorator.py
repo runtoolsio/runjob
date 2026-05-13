@@ -489,6 +489,46 @@ def test_mutex_with_group_on_job():
     assert root.attributes.get("exclusion_group") == "shopping"
 
 
+def test_per_call_job_id_overrides_decoration():
+    """job_id can be supplied at call time; flows into the DB row identity."""
+
+    @job
+    def import_catalog():
+        pass
+
+    result = import_catalog(job_id="import_catalog_acme_us")
+    assert result.run.instance_id.job_id == "import_catalog_acme_us"
+
+
+def test_per_call_job_id_also_renames_root_phase():
+    """Per-call job_id propagates to the root phase id (and to any mutex wrapper)."""
+
+    @mutex(group="catalog_import")
+    @job
+    def import_catalog():
+        pass
+
+    result = import_catalog(job_id="import_catalog_acme_us")
+    root = result.run.root_phase
+    # Mutex wraps the FunctionPhase, so the inner child gets the dynamic id;
+    # the mutex wrapper's id is derived from it.
+    assert root.phase_type == CoordTypes.MUTEX.value
+    assert root.phase_id == "import_catalog_acme_us_mutex"
+    assert root.children[0].phase_id == "import_catalog_acme_us"
+
+
+def test_job_id_param_not_hijacked():
+    """job_id passes through when the function has a 'job_id' parameter."""
+    received = []
+
+    @job
+    def process(job_id):
+        received.append(job_id)
+
+    process(job_id="user-value")
+    assert received == ["user-value"]
+
+
 def test_mutex_job_still_honors_decorator_kwargs():
     """@mutex @job composition preserves job-level kwargs (tags, duplicate_strategy)."""
 

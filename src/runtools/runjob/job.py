@@ -72,7 +72,12 @@ def job(func=None, *, job_id=None, env=None,
 
     Args:
         func: The function to decorate (when used as ``@job`` without parentheses).
-        job_id: Override job ID (defaults to function name).
+        job_id: Default job ID at decoration time (defaults to function name).
+            Can also be overridden **per-call** via ``job_id=`` kwarg — useful when
+            the granularity isn't fixed at code-write time (e.g.
+            ``import_catalog_{site}_{locale}`` derived from runtime inputs).
+            The per-call value flows into both the DB row identity and the root
+            phase's id (and through to any mutex wrapper's id).
         env: Default environment ID (can be overridden at call time via ``env`` kwarg).
         duplicate_strategy: Default duplicate handling. ``ALLOW`` auto-increments
             ``InstanceID.ordinal`` so concurrent runs of ``job_id@run_id`` coexist.
@@ -91,7 +96,7 @@ class _JobDecor:
     # Decorator-level kwargs consumed by __call__. Also stripped defensively in
     # create_phase so coordination decorators (@mutex / @queue / @timeout) that
     # invoke the factory directly never leak them into the wrapped function.
-    _RESERVED_KWARGS = ('run_id', 'env', 'duplicate_strategy', 'tags')
+    _RESERVED_KWARGS = ('job_id', 'run_id', 'env', 'duplicate_strategy', 'tags')
 
     def __init__(self, func, job_id, env, duplicate_strategy, tags: Tuple[str, ...]):
         functools.update_wrapper(self, func)
@@ -113,7 +118,7 @@ class _JobDecor:
             return default
         return kwargs.pop(name, default)
 
-    def create_phase(self, *args, **kwargs):
+    def create_phase(self, *args, _phase_id_override=None, **kwargs):
         """Build the root phase for this job's run.
 
         Same protocol as :class:`runtools.runjob.phase._PhaseDecor.create_phase`
@@ -122,6 +127,11 @@ class _JobDecor:
         Letting ``@job`` and ``@phase`` share this protocol means stacking
         ``@mutex @job`` works without coordination decorators needing to know
         which kind of decor they wrap.
+
+        ``_phase_id_override`` lets ``__call__`` propagate a per-call ``job_id``
+        into the root phase's id, so a dynamic job identity (e.g.
+        ``import_catalog_{site}_{locale}``) shows up consistently in the
+        phase tree and in any mutex wrapper's id.
 
         Strips runtools-reserved kwargs defensively so the wrapped function
         never sees them, regardless of who invokes this method. Job-level
@@ -132,9 +142,10 @@ class _JobDecor:
         for name in self._RESERVED_KWARGS:
             if name not in self._func_params:
                 kwargs.pop(name, None)
-        return FunctionPhase(self._job_id, self._func, args, kwargs)
+        return FunctionPhase(_phase_id_override or self._job_id, self._func, args, kwargs)
 
     def __call__(self, *args, **kwargs):
+        job_id = self._take(kwargs, 'job_id', None) or self._job_id
         run_id = self._take(kwargs, 'run_id', None)
         env = self._take(kwargs, 'env', None) or self._env
         duplicate_strategy = self._take(kwargs, 'duplicate_strategy', self._default_duplicate_strategy)
@@ -143,11 +154,11 @@ class _JobDecor:
         # normalizes + dedupes, so passing both raw and pre-normalized is safe.
         tags = (*self._default_tags, *call_tags)
 
-        root_phase = self.create_phase(*args, **kwargs)
+        root_phase = self.create_phase(*args, _phase_id_override=job_id, **kwargs)
 
         with node.connect(env) as env_node:
             inst = env_node.create_instance(
-                self._job_id, run_id, root_phase,
+                job_id, run_id, root_phase,
                 duplicate_strategy=duplicate_strategy,
                 tags=tags,
             )
