@@ -77,6 +77,10 @@ _BUILTIN_ATTRS = frozenset({
     'levelno', 'lineno', 'module', 'msecs', 'pathname', 'process',
     'processName', 'relativeCreated', 'stack_info', 'exc_info', 'exc_text',
     'thread', 'threadName', 'taskName', 'message',
+    # Formatter-added attributes. Excluded so handlers (e.g. python-json-logger)
+    # that mutate the record by setting asctime during format() don't have those
+    # values leak into captured user-extra fields on later handlers.
+    'asctime',
 })
 
 _DICT_MESSAGE_KEYS = frozenset({"message", "msg"})
