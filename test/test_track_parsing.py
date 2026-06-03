@@ -16,10 +16,10 @@ def test_parsing_preprocessor_extracts_fields():
     """ParsingProcessor extracts fields from text using parsers."""
     preprocessor = ParsingProcessor([KVParser()])
 
-    line = OutputLine('rt_event=[downloading] rt_completed=[5]', 1)
+    line = OutputLine('runtools.track.event=[downloading] runtools.track.completed=[5]', 1)
     processed = preprocessor(line)
 
-    assert processed.fields == {'rt_event': 'downloading', 'rt_completed': '5'}
+    assert processed.fields == {'runtools.track.event': 'downloading', 'runtools.track.completed': '5'}
     assert processed.message == line.message
 
 
@@ -27,10 +27,10 @@ def test_parsing_preprocessor_skips_if_fields_exist():
     """ParsingProcessor doesn't overwrite existing fields (structured logging)."""
     preprocessor = ParsingProcessor([KVParser()])
 
-    line = OutputLine('some message', 1, fields={'rt_event': 'upload'})
+    line = OutputLine('some message', 1, fields={'runtools.track.event': 'upload'})
     processed = preprocessor(line)
 
-    assert processed.fields == {'rt_event': 'upload'}
+    assert processed.fields == {'runtools.track.event': 'upload'}
 
 
 def test_parsing_preprocessor_returns_unchanged_if_no_match():
@@ -44,7 +44,7 @@ def test_parsing_preprocessor_returns_unchanged_if_no_match():
 
 
 def test_status_tracker_event_from_fields():
-    """StatusTracker extracts event from rt_event field."""
+    """StatusTracker extracts event from runtools.track.event field."""
     tracker = StatusTracker(output_handler=field_based_handler)
 
     tracker(OutputLine('no fields', 1))
@@ -53,7 +53,7 @@ def test_status_tracker_event_from_fields():
     tracker(OutputLine('msg', 2, fields={'other': 'value'}))
     assert tracker.to_status().last_event is None
 
-    tracker(OutputLine('msg', 3, fields={'rt_event': 'downloading'}))
+    tracker(OutputLine('msg', 3, fields={'runtools.track.event': 'downloading'}))
     assert tracker.to_status().last_event.message == 'downloading'
 
 
@@ -62,10 +62,10 @@ def test_status_tracker_operation_from_fields():
     tracker = StatusTracker()
 
     tracker(OutputLine('msg', 1, fields={
-        'rt_operation': 'processing',
-        'rt_completed': 10,
-        'rt_total': 100,
-        'rt_unit': 'files'
+        'runtools.track.operation': 'processing',
+        'runtools.track.completed': 10,
+        'runtools.track.total': 100,
+        'runtools.track.unit': 'files'
     }))
 
     op = tracker.to_status().operations[0]
@@ -76,10 +76,10 @@ def test_status_tracker_operation_from_fields():
 
 
 def test_status_tracker_result_from_fields():
-    """StatusTracker extracts result from rt_result field."""
+    """StatusTracker extracts result from runtools.track.result field."""
     tracker = StatusTracker()
 
-    tracker(OutputLine('msg', 1, fields={'rt_result': 'success'}))
+    tracker(OutputLine('msg', 1, fields={'runtools.track.result': 'success'}))
     assert tracker.to_status().result.message == 'success'
 
 
@@ -93,10 +93,10 @@ def test_end_to_end_text_parsing():
         processed = preprocessor(line)
         tracker(processed)
 
-    process('rt_event=[downloading]', 1)
+    process('runtools.track.event=[downloading]', 1)
     assert tracker.to_status().last_event.message == 'downloading'
 
-    process('rt_operation=[processing] rt_completed=[5] rt_total=[10]', 2)
+    process('runtools.track.operation=[processing] runtools.track.completed=[5] runtools.track.total=[10]', 2)
     op = tracker.to_status().operations[0]
     assert op.name == 'processing'
     assert op.completed == 5
@@ -104,10 +104,10 @@ def test_end_to_end_text_parsing():
 
 def test_kv_parser_aliases():
     """KVParser aliases convert parsed keys to rt_ tracking names."""
-    preprocessor = ParsingProcessor([KVParser(aliases={'count': 'rt_completed'})])
+    preprocessor = ParsingProcessor([KVParser(aliases={'count': 'runtools.track.completed'})])
     tracker = StatusTracker()
 
-    line = OutputLine('rt_operation=[download] count=[50] rt_total=[100]', 1)
+    line = OutputLine('runtools.track.operation=[download] count=[50] runtools.track.total=[100]', 1)
     processed = preprocessor(line)
     tracker(processed)
 
@@ -117,10 +117,10 @@ def test_kv_parser_aliases():
 
 def test_timestamp_parsing():
     """Timestamp parser extracts datetime from text."""
-    preprocessor = ParsingProcessor([iso_date_time_parser('rt_timestamp'), KVParser()])
+    preprocessor = ParsingProcessor([iso_date_time_parser('runtools.track.timestamp'), KVParser()])
     tracker = StatusTracker()
 
-    line = OutputLine('2020-10-01 10:30:30 rt_event=[started]', 1)
+    line = OutputLine('2020-10-01 10:30:30 runtools.track.event=[started]', 1)
     processed = preprocessor(line)
     tracker(processed)
 
@@ -147,29 +147,29 @@ def test_operation_lifecycle():
     tracker = StatusTracker()
 
     tracker(OutputLine('msg', 1, fields={
-        'rt_operation': 'encoding', 'rt_completed': 5, 'rt_total': 10
+        'runtools.track.operation': 'encoding', 'runtools.track.completed': 5, 'runtools.track.total': 10
     }))
     assert not tracker.to_status().operations[0].finished
 
     tracker(OutputLine('msg', 2, fields={
-        'rt_operation': 'encoding', 'rt_completed': 10, 'rt_total': 10
+        'runtools.track.operation': 'encoding', 'runtools.track.completed': 10, 'runtools.track.total': 10
     }))
     assert tracker.to_status().operations[0].finished
 
 
 def test_operation_failed():
-    """Operations can be marked as failed via the rt_failed field."""
+    """Operations can be marked as failed via the runtools.track.failed field."""
     tracker = StatusTracker()
 
     tracker(OutputLine('msg', 1, fields={
-        'rt_operation': 'uploading', 'rt_completed': 50, 'rt_total': 100
+        'runtools.track.operation': 'uploading', 'runtools.track.completed': 50, 'runtools.track.total': 100
     }))
     op = tracker.to_status().operations[0]
     assert not op.finished
     assert not op.failed
 
     tracker(OutputLine('msg', 2, fields={
-        'rt_operation': 'uploading', 'rt_failed': 'connection timeout'
+        'runtools.track.operation': 'uploading', 'runtools.track.failed': 'connection timeout'
     }))
     op = tracker.to_status().operations[0]
     assert op.finished
@@ -178,11 +178,11 @@ def test_operation_failed():
 
 
 def test_failed_takes_precedence_over_result():
-    """When both rt_failed and rt_result are present, rt_failed wins."""
+    """When both runtools.track.failed and runtools.track.result are present, runtools.track.failed wins."""
     tracker = StatusTracker()
 
     tracker(OutputLine('msg', 1, fields={
-        'rt_operation': 'upload', 'rt_failed': 'error', 'rt_result': 'done'
+        'runtools.track.operation': 'upload', 'runtools.track.failed': 'error', 'runtools.track.result': 'done'
     }))
     op = tracker.to_status().operations[0]
     assert op.failed
@@ -194,7 +194,7 @@ def test_zero_total_means_zero_work():
     tracker = StatusTracker()
 
     tracker(OutputLine('msg', 1, fields={
-        'rt_operation': 'noop', 'rt_completed': 0, 'rt_total': 0
+        'runtools.track.operation': 'noop', 'runtools.track.completed': 0, 'runtools.track.total': 0
     }))
     op = tracker.to_status().operations[0]
     assert op.total == 0

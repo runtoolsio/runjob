@@ -81,60 +81,60 @@ def _parse_timestamp(value):
 
 
 def field_based_handler(output_line: OutputLine, tracker: 'StatusTracker') -> None:
-    """Process output lines with ``rt_``-prefixed tracking fields.
+    """Process output lines with ``runtools.track.``-prefixed tracking fields.
 
-    Recognized fields (all prefixed with ``rt_`` in both ``extra`` dict and KV output):
-        ``rt_operation`` — identifies a tracked operation.
-        ``rt_event`` — standalone status message.
-        ``rt_completed`` — progress count (prefix with ``+`` for increment).
-        ``rt_total`` — target count.
-        ``rt_unit`` — unit label.
-        ``rt_result`` — completion message (finishes operation or sets global result).
-        ``rt_failed`` — failure reason (finishes operation as failed).
-        ``rt_scope`` — qualifies operation with a target identifier.
-        ``rt_timestamp`` — ISO datetime override.
+    Recognized fields (all prefixed with ``runtools.track.`` in both ``extra`` dict and KV output):
+        ``runtools.track.operation`` — identifies a tracked operation.
+        ``runtools.track.event`` — standalone status message.
+        ``runtools.track.completed`` — progress count (prefix with ``+`` for increment).
+        ``runtools.track.total`` — target count.
+        ``runtools.track.unit`` — unit label.
+        ``runtools.track.result`` — completion message (finishes operation or sets global result).
+        ``runtools.track.failed`` — failure reason (finishes operation as failed).
+        ``runtools.track.scope`` — qualifies operation with a target identifier.
+        ``runtools.track.timestamp`` — ISO datetime override.
     """
     if not output_line.fields:
         return
 
     fields = output_line.fields
-    timestamp = _parse_timestamp(fields.get('rt_timestamp'))
+    timestamp = _parse_timestamp(fields.get('runtools.track.timestamp'))
 
-    completed_raw = str(fields['rt_completed']) if 'rt_completed' in fields else None
+    completed_raw = str(fields['runtools.track.completed']) if 'runtools.track.completed' in fields else None
     completed_increment = False
     if completed_raw is not None and completed_raw.startswith('+'):
         completed_increment = True
         completed_raw = completed_raw[1:]
     completed = convert_if_number(completed_raw)
 
-    total = convert_if_number(fields.get('rt_total'))
+    total = convert_if_number(fields.get('runtools.track.total'))
 
-    result = fields.get('rt_result')
-    scope = fields.get('rt_scope')
+    result = fields.get('runtools.track.result')
+    scope = fields.get('runtools.track.scope')
 
     source = output_line.source
 
-    if op_name := fields.get('rt_operation'):
+    if op_name := fields.get('runtools.track.operation'):
         op = tracker.operation(op_name, timestamp, source=source, scope=scope)
         if completed_increment and completed is not None:
             completed = (op.completed or 0) + completed
-        if completed is not None or total is not None or fields.get('rt_unit') is not None:
-            op.update(completed, total, fields.get('rt_unit'), timestamp)
-        if fail_reason := fields.get('rt_failed'):
+        if completed is not None or total is not None or fields.get('runtools.track.unit') is not None:
+            op.update(completed, total, fields.get('runtools.track.unit'), timestamp)
+        if fail_reason := fields.get('runtools.track.failed'):
             op.finish(fail_reason, timestamp, failed=True)
         elif result:
             op.finish(result, timestamp)
-    elif event := fields.get('rt_event'):
+    elif event := fields.get('runtools.track.event'):
         tracker.event(event, timestamp, source=source)
 
-    if result and not fields.get('rt_operation'):
+    if result and not fields.get('runtools.track.operation'):
         tracker.result(result, timestamp, source=source)
 
 
 class StatusTracker:
     """Output processor that extracts tracking fields and maintains status state.
 
-    As a processor in the output chain, returns None for tracking-only lines (empty message + rt_ fields)
+    As a processor in the output chain, returns None for tracking-only lines (empty message + runtools.track.* fields)
     to prevent them from reaching storage and output observers.
     """
 

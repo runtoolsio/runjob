@@ -2,7 +2,7 @@
 
 Provides ``StdLogOutputLink``, the default output link that bridges Python's stdlib logging
 to an OutputSink. It attaches a handler to the root logger for the duration of a job run,
-extracting ``rt_``-prefixed fields from LogRecord extras for status tracking.
+extracting ``runtools.track.``-prefixed fields from LogRecord extras for status tracking.
 
 Custom output links implement ``__call__(self, sink, *, capture_filter) -> ContextManager``.
 """
@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Callable, ContextManager, Optional, Protocol
 
+from runtools.runcore.output import TRACKING_PREFIX
 from runtools.runjob.output import OutputSink
 
 
@@ -25,7 +26,7 @@ class StdLogOutputLink:
     """Captures Python stdlib logging records and feeds them to an OutputSink.
 
     Extracts canonical envelope fields (timestamp, level, logger) from LogRecord.
-    Extracts ``rt_``-prefixed tracking fields and user extras into fields dict.
+    Extracts ``runtools.track.``-prefixed tracking fields and user extras into fields dict.
     """
 
     def __call__(self, sink: OutputSink, *, capture_filter: Callable):
@@ -49,8 +50,8 @@ class StdLogOutputLink:
         return cm()
 
 
-def _has_rt_keys(d) -> bool:
-    return any(k.startswith("rt_") for k in d)
+def _has_tracking_keys(d) -> bool:
+    return any(k.startswith(TRACKING_PREFIX) for k in d)
 
 
 def _dict_message(msg_dict: dict) -> str:
@@ -61,14 +62,14 @@ def _dict_message(msg_dict: dict) -> str:
 
 
 class _TrackingOnlyFilter(logging.Filter):
-    """Rejects log records that are tracking-only (empty message + rt_ fields)."""
+    """Rejects log records that are tracking-only (empty message + runtools.track.* fields)."""
 
     def filter(self, record):
         if isinstance(record.msg, dict):
             if not _dict_message(record.msg).strip():
-                return not _has_rt_keys(record.msg) and not _has_rt_keys(record.__dict__)
+                return not _has_tracking_keys(record.msg) and not _has_tracking_keys(record.__dict__)
         elif not record.getMessage().strip():
-            return not _has_rt_keys(record.__dict__)
+            return not _has_tracking_keys(record.__dict__)
         return True
 
 
@@ -130,7 +131,7 @@ class _SinkForwardingHandler(logging.Handler):
 
     @staticmethod
     def _extract_extra_fields(record) -> Optional[dict]:
-        """Extract rt_ tracking fields and user extras from LogRecord."""
+        """Extract runtools.track.* tracking fields and user extras from LogRecord."""
         extras = {
             k: v for k, v in record.__dict__.items()
             if k not in _BUILTIN_ATTRS and not k.startswith('_')

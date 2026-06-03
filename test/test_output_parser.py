@@ -104,10 +104,10 @@ def test_python_log_format():
 
 def test_kv_fallback():
     parser = OutputParser(kv_parser=KVParser())
-    line = OutputLine('rt_event=[downloading] rt_completed=[5]', 1)
+    line = OutputLine('runtools.track.event=[downloading] runtools.track.completed=[5]', 1)
     result = parser(line)
     assert result.message == ''
-    assert result.fields == {'rt_event': 'downloading', 'rt_completed': '5'}
+    assert result.fields == {'runtools.track.event': 'downloading', 'runtools.track.completed': '5'}
     assert result.is_tracking_only
 
 
