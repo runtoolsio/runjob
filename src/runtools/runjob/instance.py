@@ -207,7 +207,7 @@ class _JobInstance(JobInstance):
         """Finalize output persistence; record a fault on failure.
 
         Output persistence is end-of-run only — close() does the actual writes for any
-        flush-only storages (e.g., S3 buffer-and-PUT). A failure here means the run's
+        flush-only sinks (e.g., S3 buffer-and-PUT). A failure here means the run's
         output didn't make it to durable storage, which is a finalization fault that
         should surface to the caller and be recorded in history. termination_status
         on root_phase is unaffected — it reflects what the program actually did.

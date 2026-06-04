@@ -9,7 +9,7 @@ from runtools.runcore.test.observer import TestOutputObserver
 
 from runtools.runjob import instance
 from runtools.runjob.instance import OUTPUT_PERSISTENCE_ERROR
-from runtools.runjob.output import OutputRouter, OutputWriter
+from runtools.runjob.output import OutputRouter, OutputSink
 from runtools.runjob.process import ProcessPhase
 from runtools.runjob.test.phase import TestPhase
 
@@ -45,8 +45,8 @@ def test_last_output():
             "1 everyone in the world is doing something without me".split())
 
 
-class _FailingOnCloseWriter(OutputWriter):
-    """OutputWriter that accepts lines but fails its final close."""
+class _FailingOnCloseWriter(OutputSink):
+    """OutputSink that accepts lines but fails its final close."""
 
     def __init__(self):
         self._location = None
@@ -55,7 +55,7 @@ class _FailingOnCloseWriter(OutputWriter):
     def location(self):
         return self._location
 
-    def store_line(self, line):
+    def write_line(self, line):
         pass
 
     def close(self):
@@ -68,7 +68,7 @@ def test_output_persistence_failure_records_fault_and_propagates():
     on root_phase unchanged (it reflects what the program actually did).
     """
     phase = TestPhase()  # succeeds, terminates COMPLETED
-    router = OutputRouter(storages=[_FailingOnCloseWriter()])
+    router = OutputRouter(sinks=[_FailingOnCloseWriter()])
     inst = instance.create(iid('j1', 'i1'), None, phase, output_router=router)
 
     with pytest.raises(RuntimeError, match="simulated S3 PUT failure"):

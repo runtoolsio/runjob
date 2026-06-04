@@ -13,7 +13,7 @@ from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.util.dt import utc_now
 from runtools.runjob.output.s3 import (
     S3OutputStore,
-    S3OutputWriter,
+    S3OutputSink,
     create_store,
     META_CREATED_AT,
     META_ORDINAL,
@@ -37,36 +37,36 @@ def store(s3_client):
 
 
 def test_writer_location_uri_compressed_suffix(s3_client):
-    writer = S3OutputWriter(s3_client, BUCKET, "prod", iid("j", "r"),
+    writer = S3OutputSink(s3_client, BUCKET, "prod", iid("j", "r"),
                             created_at=utc_now(), compress=True)
     assert writer.location.uri == f"s3://{BUCKET}/prod/j/r__1.jsonl.gz"
     assert writer.location.uri.endswith(".jsonl.gz")
 
 
 def test_writer_location_uri_plain_suffix(s3_client):
-    writer = S3OutputWriter(s3_client, BUCKET, "prod", iid("j", "r"),
+    writer = S3OutputSink(s3_client, BUCKET, "prod", iid("j", "r"),
                             created_at=utc_now(), compress=False)
     assert writer.location.uri == f"s3://{BUCKET}/prod/j/r__1.jsonl"
     assert writer.location.uri.endswith(".jsonl")
     assert not writer.location.uri.endswith(".jsonl.gz")
 
 
-def test_create_writer_uses_compress_setting(store):
-    writer = store.create_writer(iid("myjob", "run1"), created_at=utc_now())
+def test_create_sink_uses_compress_setting(store):
+    writer = store.create_sink(iid("myjob", "run1"), created_at=utc_now())
     assert writer.location.uri.endswith(".jsonl.gz")  # store created with compress=True
 
 
-def test_create_writer_plain_when_compress_disabled(s3_client):
+def test_create_sink_plain_when_compress_disabled(s3_client):
     store = S3OutputStore(s3_client, BUCKET, prefix="prod", compress=False)
-    writer = store.create_writer(iid("myjob", "run1"), created_at=utc_now())
+    writer = store.create_sink(iid("myjob", "run1"), created_at=utc_now())
     assert writer.location.uri.endswith(".jsonl")
     assert not writer.location.uri.endswith(".jsonl.gz")
 
 
 def test_close_puts_object_with_canonical_created_at_metadata(s3_client, store):
     canonical = datetime(2026, 4, 28, 12, 0, 0, tzinfo=timezone.utc)
-    writer = store.create_writer(iid("myjob", "run1"), created_at=canonical)
-    writer.store_line(OutputLine("hello", 1, source="EXEC"))
+    writer = store.create_sink(iid("myjob", "run1"), created_at=canonical)
+    writer.write_line(OutputLine("hello", 1, source="EXEC"))
     writer.close()
 
     head = s3_client.head_object(Bucket=BUCKET, Key="prod/myjob/run1__1.jsonl.gz")
@@ -80,9 +80,9 @@ def test_close_puts_object_with_canonical_created_at_metadata(s3_client, store):
 
 
 def test_close_writes_decodable_jsonl(s3_client, store):
-    writer = store.create_writer(iid("myjob", "run1"), created_at=utc_now())
-    writer.store_line(OutputLine("a", 1, source="EXEC"))
-    writer.store_line(OutputLine("b", 2, source="EXEC"))
+    writer = store.create_sink(iid("myjob", "run1"), created_at=utc_now())
+    writer.write_line(OutputLine("a", 1, source="EXEC"))
+    writer.write_line(OutputLine("b", 2, source="EXEC"))
     writer.close()
 
     obj = s3_client.get_object(Bucket=BUCKET, Key="prod/myjob/run1__1.jsonl.gz")
@@ -97,8 +97,8 @@ def test_close_does_not_mark_closed_when_upload_fails(s3_client, store):
     Marking _closed=True before a successful PUT would strand the buffered
     output — a retry of close() would silently no-op.
     """
-    writer = store.create_writer(iid("myjob", "run1"), created_at=utc_now())
-    writer.store_line(OutputLine("hello", 1, source="EXEC"))
+    writer = store.create_sink(iid("myjob", "run1"), created_at=utc_now())
+    writer.write_line(OutputLine("hello", 1, source="EXEC"))
 
     from unittest.mock import patch
     from botocore.exceptions import ClientError
@@ -125,8 +125,8 @@ def test_close_logs_and_reraises_botocore_transport_errors(s3_client, store, cap
     from unittest.mock import patch
     from botocore.exceptions import EndpointConnectionError
 
-    writer = store.create_writer(iid("myjob", "run1"), created_at=utc_now())
-    writer.store_line(OutputLine("hello", 1))
+    writer = store.create_sink(iid("myjob", "run1"), created_at=utc_now())
+    writer.write_line(OutputLine("hello", 1))
 
     err = EndpointConnectionError(endpoint_url="https://s3.example/")
     with patch.object(s3_client, "put_object", side_effect=err):
@@ -139,8 +139,8 @@ def test_close_logs_and_reraises_botocore_transport_errors(s3_client, store, cap
 
 
 def test_close_is_idempotent(s3_client, store):
-    writer = store.create_writer(iid("myjob", "run1"), created_at=utc_now())
-    writer.store_line(OutputLine("once", 1))
+    writer = store.create_sink(iid("myjob", "run1"), created_at=utc_now())
+    writer.write_line(OutputLine("once", 1))
     writer.close()
     writer.close()  # Should not raise or duplicate
 
@@ -152,10 +152,10 @@ def test_close_is_idempotent(s3_client, store):
 
 
 def test_roundtrip_via_backend(s3_client, store):
-    writer = store.create_writer(iid("myjob", "run1"), created_at=utc_now())
-    writer.store_line(OutputLine("hello", 1, source="EXEC", level="INFO",
+    writer = store.create_sink(iid("myjob", "run1"), created_at=utc_now())
+    writer.write_line(OutputLine("hello", 1, source="EXEC", level="INFO",
                                  fields={"foo": "bar"}))
-    writer.store_line(OutputLine("world", 2, source="EXEC"))
+    writer.write_line(OutputLine("world", 2, source="EXEC"))
     writer.close()
 
     # Use the store itself as the backend (it inherits from S3OutputBackend)
@@ -176,8 +176,8 @@ def test_retention_sorts_by_metadata_not_lastmodified(s3_client, store):
         ("run1", base),                       # oldest created_at, but PUT last
     ]
     for run_id, created_at in runs:
-        writer = store.create_writer(iid("myjob", run_id), created_at=created_at)
-        writer.store_line(OutputLine(run_id, 1))
+        writer = store.create_sink(iid("myjob", run_id), created_at=created_at)
+        writer.write_line(OutputLine(run_id, 1))
         writer.close()
 
     # Keep only the 2 newest by created_at: run3 and run2
@@ -202,8 +202,8 @@ def test_retention_sort_key_returns_numeric_epoch(s3_client, store):
     """
     # Tagged object: metadata uses ...Z format
     canonical = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-    writer = store.create_writer(iid("myjob", "tagged"), created_at=canonical)
-    writer.store_line(OutputLine("x", 1))
+    writer = store.create_sink(iid("myjob", "tagged"), created_at=canonical)
+    writer.write_line(OutputLine("x", 1))
     writer.close()
 
     # Fallback object: no metadata, sort falls back to LastModified (...+00:00)
@@ -247,8 +247,8 @@ def test_retention_falls_back_to_lastmodified_without_metadata(s3_client, store)
 
 
 def test_retention_noop_under_limit(s3_client, store):
-    writer = store.create_writer(iid("myjob", "run1"), created_at=utc_now())
-    writer.store_line(OutputLine("x", 1))
+    writer = store.create_sink(iid("myjob", "run1"), created_at=utc_now())
+    writer.write_line(OutputLine("x", 1))
     writer.close()
 
     store.enforce_retention("myjob", RetentionPolicy(max_runs_per_job=10, max_runs_per_env=-1))
@@ -263,9 +263,9 @@ def test_retention_with_empty_prefix(s3_client):
     store = S3OutputStore(s3_client, BUCKET, prefix="", compress=True)
     base = datetime(2026, 1, 1, tzinfo=timezone.utc)
     for i, run_id in enumerate(["a", "b", "c"]):
-        writer = store.create_writer(iid("rootjob", run_id),
+        writer = store.create_sink(iid("rootjob", run_id),
                                      created_at=base + timedelta(days=i))
-        writer.store_line(OutputLine("x", 1))
+        writer.write_line(OutputLine("x", 1))
         writer.close()
 
     store.enforce_retention("rootjob", RetentionPolicy(max_runs_per_job=1, max_runs_per_env=-1))
@@ -280,8 +280,8 @@ def test_retention_swallows_botocore_transport_errors(s3_client, store):
     list/delete must be logged and swallowed — same as ClientError — so background
     maintenance never crashes the calling scheduler.
     """
-    writer = store.create_writer(iid("myjob", "run1"), created_at=utc_now())
-    writer.store_line(OutputLine("x", 1))
+    writer = store.create_sink(iid("myjob", "run1"), created_at=utc_now())
+    writer.write_line(OutputLine("x", 1))
     writer.close()
 
     from unittest.mock import patch
@@ -304,7 +304,7 @@ def test_create_store_factory(s3_client):
 
 
 def test_canonical_created_at_propagates_to_metadata(s3_client, store):
-    """The exact value passed via create_writer() ends up in S3 metadata.
+    """The exact value passed via create_sink() ends up in S3 metadata.
 
     This locks in the contract that S3 metadata reflects the caller-provided
     ``created_at`` (typically root_phase.created_at), not a writer-internal
@@ -313,8 +313,8 @@ def test_canonical_created_at_propagates_to_metadata(s3_client, store):
     """
     # An odd, non-now timestamp guarantees we're not just matching utc_now()
     canonical = datetime(2024, 7, 15, 9, 30, 45, 123000, tzinfo=timezone.utc)
-    writer = store.create_writer(iid("myjob", "run1"), created_at=canonical)
-    writer.store_line(OutputLine("x", 1))
+    writer = store.create_sink(iid("myjob", "run1"), created_at=canonical)
+    writer.write_line(OutputLine("x", 1))
     writer.close()
 
     head = s3_client.head_object(Bucket=BUCKET, Key="prod/myjob/run1__1.jsonl.gz")

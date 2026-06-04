@@ -3,7 +3,8 @@ Output processing, routing, and storage for job execution.
 
 Key Components:
     OutputPipeline: Receives output lines, runs processors, dispatches to observers.
-    OutputRouter: Routes to tail buffer + disk/batch storages.
+    OutputRouter: Routes to a tail buffer + a set of OutputSinks (real-time or batched).
+    OutputSink: ABC for streaming write destinations (file, S3) attached to a router.
     OutputStore: ABC extending OutputBackend with write + retention.
     OutputParser: Smart output parser (JSON → text log → KV → plain).
 
@@ -473,7 +474,7 @@ class InMemoryTailBuffer(TailBuffer):
                 assert False, f"Unhandled mode: {mode}"
 
 
-class OutputWriter(ABC):
+class OutputSink(ABC):
 
     @property
     @abstractmethod
@@ -481,14 +482,14 @@ class OutputWriter(ABC):
         pass
 
     @abstractmethod
-    def store_line(self, line: OutputLine):
+    def write_line(self, line: OutputLine):
         """Store a single output line. Optional for flush-only storages."""
         pass
 
-    def store_lines(self, lines: List[OutputLine]):
-        """Optional bulk insert method. Default: loop over store_line."""
+    def write_lines(self, lines: List[OutputLine]):
+        """Optional bulk insert method. Default: loop over write_line."""
         for line in lines:
-            self.store_line(line)
+            self.write_line(line)
 
     @property
     def batch_size(self) -> Optional[int]:
@@ -500,14 +501,14 @@ class OutputWriter(ABC):
 
 
 class OutputRouter(OutputObserver, Output):
-    """Routes OutputLine instances to multiple storages and an optional tail buffer."""
+    """Routes OutputLine instances to multiple sinks and an optional tail buffer."""
 
-    def __init__(self, *, tail_buffer=None, storages=(), max_batch: int = 100):
+    def __init__(self, *, tail_buffer=None, sinks=(), max_batch: int = 100):
         super().__init__()
         self.tail_buffer = tail_buffer
-        self.storages = list(storages)
-        self.realtime_storages: List[OutputWriter] = [s for s in self.storages if not s.batch_size]
-        self.batch_storages: List[OutputWriter] = [s for s in self.storages if s.batch_size]
+        self.sinks = list(sinks)
+        self.realtime_sinks: List[OutputSink] = [s for s in self.sinks if not s.batch_size]
+        self.batch_sinks: List[OutputSink] = [s for s in self.sinks if s.batch_size]
         self.max_batch = max_batch
         self._batch_lock = Lock()
         self._batch_buffer: List[OutputLine] = []
@@ -530,21 +531,21 @@ class OutputRouter(OutputObserver, Output):
 
     @property
     def locations(self):
-        return [storage.location for storage in self.storages]
+        return [sink.location for sink in self.sinks]
 
     def new_output(self, output_line: OutputLine):
         if self.tail_buffer:
             self.tail_buffer.add_line(output_line)
 
-        for storage in self.realtime_storages:
-            storage.store_line(output_line)
+        for sink in self.realtime_sinks:
+            sink.write_line(output_line)
 
-        if self.batch_storages:
+        if self.batch_sinks:
             with self._batch_lock:
                 self._batch_buffer.append(output_line)
             if (
                     len(self._batch_buffer) >= self.max_batch
-                    or any(len(self._batch_buffer) >= s.batch_size for s in self.batch_storages)
+                    or any(len(self._batch_buffer) >= s.batch_size for s in self.batch_sinks)
             ):
                 self._flush_batch_buffer()
 
@@ -553,11 +554,11 @@ class OutputRouter(OutputObserver, Output):
             lines_to_flush, self._batch_buffer = self._batch_buffer, []
         if not lines_to_flush:
             return
-        for storage in self.batch_storages:
-            batch_sz = storage.batch_size or len(lines_to_flush)
+        for sink in self.batch_sinks:
+            batch_sz = sink.batch_size or len(lines_to_flush)
             for i in range(0, len(lines_to_flush), batch_sz):
                 chunk = lines_to_flush[i: i + batch_sz]
-                storage.store_lines(chunk)
+                sink.write_lines(chunk)
 
     def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
         if not self.tail_buffer:
@@ -567,15 +568,15 @@ class OutputRouter(OutputObserver, Output):
     def close(self):
         if self._batch_buffer:
             self._flush_batch_buffer()
-        for storage in self.storages:
-            storage.close()
+        for sink in self.sinks:
+            sink.close()
 
 
 class OutputStore(OutputBackend, ABC):
     """Extends OutputBackend with write and retention capabilities."""
 
     @abstractmethod
-    def create_writer(self, instance_id: InstanceID, *, created_at: datetime) -> OutputWriter:
+    def create_sink(self, instance_id: InstanceID, *, created_at: datetime) -> OutputSink:
         """Create a per-instance writer for storing output lines.
 
         Args:

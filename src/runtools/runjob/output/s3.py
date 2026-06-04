@@ -28,7 +28,7 @@ from runtools.runcore.output.s3 import (
     parse_s3_config,
 )
 from runtools.runcore.retention import RetentionPolicy
-from runtools.runjob.output import OutputStore, OutputWriter
+from runtools.runjob.output import OutputStore, OutputSink
 
 try:
     from botocore.exceptions import BotoCoreError, ClientError
@@ -45,7 +45,7 @@ META_ORDINAL = "runtools-ordinal"
 _DELETE_BATCH_MAX = 1000
 
 
-class S3OutputWriter(OutputWriter):
+class S3OutputSink(OutputSink):
     """Buffers OutputLines in memory, flushes to S3 as a single object on close."""
 
     def __init__(self, client, bucket: str, prefix: str, instance_id: InstanceID, *,
@@ -79,10 +79,10 @@ class S3OutputWriter(OutputWriter):
     def location(self):
         return OutputLocation.for_s3(self._bucket, self._key)
 
-    def store_line(self, line: OutputLine):
+    def write_line(self, line: OutputLine):
         self._buffer.append(line)
 
-    def store_lines(self, lines: List[OutputLine]):
+    def write_lines(self, lines: List[OutputLine]):
         self._buffer.extend(lines)
 
     def close(self):
@@ -125,9 +125,9 @@ class S3OutputStore(S3OutputBackend, OutputStore):
         super().__init__(client, bucket, prefix)
         self._compress = compress
 
-    def create_writer(self, instance_id: InstanceID, *,
-                      created_at: datetime) -> S3OutputWriter:
-        return S3OutputWriter(
+    def create_sink(self, instance_id: InstanceID, *,
+                      created_at: datetime) -> S3OutputSink:
+        return S3OutputSink(
             self._client, self._bucket, self._prefix, instance_id,
             created_at=created_at, compress=self._compress,
         )

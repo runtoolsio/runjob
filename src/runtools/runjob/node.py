@@ -211,10 +211,10 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             auto_increment=(duplicate_strategy != DuplicateStrategy.RAISE))
         job_instance = None
         try:
-            writers = [store.create_writer(instance_id, created_at=created_at)
+            writers = [store.create_sink(instance_id, created_at=created_at)
                        for store in self._output_stores]
             tail_buffer = InMemoryTailBuffer(max_bytes=self._tail_buffer_size) if self._tail_buffer_size else None
-            output_router = OutputRouter(tail_buffer=tail_buffer, storages=writers)
+            output_router = OutputRouter(tail_buffer=tail_buffer, sinks=writers)
             create_kwargs = dict(
                 output_router=output_router,
                 output_processors=output_processors,

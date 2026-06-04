@@ -10,7 +10,7 @@ from runtools.runcore.output import OutputLine
 from runtools.runcore.output.file import SourceIndex
 from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.util.dt import utc_now
-from runtools.runjob.output.file import FileOutputStore, FileOutputWriter
+from runtools.runjob.output.file import FileOutputStore, FileOutputSink
 
 
 @pytest.fixture
@@ -23,8 +23,8 @@ def _touch(path: Path, content=""):
     path.write_text(content)
 
 
-def test_create_writer(store, tmp_path):
-    writer = store.create_writer(iid('myjob', 'run1'), created_at=utc_now())
+def test_create_sink(store, tmp_path):
+    writer = store.create_sink(iid('myjob', 'run1'), created_at=utc_now())
     assert writer.file_path == tmp_path / 'myjob' / 'run1__1.jsonl'
 
 
@@ -68,15 +68,15 @@ def test_enforce_retention_deletes_index_files(store, tmp_path):
     assert remaining == ['run2.jsonl', 'run2.jsonl.idx']
 
 
-# --- FileOutputWriter ---
+# --- FileOutputSink ---
 
-class TestFileOutputWriter:
+class TestFileOutputSink:
 
     def test_writes_jsonl_and_creates_index(self, tmp_path):
         path = tmp_path / "out.jsonl"
-        writer = FileOutputWriter(str(path), compress=False)
-        writer.store_line(OutputLine("line1", 1, source="EXEC"))
-        writer.store_line(OutputLine("line2", 2, source="EXEC"))
+        writer = FileOutputSink(str(path), compress=False)
+        writer.write_line(OutputLine("line1", 1, source="EXEC"))
+        writer.write_line(OutputLine("line2", 2, source="EXEC"))
         writer.close()
 
         with open(path) as f:
@@ -89,9 +89,9 @@ class TestFileOutputWriter:
 
     def test_compression(self, tmp_path):
         path = tmp_path / "out.jsonl"
-        writer = FileOutputWriter(str(path), compress=True)
-        writer.store_line(OutputLine("line1", 1, source="EXEC"))
-        writer.store_line(OutputLine("line2", 2, source="EXEC"))
+        writer = FileOutputSink(str(path), compress=True)
+        writer.write_line(OutputLine("line1", 1, source="EXEC"))
+        writer.write_line(OutputLine("line2", 2, source="EXEC"))
         writer.close()
 
         assert not path.exists()
@@ -102,16 +102,16 @@ class TestFileOutputWriter:
 
     def test_no_index_when_no_sources(self, tmp_path):
         path = tmp_path / "out.jsonl"
-        writer = FileOutputWriter(str(path), compress=False)
-        writer.store_line(OutputLine("line1", 1))  # source=None
+        writer = FileOutputSink(str(path), compress=False)
+        writer.write_line(OutputLine("line1", 1))  # source=None
         writer.close()
 
         assert not SourceIndex.path_for(path).exists()
 
     def test_close_still_closes_file_on_index_save_failure(self, tmp_path):
         path = tmp_path / "out.jsonl"
-        writer = FileOutputWriter(str(path))
-        writer.store_line(OutputLine("line1", 1, source="X"))
+        writer = FileOutputSink(str(path))
+        writer.write_line(OutputLine("line1", 1, source="X"))
 
         with patch.object(SourceIndex, 'save', side_effect=OSError("disk full")):
             with pytest.raises(OSError):
@@ -121,7 +121,7 @@ class TestFileOutputWriter:
 
     def test_close_is_idempotent(self, tmp_path):
         path = tmp_path / "out.jsonl"
-        writer = FileOutputWriter(str(path))
-        writer.store_line(OutputLine("line1", 1))
+        writer = FileOutputSink(str(path))
+        writer.write_line(OutputLine("line1", 1))
         writer.close()
         writer.close()  # Should not raise

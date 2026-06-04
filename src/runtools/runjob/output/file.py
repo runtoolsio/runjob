@@ -16,7 +16,7 @@ from runtools.runcore.job import InstanceID
 from runtools.runcore.output import OutputLine, OutputLocation, OutputStorageConfig
 from runtools.runcore.output.file import FileOutputBackend, SourceIndex, SourceIndexBuilder, _parse_file_config, _resolve_base_dir
 from runtools.runcore.retention import RetentionPolicy
-from runtools.runjob.output import OutputWriter, OutputStore
+from runtools.runjob.output import OutputSink, OutputStore
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ def _gz_path(jsonl_path: Path) -> Path:
     return jsonl_path.with_suffix(jsonl_path.suffix + '.gz')
 
 
-class FileOutputWriter(OutputWriter):
+class FileOutputSink(OutputSink):
 
     def __init__(self, file_path: str, append: bool = False, encoding: str = "utf-8", compress: bool = True):
         self.file_path = Path(file_path)
@@ -41,11 +41,11 @@ class FileOutputWriter(OutputWriter):
     def location(self):
         return OutputLocation.for_file(self.file_path)
 
-    def store_line(self, line: OutputLine):
+    def write_line(self, line: OutputLine):
         self._write_line(line)
         self._file.flush()
 
-    def store_lines(self, lines: List[OutputLine]):
+    def write_lines(self, lines: List[OutputLine]):
         for line in lines:
             self._write_line(line)
         self._file.flush()
@@ -83,11 +83,11 @@ class FileOutputStore(FileOutputBackend, OutputStore):
         super().__init__(base_dir)
         self._compress = compress
 
-    def create_writer(self, instance_id: InstanceID, *, created_at: datetime) -> FileOutputWriter:
+    def create_sink(self, instance_id: InstanceID, *, created_at: datetime) -> FileOutputSink:
         del created_at  # file backend uses filesystem mtime for retention
         path = self._output_path(instance_id)
         os.makedirs(path.parent, exist_ok=True)
-        return FileOutputWriter(str(path), compress=self._compress)
+        return FileOutputSink(str(path), compress=self._compress)
 
     def enforce_retention(self, job_id: str, policy: RetentionPolicy):
         job_dir = self._base_dir / job_id
