@@ -5,14 +5,14 @@ from runtools.runcore.err import InvalidStateError
 
 from runtools.runcore.run import TerminationStatus, control_api
 from runtools.runjob.instance import JobInstanceContext
-from runtools.runjob.output import OutputSink, OutputContext
+from runtools.runjob.output import OutputPipeline, OutputContext
 from runtools.runjob.phase import BasePhase, PhaseTerminated
 
 
-class FakeContext(OutputContext, OutputSink):
+class FakeContext(OutputContext, OutputPipeline):
 
     @property
-    def output_sink(self):
+    def output_pipeline(self):
         return self
 
     def _process_output(self, output_line):
@@ -59,7 +59,7 @@ class TestPhase(BasePhase[JobInstanceContext]):
             self.wait.wait(2)
 
         if ctx and self.output_text and isinstance(ctx, OutputContext):
-            ctx.output_sink.new_output(self.output_text)
+            ctx.output_pipeline.new_output(self.output_text)
 
         if self.exception:
             raise self.exception

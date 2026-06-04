@@ -2,7 +2,7 @@
 Output processing, routing, and storage for job execution.
 
 Key Components:
-    OutputSink: Receives output lines, runs processors, dispatches to observers.
+    OutputPipeline: Receives output lines, runs processors, dispatches to observers.
     OutputRouter: Routes to tail buffer + disk/batch storages.
     OutputStore: ABC extending OutputBackend with write + retention.
     OutputParser: Smart output parser (JSON → text log → KV → plain).
@@ -273,7 +273,7 @@ class OutputParser:
     """Smart output parser: JSON → text log pattern → KV → plain.
 
     Extracts envelope fields (timestamp, level, logger, thread) into OutputLine attributes
-    and application data into fields. Skips lines already parsed (e.g. from StdLogOutputLink).
+    and application data into fields. Skips lines already parsed (e.g. from StdLogOutputCapture).
     """
 
     def __init__(self, kv_parser=None):
@@ -366,7 +366,7 @@ class OutputParser:
         return replace(output_line, **kwargs) if kwargs else output_line
 
 
-class OutputSink:
+class OutputPipeline:
     """Receives output lines, runs them through a processor chain, and dispatches to observers.
 
     Processors are called in order. If any returns None, the line is dropped and observers are not notified.
@@ -414,7 +414,7 @@ class OutputContext(ABC):
 
     @property
     @abstractmethod
-    def output_sink(self) -> OutputSink:
+    def output_pipeline(self) -> OutputPipeline:
         pass
 
 

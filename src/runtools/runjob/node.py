@@ -177,7 +177,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             raise
 
     def create_instance(self, job_id, run_id=None, root_phase=None, *, duplicate_strategy=DuplicateStrategy.RAISE,
-                        output_processors=(), output_link=None, status_tracker=None,
+                        output_processors=(), output_capture=None, status_tracker=None,
                         user_params=None, tags=()) -> JobInstanceManaged:
         """
         Create a new job instance within this environment.
@@ -188,7 +188,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             root_phase: Root phase of the job instance.
             duplicate_strategy: How to handle duplicates. Defaults to RAISE.
             output_processors (Sequence[OutputProcessor]): Processors for the output chain.
-            output_link: Callable for capturing external output (e.g., log_capture). None to disable.
+            output_capture: Callable for capturing external output (e.g., log_capture). None to disable.
             status_tracker: Optional status tracker for the job.
             user_params: Optional user-defined parameters.
             tags: User-set labels for grouping/filtering. Normalized at the
@@ -223,8 +223,8 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
                 tags=normalized_tags,
                 **(user_params or {})
             )
-            if output_link is not None:
-                create_kwargs['output_link'] = output_link
+            if output_capture is not None:
+                create_kwargs['output_capture'] = output_capture
             inst = instance.create(instance_id, self, root_phase, **create_kwargs)
 
             with self._lock:

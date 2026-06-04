@@ -1,10 +1,10 @@
 """Output capture for Python logging.
 
-Provides ``StdLogOutputLink``, the default output link that bridges Python's stdlib logging
-to an OutputSink. It attaches a handler to the root logger for the duration of a job run,
+Provides ``StdLogOutputCapture``, the default output link that bridges Python's stdlib logging
+to an OutputPipeline. It attaches a handler to the root logger for the duration of a job run,
 extracting ``runtools.track.``-prefixed fields from LogRecord extras for status tracking.
 
-Custom output links implement ``__call__(self, sink, *, capture_filter) -> ContextManager``.
+Custom captures implement ``__call__(self, pipeline, *, capture_filter) -> ContextManager``.
 """
 
 import logging
@@ -13,33 +13,33 @@ from datetime import datetime, timezone
 from typing import Callable, ContextManager, Optional, Protocol
 
 from runtools.runcore.output import TRACKING_PREFIX
-from runtools.runjob.output import OutputSink
+from runtools.runjob.output import OutputPipeline
 
 
-class OutputLink(Protocol):
-    """Protocol for output capture callables that bridge external sources to an OutputSink."""
+class OutputCapture(Protocol):
+    """Protocol for output capture callables that bridge external sources to an OutputPipeline."""
 
-    def __call__(self, sink: OutputSink, *, capture_filter: Callable[[], bool]) -> ContextManager: ...
+    def __call__(self, pipeline: OutputPipeline, *, capture_filter: Callable[[], bool]) -> ContextManager: ...
 
 
-class StdLogOutputLink:
-    """Captures Python stdlib logging records and feeds them to an OutputSink.
+class StdLogOutputCapture:
+    """Captures Python stdlib logging records and feeds them to an OutputPipeline.
 
     Extracts canonical envelope fields (timestamp, level, logger) from LogRecord.
     Extracts ``runtools.track.``-prefixed tracking fields and user extras into fields dict.
     """
 
-    def __call__(self, sink: OutputSink, *, capture_filter: Callable):
+    def __call__(self, pipeline: OutputPipeline, *, capture_filter: Callable):
         @contextmanager
         def cm():
             root_logger = logging.getLogger()
             # Suppress tracking-only records from existing handlers (console, file, etc.)
-            tracking_filter = _TrackingOnlyFilter()
+            tracking_filter = _DropTrackingOnlyFilter()
             existing_handlers = list(root_logger.handlers)
             for h in existing_handlers:
                 h.addFilter(tracking_filter)
             # Add capture handler (without the filter — it sees everything)
-            handler = _SinkForwardingHandler(sink, capture_filter)
+            handler = _PipelineForwardingHandler(pipeline, capture_filter)
             root_logger.addHandler(handler)
             try:
                 yield
@@ -61,7 +61,7 @@ def _dict_message(msg_dict: dict) -> str:
     return str(msg) if msg is not None else ""
 
 
-class _TrackingOnlyFilter(logging.Filter):
+class _DropTrackingOnlyFilter(logging.Filter):
     """Rejects log records that are tracking-only (empty message + runtools.track.* fields)."""
 
     def filter(self, record):
@@ -87,12 +87,12 @@ _BUILTIN_ATTRS = frozenset({
 _DICT_MESSAGE_KEYS = frozenset({"message", "msg"})
 
 
-class _SinkForwardingHandler(logging.Handler):
-    """Forwards log records to an OutputSink, extracting structured fields."""
+class _PipelineForwardingHandler(logging.Handler):
+    """Forwards log records to an OutputPipeline, extracting structured fields."""
 
-    def __init__(self, sink: OutputSink, capture_filter: Callable):
+    def __init__(self, pipeline: OutputPipeline, capture_filter: Callable):
         super().__init__()
-        self._sink = sink
+        self._pipeline = pipeline
         self._capture_filter = capture_filter
 
     def emit(self, record):
@@ -110,7 +110,7 @@ class _SinkForwardingHandler(logging.Handler):
             message = record.getMessage()
             fields = self._extract_extra_fields(record)
 
-        self._sink.new_output(message, is_error,
+        self._pipeline.new_output(message, is_error,
                               timestamp=timestamp, level=level, logger=logger_name, thread=thread_name, fields=fields)
 
     @staticmethod

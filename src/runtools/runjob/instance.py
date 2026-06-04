@@ -22,8 +22,8 @@ from runtools.runcore.job import (JobInstance, JobRun, JobInstanceMetadata, Inst
                                   InstanceLifecycleEvent, InstanceControlEvent, ControlAction, InstanceStatusEvent)
 from runtools.runcore.run import Fault, PhaseTransitionEvent, JobCompletionError, Stage, StopReason
 from runtools.runcore.util import utc_now
-from runtools.runjob.capture import StdLogOutputLink
-from runtools.runjob.output import OutputContext, OutputSink, InMemoryTailBuffer, OutputRouter
+from runtools.runjob.capture import StdLogOutputCapture
+from runtools.runjob.output import OutputContext, OutputPipeline, InMemoryTailBuffer, OutputRouter
 from runtools.runjob.phase import Phase
 from runtools.runjob.track import StatusTracker
 
@@ -43,11 +43,11 @@ current_job_instance: ContextVar[Optional[JobInstanceMetadata]] = ContextVar('cu
 
 class JobInstanceContext(OutputContext):
 
-    def __init__(self, metadata, environment, tracker, output_sink):
+    def __init__(self, metadata, environment, tracker, output_pipeline):
         self._metadata = metadata
         self._environment = environment
         self._tracker = tracker
-        self._output_sink = output_sink
+        self._output_pipeline = output_pipeline
 
     @property
     def metadata(self) -> JobInstanceMetadata:
@@ -62,12 +62,12 @@ class JobInstanceContext(OutputContext):
         return self._tracker
 
     @property
-    def output_sink(self) -> OutputSink:
-        return self._output_sink
+    def output_pipeline(self) -> OutputPipeline:
+        return self._output_pipeline
 
 
 def create(instance_id, environment, root_phase, *,
-           tail_buffer_size=2 * 1024 * 1024, output_router=None, output_processors=(), output_link=_UNSET,
+           tail_buffer_size=2 * 1024 * 1024, output_router=None, output_processors=(), output_capture=_UNSET,
            status_tracker=None,
            error_hook=None,
            features=(),
@@ -85,8 +85,8 @@ def create(instance_id, environment, root_phase, *,
             node; defaults to tail-only router for direct usage.
         tail_buffer_size: Max bytes for the default tail buffer (default 2 MB). Ignored if output_router is provided.
         status_tracker: Custom status tracker (created automatically if not provided).
-        output_link: Callable for capturing external output. Defaults to StdLogOutputLink (Python logging).
-            Pass None to disable. Custom: any callable with signature (sink, *, capture_filter) -> ContextManager.
+        output_capture: Callable for capturing external output. Defaults to StdLogOutputCapture (Python logging).
+            Pass None to disable. Custom: any callable with signature (pipeline, *, capture_filter) -> ContextManager.
         error_hook: Error handler for observer errors.
         features: Names of active features/plugins applied to this instance.
         tags: User-set labels for grouping/filtering, normalized at the
@@ -95,14 +95,14 @@ def create(instance_id, environment, root_phase, *,
     """
     if not instance_id:
         raise ValueError("Instance ID is mandatory")
-    if output_link is _UNSET:
-        output_link = StdLogOutputLink()
+    if output_capture is _UNSET:
+        output_capture = StdLogOutputCapture()
     if output_router is None:
         tail_buffer = InMemoryTailBuffer(max_bytes=tail_buffer_size) if tail_buffer_size else None
         output_router = OutputRouter(tail_buffer=tail_buffer)
 
     inst = _JobInstance(instance_id, root_phase, environment,
-                        output_router, output_processors, output_link,
+                        output_router, output_processors, output_capture,
                         status_tracker, error_hook, user_params, features,
                         tags=tags)
     # noinspection PyProtectedMember
@@ -113,16 +113,16 @@ def create(instance_id, environment, root_phase, *,
 class _JobInstance(JobInstance):
 
     def __init__(self, instance_id, root_phase, env,
-                 output_router, output_processors, output_link,
+                 output_router, output_processors, output_capture,
                  status_tracker, error_hook, user_params, features=(), *, tags=()):
         status_tracker = status_tracker or StatusTracker()
         self._notifications = InstanceObservableNotifications(error_hook=error_hook, force_reraise=True)
         self._metadata = JobInstanceMetadata(instance_id, user_params, tuple(features), tuple(tags))
         self._root_phase: Phase = root_phase
-        self._output_sink = OutputSink((*output_processors, status_tracker))
+        self._output_pipeline = OutputPipeline((*output_processors, status_tracker))
         self._output_router = output_router
-        self._output_link = output_link
-        self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output_sink)
+        self._output_capture = output_capture
+        self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output_pipeline)
         self._faults: List[Fault] = []
 
     def _activate(self):
@@ -198,8 +198,8 @@ class _JobInstance(JobInstance):
     def run(self):
         with self._instance_scope():
             try:
-                with self._output_sink.observer_context(self._process_output, self._output_router):
-                    return self._run_with_output_link()
+                with self._output_pipeline.observer_context(self._process_output, self._output_router):
+                    return self._run_with_output_capture()
             finally:
                 self._close_output_router()
 
@@ -218,13 +218,13 @@ class _JobInstance(JobInstance):
             self._faults.append(Fault.from_exception(OUTPUT_PERSISTENCE_ERROR, e))
             raise
 
-    def _run_with_output_link(self):
-        if self._output_link:
+    def _run_with_output_capture(self):
+        if self._output_capture:
             def capture_filter():
                 current = current_job_instance.get(None)
                 return current is not None and current.instance_id == self.id
 
-            with self._output_link(self._output_sink, capture_filter=capture_filter):
+            with self._output_capture(self._output_pipeline, capture_filter=capture_filter):
                 return self._execute()
         return self._execute()
 

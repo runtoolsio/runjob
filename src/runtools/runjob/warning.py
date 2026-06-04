@@ -153,7 +153,7 @@ class OutputWarningExtension(PhaseDecorator[C], Generic[C]):
                     log.warning("Output warning match", extra={"pattern": pattern.pattern, "line": output_line.message})
                     ctx.tracker.warning(warning_text)
 
-        with ctx.output_sink.observer_context(pattern_output_observer):
+        with ctx.output_pipeline.observer_context(pattern_output_observer):
             return super().run(ctx)
 
 

@@ -38,7 +38,7 @@ class ProcessPhase(BasePhase[OutputContext]):
 
             try:
                 self._process.start()
-                self._read_output(ctx.output_sink)
+                self._read_output(ctx.output_pipeline)
                 self._process.join(timeout=2)  # Just in case as it should be completed at this point
             finally:
                 self.output_queue.close()
@@ -91,13 +91,13 @@ class ProcessPhase(BasePhase[OutputContext]):
         if self._process:
             self._process.terminate()
 
-    def _read_output(self, output_sink):
+    def _read_output(self, output_pipeline):
         while True:
             try:
                 output_text, is_err = self.output_queue.get(timeout=2)
                 if isinstance(output_text, _QueueStop):
                     break
-                output_sink.new_output(output_text, is_err)
+                output_pipeline.new_output(output_text, is_err)
             except Empty:
                 if not self._process.is_alive():
                     break
