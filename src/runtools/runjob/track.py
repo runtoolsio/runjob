@@ -3,7 +3,7 @@ from typing import Optional, List, Callable
 
 from runtools.runcore import util
 from runtools.runcore.output import OutputLine
-from runtools.runcore.status import Event, Operation, Status
+from runtools.runcore.status import Event, Operation, Result, Status
 from runtools.runcore.util import convert_if_number
 
 OutputHandler = Callable[[OutputLine, 'StatusTracker'], None]
@@ -89,8 +89,10 @@ def field_based_handler(output_line: OutputLine, tracker: 'StatusTracker') -> No
         ``runtools.track.completed`` — progress count (prefix with ``+`` for increment).
         ``runtools.track.total`` — target count.
         ``runtools.track.unit`` — unit label.
-        ``runtools.track.result`` — completion message (finishes operation or sets global result).
-        ``runtools.track.failed`` — failure reason (finishes operation as failed).
+        ``runtools.track.result`` — completion message (finishes operation as ok, or sets the run's
+            result as ok when no operation key is present).
+        ``runtools.track.failed`` — failure reason (finishes operation as failed, or sets the run's
+            result as failed when no operation key is present).
         ``runtools.track.scope`` — qualifies operation with a target identifier.
         ``runtools.track.timestamp`` — ISO datetime override.
     """
@@ -120,15 +122,20 @@ def field_based_handler(output_line: OutputLine, tracker: 'StatusTracker') -> No
             completed = (op.completed or 0) + completed
         if completed is not None or total is not None or fields.get('runtools.track.unit') is not None:
             op.update(completed, total, fields.get('runtools.track.unit'), timestamp)
-        if fail_reason := fields.get('runtools.track.failed'):
-            op.finish(fail_reason, timestamp, failed=True)
+        if result_failed := fields.get('runtools.track.failed'):
+            op.finish(result_failed, timestamp, failed=True)
         elif result:
             op.finish(result, timestamp)
     elif event := fields.get('runtools.track.event'):
         tracker.event(event, timestamp, source=source)
 
-    if result and not fields.get('runtools.track.operation'):
-        tracker.result(result, timestamp, source=source)
+    # Job-level result: `runtools.track.result` sets the run's outcome (ok);
+    # `runtools.track.failed` without an operation sets the run's outcome (failed).
+    if not fields.get('runtools.track.operation'):
+        if result_failed := fields.get('runtools.track.failed'):
+            tracker.result(result_failed, timestamp, source=source, failed=True)
+        elif result:
+            tracker.result(result, timestamp, source=source)
 
 
 class StatusTracker:
@@ -143,7 +150,7 @@ class StatusTracker:
         self._last_event: Optional[Event] = None
         self._operations: List[OperationTracker] = []
         self._warnings: List[Event] = []
-        self._result: Optional[Event] = None
+        self._result: Optional[Result] = None
         self._on_change = on_change
 
     def __call__(self, output_line: OutputLine) -> Optional[OutputLine]:
@@ -176,9 +183,9 @@ class StatusTracker:
     def _get_operation(self, name: str, scope: str | None = None) -> Optional[OperationTracker]:
         return next((op for op in self._operations if op.name == name and op.scope == scope), None)
 
-    def result(self, result: str, timestamp=None, source: str | None = None) -> None:
+    def result(self, message: str, timestamp=None, source: str | None = None, failed: bool = False) -> None:
         timestamp = ts_or_now(timestamp)
-        self._result = Event(result, timestamp, source)
+        self._result = Result(message, timestamp, source, failed=failed)
         if self._on_change:
             self._on_change()
 
