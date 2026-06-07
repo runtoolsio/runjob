@@ -627,7 +627,7 @@ def _local(env_id, env_db, node_layout, output_stores,
         InstanceControlEvent.EVENT_TYPE: node_layout.listener_control_sockets_provider,
         InstanceStatusEvent.EVENT_TYPE: node_layout.listener_status_sockets_provider,
     })
-    lock_factory = lock_factory or lock.default_file_lock_factory()
+    lock_factory = lock_factory or lock.default_file_lock_factory(paths.lock_dir(create=True))
     features = to_tuple(features)
     return LocalNode(env_id, local_connector, env_db, output_stores,
                      api, event_dispatcher, lock_factory, features, transient,
@@ -708,7 +708,7 @@ class LocalNode(EnvironmentNodeBase):
 
     def lock(self, lock_id):
         # TODO Method to separate type
-        return self._lock_factory(paths.lock_path(f"{lock_id}.lock", True))
+        return self._lock_factory(lock_id)
 
     def close(self):
         run_isolated_collect_exceptions(
