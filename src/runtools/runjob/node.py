@@ -10,8 +10,8 @@ from runtools.runcore import paths, connector, util
 from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
     ensure_component_dir
 from runtools.runcore.db import sqlite
-from runtools.runcore.env import EnvironmentConfigUnion, LocalEnvironmentConfig, \
-    InProcessEnvironmentConfig, EnvironmentEntry, _open_environment, resolve_env_ref, ensure_environment
+from runtools.runcore.env import EnvironmentConfig, InProcessTransportConfig, UnixSocketTransportConfig, \
+    EnvironmentEntry, _open_environment, resolve_env_ref, ensure_environment
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
     InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, InstanceControlEvent, InstanceStatusEvent, \
@@ -525,7 +525,7 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
 
     @classmethod
     def from_config(cls, env_config, component_prefix: str = "node_"):
-        return cls.create(env_config.id, env_config.layout.root_dir, component_prefix)
+        return cls.create(env_config.id, env_config.transport.root_dir, component_prefix)
 
     @property
     def server_socket_path(self) -> Path:
@@ -589,10 +589,10 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         return self._provider_sockets_listener(self._listener_status_socket_name)
 
 
-def _create(env_db, env_config: EnvironmentConfigUnion, *,
+def _create(env_db, env_config: EnvironmentConfig, *,
             disable_output: tuple[str, ...] = (), tail_buffer_size=None) -> 'EnvironmentNodeBase':
     """Internal: create an environment node from a database and configuration with optional runtime overrides."""
-    if isinstance(env_config, LocalEnvironmentConfig):
+    if isinstance(env_config.transport, UnixSocketTransportConfig):
         layout = StandardLocalNodeLayout.from_config(env_config)
         if "all" in disable_output:
             storages = []
@@ -607,11 +607,11 @@ def _create(env_db, env_config: EnvironmentConfigUnion, *,
                       retention_policy=env_config.retention.to_policy(),
                       features=plugin_features)
 
-    if isinstance(env_config, InProcessEnvironmentConfig):
+    if isinstance(env_config.transport, InProcessTransportConfig):
         plugin_features = Plugin.create_all(env_config.plugins) if env_config.plugins else ()
         return in_process(env_config.id, env_db, features=plugin_features)
 
-    raise AssertionError(f"Unsupported environment config: {type(env_config)}.")
+    raise AssertionError(f"Unsupported transport: {type(env_config.transport).__name__}.")
 
 
 def _local(env_id, env_db, node_layout, output_stores,
