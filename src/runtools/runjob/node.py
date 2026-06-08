@@ -523,10 +523,6 @@ class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
         """
         return cls(*ensure_component_dir(env_id, component_prefix, root_dir))
 
-    @classmethod
-    def from_config(cls, env_config, component_prefix: str = "node_"):
-        return cls.create(env_config.id, env_config.transport.root_dir, component_prefix)
-
     @property
     def server_socket_path(self) -> Path:
         """
@@ -593,7 +589,7 @@ def _create(env_db, env_config: EnvironmentConfig, *,
             disable_output: tuple[str, ...] = (), tail_buffer_size=None) -> 'EnvironmentNodeBase':
     """Internal: create an environment node from a database and configuration with optional runtime overrides."""
     if isinstance(env_config.transport, UnixSocketTransportConfig):
-        layout = StandardLocalNodeLayout.from_config(env_config)
+        layout = StandardLocalNodeLayout.create(env_config.id, env_config.transport.root_dir)
         if "all" in disable_output:
             storages = []
         else:
@@ -602,7 +598,7 @@ def _create(env_db, env_config: EnvironmentConfig, *,
         effective_tail_buffer_size = tail_buffer_size if tail_buffer_size is not None \
             else env_config.output.default_tail_buffer_size
         plugin_features = Plugin.create_all(env_config.plugins) if env_config.plugins else ()
-        return _local(env_config.id, env_db, layout, output_stores,
+        return _unix_socket(env_config.id, env_db, layout, output_stores,
                       tail_buffer_size=effective_tail_buffer_size,
                       retention_policy=env_config.retention.to_policy(),
                       features=plugin_features)
@@ -614,10 +610,10 @@ def _create(env_db, env_config: EnvironmentConfig, *,
     raise AssertionError(f"Unsupported transport: {type(env_config.transport).__name__}.")
 
 
-def _local(env_id, env_db, node_layout, output_stores,
-           *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE, retention_policy=None,
-           lock_factory=None, features=None, transient=True):
-    local_connector = connector._local(env_id, env_db, node_layout, output_stores)
+def _unix_socket(env_id, env_db, node_layout, output_stores,
+                 *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE, retention_policy=None,
+                 lock_factory=None, features=None, transient=True):
+    local_connector = connector._unix_socket(env_id, env_db, node_layout, output_stores)
 
     api = LocalInstanceServer(node_layout.server_socket_path)
     event_dispatcher = EventDispatcher(DatagramSocketClient(), {
