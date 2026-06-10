@@ -1,13 +1,14 @@
 from typing import List
 
 import pytest
-from runtools.runcore.client import LocalInstanceClient, TargetNotFoundError, InstanceCallResult
+from runtools.runcore.client import TargetNotFoundError, InstanceCallResult
 from runtools.runcore.matching import JobRunCriteria
 from runtools.runcore.job import JobRun, InstanceID, iid
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminationStatus
+from runtools.runcore.transport.unix_socket import UnixSocketNodeClient
 from runtools.runjob import instance
-from runtools.runjob.server import LocalInstanceServer
+from runtools.runjob.transport.unix_socket import UnixSocketNodeServer
 from runtools.runjob.test.phase import TestPhase
 from runtools.runjob.test.testutil import random_test_socket
 
@@ -25,7 +26,7 @@ def job_instances():
 @pytest.fixture(autouse=True)
 def server(job_instances):
     j1, j2 = job_instances
-    server = LocalInstanceServer(random_test_socket())
+    server = UnixSocketNodeServer(random_test_socket())
 
     server.register_instance(j1)
     server.register_instance(j2)
@@ -39,7 +40,7 @@ def server(job_instances):
 
 @pytest.fixture
 def client(server):
-    with LocalInstanceClient(lambda: [server.address]) as client:
+    with UnixSocketNodeClient(lambda: [server.address]) as client:
         yield client
 
 

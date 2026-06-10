@@ -2,31 +2,25 @@ import logging
 from abc import ABC, abstractmethod
 from concurrent.futures.thread import ThreadPoolExecutor
 from enum import Enum, auto
-from pathlib import Path
 from threading import Lock, Condition
-from typing import Dict, Optional, List, Callable, override, Tuple
+from typing import Dict, Optional, List, override, Tuple
 
-from runtools.runcore import paths, connector, util
-from runtools.runcore.connector import EnvironmentConnector, LocalConnectorLayout, StandardLocalConnectorLayout, \
-    ensure_component_dir
+from runtools.runcore import util
+from runtools.runcore.connector import EnvironmentConnector
 from runtools.runcore.db import sqlite
 from runtools.runcore.env import EnvironmentConfig, InProcessTransportConfig, UnixSocketTransportConfig, \
     EnvironmentEntry, _open_environment, resolve_env_ref, ensure_environment
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
-    InstanceLifecycleEvent, InstancePhaseEvent, InstanceOutputEvent, InstanceControlEvent, InstanceStatusEvent, \
     JobInstanceDelegate, InstanceID, \
     DuplicateStrategy, normalize_tags
 from runtools.runcore.matching import SortOption
 from runtools.runcore.output import DEFAULT_TAIL_BUFFER_SIZE
 from runtools.runcore.plugins import Plugin
-from runtools.runcore.run import Stage
 from runtools.runcore.util import to_tuple, lock, unique_timestamp_hex
-from runtools.runcore.util.socket import DatagramSocketClient
 from runtools.runjob import instance, output
-from runtools.runjob.events import EventDispatcher
 from runtools.runjob.output import OutputRouter, InMemoryTailBuffer
-from runtools.runjob.server import LocalInstanceServer
+from runtools.runjob.transport import NodeTransport
 
 log = logging.getLogger(__name__)
 
@@ -449,208 +443,29 @@ class InProcessNode(EnvironmentNodeBase):
         )
 
 
-class LocalNodeLayout(LocalConnectorLayout, ABC):
-    """Base class for local node layouts"""
+class _Node(EnvironmentNodeBase):
+    """Generic environment node that delegates transport-specific behavior to a ``NodeTransport``.
 
-    @property
-    @abstractmethod
-    def server_socket_path(self) -> Path:
-        """Return the server RPC socket path"""
-        pass
-
-    @property
-    @abstractmethod
-    def listener_lifecycle_sockets_provider(self) -> Callable:
-        """Return the provider for lifecycle listener sockets"""
-        pass
-
-    @property
-    @abstractmethod
-    def listener_phase_sockets_provider(self) -> Callable:
-        """Return the provider for phase listener sockets"""
-        pass
-
-    @property
-    @abstractmethod
-    def listener_output_sockets_provider(self) -> Callable:
-        """Return the provider for output listener sockets"""
-        pass
-
-
-class StandardLocalNodeLayout(StandardLocalConnectorLayout, LocalNodeLayout):
-    """
-    Standard implementation of a local node layout.
-
-    Extends the connector layout with additional functionality specific to nodes,
-    such as server sockets and additional listener providers.
-
-    Example structure:
-    /tmp/runtools/env/{env_id}/                      # Directory for the specific environment (env_dir)
-    │
-    └── node_abc123/                                 # Node directory (component_dir)
-        ├── server-rpc.sock                          # Node's RPC server socket
-        ├── client-rpc.sock                          # Node's RPC client socket
-        ├── listener-events.sock                     # Node's events listener socket
-        └── ...                                      # Other node-specific sockets
+    The node owns its job instances and holds a sibling-facing :class:`EnvironmentConnector`
+    handed in by the factory. The transport bundle owns node_server + event_dispatcher; the
+    sibling connector owns its own transport pieces (layout, node_client, event_receiver) and
+    closes them during teardown.
     """
 
-    def __init__(self, env_dir: Path, component_name: str):
-        """
-        Initializes the node layout with environment directory and component name.
-
-        Args:
-            env_dir: Directory containing the environment structure.
-            component_name: Name of the node subdirectory.
-        """
-        super().__init__(env_dir=env_dir, component_name=component_name)
-        self._listener_lifecycle_socket_name = "listener-lifecycle.sock"
-        self._listener_phase_socket_name = "listener-phase.sock"
-        self._listener_output_socket_name = "listener-output.sock"
-        self._listener_control_socket_name = "listener-control.sock"
-        self._listener_status_socket_name = "listener-status.sock"
-
-    @classmethod
-    def create(cls, env_id: str, root_dir: Optional[Path] = None, component_prefix: str = "node_"):
-        """
-        Creates a layout for a new node with a unique component directory.
-
-        Args:
-            env_id: Identifier for the environment.
-            root_dir: Root directory containing environments or uses the default one.
-            component_prefix: Prefix for component directories.
-
-        Returns (StandardLocalNodeLayout): Layout instance for a node.
-        """
-        return cls(*ensure_component_dir(env_id, component_prefix, root_dir))
-
-    @property
-    def server_socket_path(self) -> Path:
-        """
-        Returns:
-            Path: Full path of server domain socket used for sending requests to RPC servers
-        """
-        return self._component_dir / self._server_socket_name
-
-    def _provider_sockets_listener(self, socket_listener_name) -> Callable:
-        """
-        Helper method for creating socket providers for different listener types.
-
-        Args:
-            socket_listener_name: Socket filename to look for
-
-        Returns:
-            Callable: Provider function for the specified socket(s)
-        """
-        file_names = [self._listener_events_socket_name, socket_listener_name]
-        return paths.files_in_subdir_provider(self._env_dir, file_names)
-
-    @property
-    def listener_lifecycle_sockets_provider(self) -> Callable:
-        """
-        Returns:
-            Callable: A provider function that generates paths to lifecycle listener socket files
-        """
-        return self._provider_sockets_listener(self._listener_lifecycle_socket_name)
-
-    @property
-    def listener_phase_sockets_provider(self) -> Callable:
-        """
-        Returns:
-            Callable: A provider function that generates paths to phase listener socket files
-        """
-        return self._provider_sockets_listener(self._listener_phase_socket_name)
-
-    @property
-    def listener_output_sockets_provider(self) -> Callable:
-        """
-        Returns:
-            Callable: A provider function that generates paths to output listener socket files
-        """
-        return self._provider_sockets_listener(self._listener_output_socket_name)
-
-    @property
-    def listener_control_sockets_provider(self) -> Callable:
-        """
-        Returns:
-            Callable: A provider function that generates paths to control listener socket files
-        """
-        return self._provider_sockets_listener(self._listener_control_socket_name)
-
-    @property
-    def listener_status_sockets_provider(self) -> Callable:
-        """
-        Returns:
-            Callable: A provider function that generates paths to status listener socket files
-        """
-        return self._provider_sockets_listener(self._listener_status_socket_name)
-
-
-def _create(env_db, env_config: EnvironmentConfig, *,
-            disable_output: tuple[str, ...] = (), tail_buffer_size=None) -> 'EnvironmentNodeBase':
-    """Internal: create an environment node from a database and configuration with optional runtime overrides."""
-    if isinstance(env_config.transport, UnixSocketTransportConfig):
-        layout = StandardLocalNodeLayout.create(env_config.id, env_config.transport.root_dir)
-        if "all" in disable_output:
-            storages = []
-        else:
-            storages = [s for s in env_config.output.storages if s.type not in disable_output]
-        output_stores = output.create_stores(env_config.id, storages)
-        effective_tail_buffer_size = tail_buffer_size if tail_buffer_size is not None \
-            else env_config.output.default_tail_buffer_size
-        plugin_features = Plugin.create_all(env_config.plugins) if env_config.plugins else ()
-        return _unix_socket(env_config.id, env_db, layout, output_stores,
-                      tail_buffer_size=effective_tail_buffer_size,
-                      retention_policy=env_config.retention.to_policy(),
-                      features=plugin_features)
-
-    if isinstance(env_config.transport, InProcessTransportConfig):
-        plugin_features = Plugin.create_all(env_config.plugins) if env_config.plugins else ()
-        return in_process(env_config.id, env_db, features=plugin_features)
-
-    raise AssertionError(f"Unsupported transport: {type(env_config.transport).__name__}.")
-
-
-def _unix_socket(env_id, env_db, node_layout, output_stores,
-                 *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE, retention_policy=None,
-                 lock_factory=None, features=None, transient=True):
-    local_connector = connector._unix_socket(env_id, env_db, node_layout, output_stores)
-
-    api = LocalInstanceServer(node_layout.server_socket_path)
-    event_dispatcher = EventDispatcher(DatagramSocketClient(), {
-        InstanceLifecycleEvent.EVENT_TYPE: node_layout.listener_lifecycle_sockets_provider,
-        InstancePhaseEvent.EVENT_TYPE: node_layout.listener_phase_sockets_provider,
-        InstanceOutputEvent.EVENT_TYPE: node_layout.listener_output_sockets_provider,
-        InstanceControlEvent.EVENT_TYPE: node_layout.listener_control_sockets_provider,
-        InstanceStatusEvent.EVENT_TYPE: node_layout.listener_status_sockets_provider,
-    })
-    lock_factory = lock_factory or lock.default_file_lock_factory(paths.lock_dir(create=True))
-    features = to_tuple(features)
-    return LocalNode(env_id, local_connector, env_db, output_stores,
-                     api, event_dispatcher, lock_factory, features, transient,
-                     tail_buffer_size=tail_buffer_size, retention_policy=retention_policy)
-
-
-class LocalNode(EnvironmentNodeBase):
-    """
-    Environment node implementation that uses composition to delegate environment connector functionality.
-    """
-
-    def __init__(self, env_id, local_connector, env_db, output_stores, rpc_server, event_dispatcher,
-                 lock_factory, features, transient, *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE,
-                 retention_policy=None):
+    def __init__(self, env_id, env_db, transport: NodeTransport, sibling_connector: EnvironmentConnector,
+                 output_stores, features, transient,
+                 *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE, retention_policy=None):
         EnvironmentNodeBase.__init__(
             self, env_id, env_db, output_stores=output_stores, tail_buffer_size=tail_buffer_size,
             features=features, transient=transient)
-        self._connector = local_connector
-        self._rpc_server = rpc_server
-        self._event_dispatcher = event_dispatcher
-        self._lock_factory = lock_factory
+        self._transport = transport
+        self._connector = sibling_connector
         self._retention_policy = retention_policy
 
     def open(self):
-        EnvironmentNodeBase.open(self)  # Execute first for opened only once check
+        EnvironmentNodeBase.open(self)  # Execute first for opened-only-once check
         self._connector.open()
-        self._rpc_server.start()
+        self._transport.node_server.start()
 
     def get_active_runs(self, run_match=None):
         return self._connector.get_active_runs(run_match)
@@ -695,25 +510,72 @@ class LocalNode(EnvironmentNodeBase):
             )
 
     def _on_added(self, job_instance):
-        self._rpc_server.register_instance(job_instance)
-        job_instance.notifications.add_observer_all_events(self._event_dispatcher)
+        self._transport.node_server.register_instance(job_instance)
+        job_instance.notifications.add_observer_all_events(self._transport.event_dispatcher)
 
     def _on_removed(self, job_instance):
-        job_instance.notifications.remove_observer_all_events(self._event_dispatcher)
-        self._rpc_server.unregister_instance(job_instance)
+        job_instance.notifications.remove_observer_all_events(self._transport.event_dispatcher)
+        self._transport.node_server.unregister_instance(job_instance)
 
     def lock(self, lock_id):
         # TODO Method to separate type
-        return self._lock_factory(lock_id)
+        return self._transport.lock_factory(lock_id)
 
     def close(self):
         run_isolated_collect_exceptions(
-            "Errors during closing runnable local environment",
-            lambda: EnvironmentNodeBase.close(self),  # First: waits until all instances detached
-            self._rpc_server.close,
-            self._event_dispatcher.close,
-            self._connector.close,  # Keep last as it deletes the node directory
+            "Errors during closing environment node",
+            lambda: EnvironmentNodeBase.close(self),  # waits for instances to detach
+            self._transport.close,                    # node_server + event_dispatcher (node-only)
+            self._connector.close,                    # connector_transport + db + output_backends
         )
+
+
+def compose(env_id, env_db, transport: NodeTransport, sibling_connector: EnvironmentConnector,
+            output_stores, features, transient,
+            *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE,
+            retention_policy=None) -> EnvironmentNode:
+    """Internal framework plumbing: construct a concrete node from a transport bundle.
+
+    Consumed by ``_create()`` (dispatching by transport variant). Returns the abstract
+    ``EnvironmentNode`` so callers depend on the interface, not the concrete class.
+
+    Not part of the public API — :func:`connect` or :func:`in_process` are the supported
+    entry points for callers that just want a node.
+    """
+    return _Node(env_id, env_db, transport, sibling_connector, output_stores, features, transient,
+                 tail_buffer_size=tail_buffer_size, retention_policy=retention_policy)
+
+
+def _create(env_db, env_config: EnvironmentConfig, *,
+            disable_output: tuple[str, ...] = (), tail_buffer_size=None) -> 'EnvironmentNodeBase':
+    """Internal: create an environment node from a database and configuration with optional runtime overrides."""
+    if isinstance(env_config.transport, UnixSocketTransportConfig):
+        from runtools.runcore.connector import compose as build_connector
+        from runtools.runjob.transport import unix_socket
+        if "all" in disable_output:
+            storages = []
+        else:
+            storages = [s for s in env_config.output.storages if s.type not in disable_output]
+        # Cheap, in-memory builds first; transports allocate component dirs and flocks.
+        output_stores = output.create_stores(env_config.id, storages)
+        effective_tail_buffer_size = tail_buffer_size if tail_buffer_size is not None \
+            else env_config.output.default_tail_buffer_size
+        plugin_features = Plugin.create_all(env_config.plugins) if env_config.plugins else ()
+
+        connector_transport, node_transport = unix_socket.create_node_transports(
+            env_config.id, env_config.transport)
+        sibling_connector = build_connector(env_config.id, env_db, connector_transport, output_stores)
+        return compose(env_config.id, env_db, node_transport, sibling_connector,
+                       output_stores, to_tuple(plugin_features), transient=True,
+                       tail_buffer_size=effective_tail_buffer_size,
+                       retention_policy=env_config.retention.to_policy())
+
+    if isinstance(env_config.transport, InProcessTransportConfig):
+        plugin_features = Plugin.create_all(env_config.plugins) if env_config.plugins else ()
+        return in_process(env_config.id, env_db, features=plugin_features)
+
+    raise AssertionError(f"Unsupported transport: {type(env_config.transport).__name__}.")
+
 
 
 class AlreadyStarted(InvalidStateError):

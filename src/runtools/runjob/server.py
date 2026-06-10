@@ -3,15 +3,12 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
-from json import JSONDecodeError
-from typing import Dict, Any, List, Union, override
+from typing import Any, Dict, List, Union, override
 
 from itertools import zip_longest
-from runtools.runcore.matching import JobRunCriteria
-from runtools.runcore.job import JobInstance, InstanceID
+from runtools.runcore.job import InstanceID, JobInstance
 from runtools.runcore.run import StopReason
 from runtools.runcore.util.json import ErrorCode, JsonRpcError
-from runtools.runcore.util.socket import StreamSocketServer
 
 log = logging.getLogger(__name__)
 
@@ -261,92 +258,3 @@ def validate_params(parameters, arguments: Union[List, Dict[str, Any]]) -> List[
 
     return validated_args
 
-
-class LocalInstanceServer(StreamSocketServer):
-    """
-    Server for handling requests to job instances in a local environment via Unix domain sockets (JSON-RPC 2.0).
-
-    Each instance method requires an instance_id parameter, while collection methods use
-    run_match parameter to identify target job instances. The run_match follows
-    JobRunCriteria serialization format.
-
-    Examples:
-        # Collection method - get_active_runs (example using dict params)
-        --> {"jsonrpc": "2.0", "id": 1, "method": "get_active_runs", "params": {"run_match": {...}}}
-        <-- {"jsonrpc": "2.0", "id": 1, "result": {"retval": [{"job_id": "job123", ...}]}}
-
-        # Instance method - get_output_tail (example using list params)
-        --> {"jsonrpc": "2.0", "id": 2, "method": "get_output_tail", "params": ["inst789", 2]}
-        <-- {"jsonrpc": "2.0", "id": 2,
-             "result": {"retval": [
-               {"text": "Processing started", "is_error": false},
-               {"text": "Step 1 complete", "is_error": false}
-             ]}}
-
-        # Error response
-        <-- {"jsonrpc": "2.0", "id": 3, "error": {"code": -32001, "message": "Instance not found: inst999"}}
-    """
-    def __init__(self, socket_path, methods=DEFAULT_METHODS):
-        super().__init__(socket_path, allow_ping=True)
-        self._methods = {method.method_name: method for method in methods}
-        self._job_instances = {}
-
-    def register_instance(self, job_instance):
-        self._job_instances[job_instance.id] = job_instance
-
-    def unregister_instance(self, job_instance):
-        del self._job_instances[job_instance.id]
-
-    def handle(self, req: str) -> str:
-        try:
-            req_data = json.loads(req)
-        except JSONDecodeError:
-            return _error_response(None, ErrorCode.PARSE_ERROR, "Invalid JSON")
-
-        # Validate JSON-RPC request
-        if not isinstance(req_data, dict) or req_data.get('jsonrpc') != '2.0' or 'method' not in req_data:
-            return _error_response(req_data.get('id'), ErrorCode.INVALID_REQUEST, "Invalid JSON-RPC 2.0 request")
-
-        request_id = req_data.get('id')
-        if not _is_valid_request_id(request_id):
-            return _error_response(request_id, ErrorCode.INVALID_REQUEST, "Invalid request ID")
-
-        params = req_data.get('params', {})
-        if not _is_valid_params(params):
-            return _error_response(request_id, ErrorCode.INVALID_REQUEST, "Invalid parameters")
-
-        method_name = req_data['method']
-        method = self._methods.get(method_name)
-        if not method:
-            return _error_response(request_id, ErrorCode.METHOD_NOT_FOUND, f"Method not found: {method_name}")
-
-        try:
-            validated_args = validate_params(method.parameters, params)
-            if method.type == JsonRpcMethodType.INSTANCE:
-                try:
-                    job_instance = self._job_instances[InstanceID.deserialize(validated_args[0])]
-                except KeyError:
-                    return _error_response(request_id, ErrorCode.TARGET_NOT_FOUND,
-                                           f"Instance not found: {validated_args[0]}")
-                exec_retval = method.execute(job_instance, *validated_args[1:])
-            elif method.type == JsonRpcMethodType.COLLECTION:
-                job_instances = self._matching_instances(validated_args[0])
-                exec_retval = method.execute(job_instances, *validated_args[1:])
-            else:
-                raise AssertionError("Missing implementation for method type: " + str(method.type))
-        except JsonRpcError as e:
-            return _error_response(request_id, e.code, e.message, e.data)
-        except Exception as e:
-            log.error("JSON-RPC handler error", exc_info=True)
-            return _error_response(request_id, ErrorCode.METHOD_EXECUTION_ERROR, f"Internal error: {str(e)}")
-
-        return _success_response(request_id, {"retval": exec_retval})
-
-    def _matching_instances(self, run_match: Dict) -> List:
-        try:
-            matching_criteria = JobRunCriteria.deserialize(run_match)
-        except ValueError as e:
-            raise JsonRpcError(ErrorCode.INVALID_PARAMS, f"Invalid run match criteria: {e}")
-
-        return [job_instance for job_instance in self._job_instances.values() if
-                matching_criteria.matches(job_instance.snap())]
