@@ -20,7 +20,7 @@ from runtools.runcore.plugins import Plugin
 from runtools.runcore.util import to_tuple, lock, unique_timestamp_hex
 from runtools.runjob import instance, output
 from runtools.runjob.output import OutputRouter, InMemoryTailBuffer
-from runtools.runjob.transport import NodeTransport
+from runtools.runjob.transport import InstanceAccessPoint
 
 log = logging.getLogger(__name__)
 
@@ -444,28 +444,28 @@ class InProcessNode(EnvironmentNodeBase):
 
 
 class _Node(EnvironmentNodeBase):
-    """Generic environment node that delegates transport-specific behavior to a ``NodeTransport``.
+    """Generic environment node that delegates transport-specific behavior to an ``InstanceAccessPoint``.
 
     The node owns its job instances and holds a sibling-facing :class:`EnvironmentConnector`
-    handed in by the factory. The transport bundle owns node_server + event_dispatcher; the
-    sibling connector owns its own transport pieces (layout, node_client, event_receiver) and
-    closes them during teardown.
+    handed in by the factory. The access point owns rpc_server + event_dispatcher; the
+    sibling connector owns its own transport pieces (directory, layout) and closes them
+    during teardown.
     """
 
-    def __init__(self, env_id, env_db, transport: NodeTransport, sibling_connector: EnvironmentConnector,
+    def __init__(self, env_id, env_db, access_point: InstanceAccessPoint, sibling_connector: EnvironmentConnector,
                  output_stores, features, transient,
                  *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE, retention_policy=None):
         EnvironmentNodeBase.__init__(
             self, env_id, env_db, output_stores=output_stores, tail_buffer_size=tail_buffer_size,
             features=features, transient=transient)
-        self._transport = transport
+        self._access_point = access_point
         self._connector = sibling_connector
         self._retention_policy = retention_policy
 
     def open(self):
         EnvironmentNodeBase.open(self)  # Execute first for opened-only-once check
         self._connector.open()
-        self._transport.node_server.start()
+        self._access_point.rpc_server.start()
 
     def get_active_runs(self, run_match=None):
         return self._connector.get_active_runs(run_match)
@@ -510,31 +510,31 @@ class _Node(EnvironmentNodeBase):
             )
 
     def _on_added(self, job_instance):
-        self._transport.node_server.register_instance(job_instance)
-        job_instance.notifications.add_observer_all_events(self._transport.event_dispatcher)
+        self._access_point.rpc_server.register_instance(job_instance)
+        job_instance.notifications.add_observer_all_events(self._access_point.event_dispatcher)
 
     def _on_removed(self, job_instance):
-        job_instance.notifications.remove_observer_all_events(self._transport.event_dispatcher)
-        self._transport.node_server.unregister_instance(job_instance)
+        job_instance.notifications.remove_observer_all_events(self._access_point.event_dispatcher)
+        self._access_point.rpc_server.unregister_instance(job_instance)
 
     def lock(self, lock_id):
         # TODO Method to separate type
-        return self._transport.lock_factory(lock_id)
+        return self._access_point.lock_factory(lock_id)
 
     def close(self):
         run_isolated_collect_exceptions(
             "Errors during closing environment node",
             lambda: EnvironmentNodeBase.close(self),  # waits for instances to detach
-            self._transport.close,                    # node_server + event_dispatcher (node-only)
-            self._connector.close,                    # connector_transport + db + output_backends
+            self._access_point.close,                 # rpc_server + event_dispatcher (node-only)
+            self._connector.close,                    # directory + db + output_backends
         )
 
 
-def compose(env_id, env_db, transport: NodeTransport, sibling_connector: EnvironmentConnector,
+def compose(env_id, env_db, access_point: InstanceAccessPoint, sibling_connector: EnvironmentConnector,
             output_stores, features, transient,
             *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE,
             retention_policy=None) -> EnvironmentNode:
-    """Internal framework plumbing: construct a concrete node from a transport bundle.
+    """Internal framework plumbing: construct a concrete node from an instance access point.
 
     Consumed by ``_create()`` (dispatching by transport variant). Returns the abstract
     ``EnvironmentNode`` so callers depend on the interface, not the concrete class.
@@ -542,7 +542,7 @@ def compose(env_id, env_db, transport: NodeTransport, sibling_connector: Environ
     Not part of the public API — :func:`connect` or :func:`in_process` are the supported
     entry points for callers that just want a node.
     """
-    return _Node(env_id, env_db, transport, sibling_connector, output_stores, features, transient,
+    return _Node(env_id, env_db, access_point, sibling_connector, output_stores, features, transient,
                  tail_buffer_size=tail_buffer_size, retention_policy=retention_policy)
 
 
@@ -562,10 +562,10 @@ def _create(env_db, env_config: EnvironmentConfig, *,
             else env_config.output.default_tail_buffer_size
         plugin_features = Plugin.create_all(env_config.plugins) if env_config.plugins else ()
 
-        connector_transport, node_transport = unix_socket.create_node_transports(
+        sibling_directory, access_point = unix_socket.create_node_transports(
             env_config.id, env_config.transport)
-        sibling_connector = build_connector(env_config.id, env_db, connector_transport, output_stores)
-        return compose(env_config.id, env_db, node_transport, sibling_connector,
+        sibling_connector = build_connector(env_config.id, env_db, sibling_directory, output_stores)
+        return compose(env_config.id, env_db, access_point, sibling_connector,
                        output_stores, to_tuple(plugin_features), transient=True,
                        tail_buffer_size=effective_tail_buffer_size,
                        retention_policy=env_config.retention.to_policy())

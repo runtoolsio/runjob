@@ -27,9 +27,10 @@ from runtools.runcore.matching import JobRunCriteria
 from runtools.runcore.transport.unix_socket import (
     StandardUnixSocketConnectorLayout,
     UnixSocketConnectorLayout,
-    UnixSocketConnectorTransport,
     UnixSocketEventReceiver,
-    UnixSocketNodeClient,
+    UnixSocketInstanceDirectory,
+    UnixSocketInstanceDiscovery,
+    UnixSocketRpcClient,
     clean_stale_component_dirs,
     ensure_component_dir,
     resolve_env_dir,
@@ -310,26 +311,26 @@ class UnixSocketEventDispatcher:
 # Node-side transport bundle
 # ---------------------------------------------------------------------------
 
-class UnixSocketNodeTransport:
+class UnixSocketInstanceAccessPoint:
     """Node-side runtime bundle for the unix_socket transport.
 
     Bundles the node-only resources: RPC server, event dispatcher, lock factory. ``close()``
     releases all three. The node's sibling-facing connector is built separately by
     ``create_node`` and is not part of this bundle.
 
-    Conforms to :class:`runtools.runjob.transport.NodeTransport`.
+    Conforms to :class:`runtools.runjob.transport.InstanceAccessPoint`.
     """
 
-    def __init__(self, node_server: UnixSocketNodeServer, event_dispatcher: UnixSocketEventDispatcher,
+    def __init__(self, rpc_server: UnixSocketNodeServer, event_dispatcher: UnixSocketEventDispatcher,
                  lock_factory: Callable[[str], object]):
-        self.node_server = node_server
+        self.rpc_server = rpc_server
         self.event_dispatcher = event_dispatcher
         self.lock_factory = lock_factory
 
     def close(self) -> None:
         run_isolated_collect_exceptions(
-            "Errors during closing unix_socket node transport",
-            self.node_server.close,
+            "Errors during closing unix_socket instance access point",
+            self.rpc_server.close,
             self.event_dispatcher.close,
         )
 
@@ -341,24 +342,26 @@ class UnixSocketNodeTransport:
 def create_node_transports(
         env_id: str,
         transport_config: UnixSocketTransportConfig,
-) -> tuple[UnixSocketConnectorTransport, UnixSocketNodeTransport]:
+) -> tuple[UnixSocketInstanceDirectory, UnixSocketInstanceAccessPoint]:
     """Build a unix_socket node's transport pair, sharing a single layout.
 
-    Returns ``(connector_transport, node_transport)``. The connector_transport is for the
-    node's sibling-monitoring use; the node_transport carries the node-only server, event
-    dispatcher, and lock factory. Both reference the same layout so the node lives in one
-    component dir.
+    Returns ``(sibling_directory, access_point)``. The directory is for the node's
+    sibling-monitoring use; the access point carries the node-only server, event
+    dispatcher, and lock factory. Both reference the same layout so the node lives in
+    one component dir.
     """
     # Sweep stale components before allocating our own — no need to scan past our live lock.
     clean_stale_component_dirs(resolve_env_dir(env_id, transport_config.root_dir))
     layout = StandardUnixSocketNodeLayout.create(env_id, transport_config.root_dir)
 
-    connector_transport = UnixSocketConnectorTransport(
+    rpc_client = UnixSocketRpcClient(layout.server_sockets_provider)
+    sibling_directory = UnixSocketInstanceDirectory(
         layout,
-        UnixSocketNodeClient(layout.server_sockets_provider),
+        rpc_client,
         UnixSocketEventReceiver(layout.listener_events_socket_path),
+        UnixSocketInstanceDiscovery(rpc_client),
     )
-    node_transport = UnixSocketNodeTransport(
+    access_point = UnixSocketInstanceAccessPoint(
         UnixSocketNodeServer(layout.server_socket_path),
         UnixSocketEventDispatcher(DatagramSocketClient(), {
             InstanceLifecycleEvent.EVENT_TYPE: layout.listener_lifecycle_sockets_provider,
@@ -369,4 +372,4 @@ def create_node_transports(
         }),
         lock.default_file_lock_factory(paths.lock_dir(create=True)),
     )
-    return connector_transport, node_transport
+    return sibling_directory, access_point

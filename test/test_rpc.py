@@ -6,7 +6,7 @@ from runtools.runcore.matching import JobRunCriteria
 from runtools.runcore.job import JobRun, InstanceID, iid
 from runtools.runcore.output import OutputLine
 from runtools.runcore.run import TerminationStatus
-from runtools.runcore.transport.unix_socket import UnixSocketNodeClient
+from runtools.runcore.transport.unix_socket import UnixSocketRpcClient
 from runtools.runjob import instance
 from runtools.runjob.transport.unix_socket import UnixSocketNodeServer
 from runtools.runjob.test.phase import TestPhase
@@ -40,7 +40,7 @@ def server(job_instances):
 
 @pytest.fixture
 def client(server):
-    with UnixSocketNodeClient(lambda: [server.address]) as client:
+    with UnixSocketRpcClient(lambda: [server.address]) as client:
         yield client
 
 
@@ -51,12 +51,12 @@ def test_server_not_found(client, server):
 
 def test_instance_not_found(client, server):
     with pytest.raises(TargetNotFoundError):
-        client.stop_instance(server.address, InstanceID('java', 'fx'))
+        client.stop_instance(InstanceID('java', 'fx'))
 
 
 def test_active_runs(client, server):
-    j1_run = client.get_active_runs(server.address, JobRunCriteria.job_match('j1'))[0]
-    j2_run = client.get_active_runs(server.address, JobRunCriteria.job_match('j2'))[0]
+    j1_run = client.collect_active_runs(JobRunCriteria.job_match('j1'))[0].retval[0]
+    j2_run = client.collect_active_runs(JobRunCriteria.job_match('j2'))[0].retval[0]
     results: List[InstanceCallResult[List[JobRun]]] = client.collect_active_runs(JobRunCriteria.all())
 
     assert j1_run.job_id == 'j1'
@@ -70,7 +70,7 @@ def test_active_runs(client, server):
 
 def test_stop(job_instances, client, server):
     j1, j2 = job_instances
-    client.stop_instance(server.address, j1.id)
+    client.stop_instance(j1.id)
 
     assert j1.snap().lifecycle.termination.status == TerminationStatus.STOPPED
     assert not j2.snap().lifecycle.termination
@@ -78,7 +78,7 @@ def test_stop(job_instances, client, server):
 
 def test_phase_op_release(job_instances, client, server):
     _, j2 = job_instances
-    client.exec_phase_op(server.address, j2.id, APPROVAL, 'release')
+    client.exec_phase_op(j2.id, APPROVAL, 'release')
 
     assert j2.find_phase_control_by_id(APPROVAL).is_released
 
@@ -89,11 +89,11 @@ def test_tail(job_instances, client, server):
     j2.output.new_output(OutputLine('Escape...', 1, is_error=True, source='EXEC2'))
     j2.output.new_output(OutputLine('...samsara!', 2, is_error=True, source='EXEC2'))
 
-    output_lines = client.get_output_tail(server.address, j1.id)
+    output_lines = client.get_output_tail(j1.id)
     assert output_lines == [OutputLine('Meditate, do not delay, lest you later regret it.', 1, is_error=False, source='EXEC1')]
 
-    output_lines = client.get_output_tail(server.address, j2.id)
+    output_lines = client.get_output_tail(j2.id)
     assert output_lines == [OutputLine('Escape...', 1, is_error=True, source='EXEC2'), OutputLine('...samsara!', 2, is_error=True, source='EXEC2')]
 
-    output_lines = client.get_output_tail(server.address, j2.id, max_lines=1)
+    output_lines = client.get_output_tail(j2.id, max_lines=1)
     assert output_lines == [OutputLine('...samsara!', 2, is_error=True, source='EXEC2')]

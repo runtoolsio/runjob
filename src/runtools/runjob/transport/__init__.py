@@ -3,9 +3,9 @@
 Each transport ships its own module here with the concrete node-side bundle, layout,
 and RPC server. Connector-side transport pieces live under ``runtools.runcore.transport``.
 
-The :class:`NodeTransport` protocol declares what the concrete node
-(``runtools.runjob.node._Node``) consumes from a transport. Concrete bundles live
-in ``runtools.runjob.transport.<transport>``.
+The :class:`InstanceAccessPoint` protocol declares what the concrete node
+(``runtools.runjob.node._Node``) holds to expose its instances to the environment.
+Concrete bundles live in ``runtools.runjob.transport.<transport>``.
 """
 
 from typing import Callable, Protocol, runtime_checkable
@@ -42,11 +42,11 @@ class NodeEventDispatcher(Protocol):
 
 
 @runtime_checkable
-class NodeTransport(Protocol):
-    """Bundle of node-side runtime pieces consumed by the concrete environment node.
+class InstanceAccessPoint(Protocol):
+    """Node-side bundle through which the node's instances are exposed to the env.
 
     Implementations expose:
-      - ``node_server``: the RPC server exposing this node's instances.
+      - ``rpc_server``: the RPC server exposing this node's instances.
       - ``event_dispatcher``: broadcasts this node's events (see :class:`NodeEventDispatcher`).
       - ``lock_factory``: ``(lock_id) -> context-manager lock`` for job coordination.
       - ``close()``: releases node-only resources.
@@ -55,7 +55,7 @@ class NodeTransport(Protocol):
     separately by the transport factory (sharing whatever layout / shared state the
     transport needs) and passed into the node.
     """
-    node_server: NodeRpcServer
+    rpc_server: NodeRpcServer
     event_dispatcher: NodeEventDispatcher
     lock_factory: Callable[[str], object]
 
