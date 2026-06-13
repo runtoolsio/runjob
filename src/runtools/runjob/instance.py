@@ -133,11 +133,6 @@ class _JobInstance(JobInstance):
 
     @property
     @override
-    def tracking(self):
-        return self._ctx.tracker
-
-    @property
-    @override
     def notifications(self) -> InstanceNotifications:
         return self._notifications
 
