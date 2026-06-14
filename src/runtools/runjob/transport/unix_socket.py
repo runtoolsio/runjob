@@ -95,7 +95,6 @@ class StandardUnixSocketNodeLayout(StandardUnixSocketConnectorLayout, UnixSocket
     │
     └── node_abc123/                                 # Node directory (component_dir)
         ├── server-rpc.sock                          # Node's RPC server socket
-        ├── client-rpc.sock                          # Node's RPC client socket
         ├── listener-events.sock                     # Node's events listener socket
         └── ...                                      # Other node-specific sockets
     """
@@ -355,12 +354,8 @@ def create_node_transports(
     layout = StandardUnixSocketNodeLayout.create(env_id, transport_config.root_dir)
 
     rpc_client = UnixSocketRpcClient(layout.server_sockets_provider)
-    sibling_directory = UnixSocketInstanceDirectory(
-        layout,
-        rpc_client,
-        UnixSocketEventReceiver(layout.listener_events_socket_path),
-        UnixSocketInstanceDiscovery(rpc_client),
-    )
+    sibling_directory = UnixSocketInstanceDirectory(layout, rpc_client, UnixSocketInstanceDiscovery(rpc_client),
+                                                    UnixSocketEventReceiver(layout.listener_events_socket_path))
     access_point = UnixSocketInstanceAccessPoint(
         UnixSocketNodeServer(layout.server_socket_path),
         UnixSocketEventDispatcher(DatagramSocketClient(), {

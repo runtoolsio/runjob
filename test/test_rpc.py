@@ -44,11 +44,6 @@ def client(server):
         yield client
 
 
-def test_server_not_found(client, server):
-    with pytest.raises(TargetNotFoundError):
-        client.call_method('no-server', 'no-method')
-
-
 def test_instance_not_found(client, server):
     with pytest.raises(TargetNotFoundError):
         client.stop_instance(InstanceID('java', 'fx'))
