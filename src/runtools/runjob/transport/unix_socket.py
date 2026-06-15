@@ -22,6 +22,7 @@ from runtools.runcore.job import (
     InstanceOutputEvent,
     InstancePhaseEvent,
     InstanceStatusEvent,
+    JobInstance,
 )
 from runtools.runcore.matching import JobRunCriteria
 from runtools.runcore.transport.unix_socket import (
@@ -276,7 +277,8 @@ class UnixSocketEventDispatcher:
     """Datagram-socket dispatcher that broadcasts a node's events to listeners.
 
     Used as a callable observer (``__call__(event)`` serializes and sends the event over a
-    ``DatagramSocketClient``). Conforms to :class:`runtools.runjob.transport.NodeEventDispatcher`.
+    ``DatagramSocketClient``). Private to :class:`UnixSocketInstanceAccessPoint`, which
+    attaches it when an instance is registered.
     """
 
     def __init__(self, client, event_type_to_sockets_provider=None):
@@ -313,24 +315,37 @@ class UnixSocketEventDispatcher:
 class UnixSocketInstanceAccessPoint:
     """Node-side runtime bundle for the unix_socket transport.
 
-    Bundles the node-only resources: RPC server, event dispatcher, lock factory. ``close()``
-    releases all three. The node's sibling-facing connector is built separately by
-    ``create_node`` and is not part of this bundle.
+    Exposes the node's instances to the environment by registering them with the RPC
+    server and attaching the event dispatcher as an observer. The split between the
+    two is a unix_socket detail; the node only asks to register/unregister an instance.
+    The node's sibling-facing connector is built separately by ``create_node`` and is
+    not part of this bundle.
 
     Conforms to :class:`runtools.runjob.transport.InstanceAccessPoint`.
     """
 
     def __init__(self, rpc_server: UnixSocketNodeServer, event_dispatcher: UnixSocketEventDispatcher,
                  lock_factory: Callable[[str], object]):
-        self.rpc_server = rpc_server
-        self.event_dispatcher = event_dispatcher
+        self._rpc_server = rpc_server
+        self._event_dispatcher = event_dispatcher
         self.lock_factory = lock_factory
+
+    def start(self) -> None:
+        self._rpc_server.start()
+
+    def register_instance(self, job_instance: JobInstance) -> None:
+        self._rpc_server.register_instance(job_instance)
+        job_instance.notifications.add_observer_all_events(self._event_dispatcher)
+
+    def unregister_instance(self, job_instance: JobInstance) -> None:
+        job_instance.notifications.remove_observer_all_events(self._event_dispatcher)
+        self._rpc_server.unregister_instance(job_instance)
 
     def close(self) -> None:
         run_isolated_collect_exceptions(
             "Errors during closing unix_socket instance access point",
-            self.rpc_server.close,
-            self.event_dispatcher.close,
+            self._rpc_server.close,
+            self._event_dispatcher.close,
         )
 
 

@@ -447,9 +447,9 @@ class _Node(EnvironmentNodeBase):
     """Generic environment node that delegates transport-specific behavior to an ``InstanceAccessPoint``.
 
     The node owns its job instances and holds a sibling-facing :class:`EnvironmentConnector`
-    handed in by the factory. The access point owns rpc_server + event_dispatcher; the
-    sibling connector owns its own transport pieces (directory, layout) and closes them
-    during teardown.
+    handed in by the factory. The access point exposes instances to the env (register /
+    unregister); the sibling connector owns its own transport pieces (directory, layout)
+    and closes them during teardown.
     """
 
     def __init__(self, env_id, env_db, access_point: InstanceAccessPoint, sibling_connector: EnvironmentConnector,
@@ -465,7 +465,7 @@ class _Node(EnvironmentNodeBase):
     def open(self):
         EnvironmentNodeBase.open(self)  # Execute first for opened-only-once check
         self._connector.open()
-        self._access_point.rpc_server.start()
+        self._access_point.start()
 
     def get_active_runs(self, run_match=None):
         return self._connector.get_active_runs(run_match)
@@ -510,12 +510,10 @@ class _Node(EnvironmentNodeBase):
             )
 
     def _on_added(self, job_instance):
-        self._access_point.rpc_server.register_instance(job_instance)
-        job_instance.notifications.add_observer_all_events(self._access_point.event_dispatcher)
+        self._access_point.register_instance(job_instance)
 
     def _on_removed(self, job_instance):
-        job_instance.notifications.remove_observer_all_events(self._access_point.event_dispatcher)
-        self._access_point.rpc_server.unregister_instance(job_instance)
+        self._access_point.unregister_instance(job_instance)
 
     def lock(self, lock_id):
         # TODO Method to separate type
@@ -525,7 +523,7 @@ class _Node(EnvironmentNodeBase):
         run_isolated_collect_exceptions(
             "Errors during closing environment node",
             lambda: EnvironmentNodeBase.close(self),  # waits for instances to detach
-            self._access_point.close,                 # rpc_server + event_dispatcher (node-only)
+            self._access_point.close,                 # node-only wire resources
             self._connector.close,                    # directory + db + output_backends
         )
 

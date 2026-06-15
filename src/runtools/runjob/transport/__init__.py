@@ -14,50 +14,24 @@ from runtools.runcore.job import JobInstance
 
 
 @runtime_checkable
-class NodeRpcServer(Protocol):
-    """Minimal RPC server surface used by the concrete environment node.
+class InstanceAccessPoint(Protocol):
+    """Node-side seam through which the node's instances are exposed to the env.
 
-    The server exposes this node's job instances to remote connectors and is started /
-    stopped alongside the node's lifecycle.
+    ``register_instance`` / ``unregister_instance`` make an instance reachable and
+    observable; how that maps onto wire resources (RPC server, event dispatch, ...) is
+    the transport's concern, not the node's. ``lock_factory`` builds ``(lock_id) ->
+    context-manager lock`` for job coordination. ``close()`` releases node-only resources.
+
+    The node's sibling-facing connector is **not** part of this seam — it is constructed
+    separately by the transport factory (sharing whatever layout / shared state the
+    transport needs) and passed into the node.
     """
-    def start(self) -> None: ...
+    lock_factory: Callable[[str], object]
 
-    def close(self) -> None: ...
+    def start(self) -> None: ...
 
     def register_instance(self, job_instance: JobInstance) -> None: ...
 
     def unregister_instance(self, job_instance: JobInstance) -> None: ...
 
-
-@runtime_checkable
-class NodeEventDispatcher(Protocol):
-    """Callable that broadcasts a single event from this node to its listeners.
-
-    The observer machinery treats callable observers as event sinks — the dispatcher is
-    invoked as ``dispatcher(event)`` for each event of any type the node emits.
-    """
-    def __call__(self, event) -> None: ...
-
     def close(self) -> None: ...
-
-
-@runtime_checkable
-class InstanceAccessPoint(Protocol):
-    """Node-side bundle through which the node's instances are exposed to the env.
-
-    Implementations expose:
-      - ``rpc_server``: the RPC server exposing this node's instances.
-      - ``event_dispatcher``: broadcasts this node's events (see :class:`NodeEventDispatcher`).
-      - ``lock_factory``: ``(lock_id) -> context-manager lock`` for job coordination.
-      - ``close()``: releases node-only resources.
-
-    The node's sibling-facing connector is **not** part of this bundle — it is constructed
-    separately by the transport factory (sharing whatever layout / shared state the
-    transport needs) and passed into the node.
-    """
-    rpc_server: NodeRpcServer
-    event_dispatcher: NodeEventDispatcher
-    lock_factory: Callable[[str], object]
-
-    def close(self) -> None:
-        ...
