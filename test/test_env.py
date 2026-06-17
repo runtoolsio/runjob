@@ -197,3 +197,17 @@ def test_duplicate_different_ordinals_no_conflict(env):
     assert second.id.ordinal == 2
     first.run()
     second.run()
+
+
+def test_created_snapshot_completes_init_row():
+    """The persister attaches before CREATED, so a flush completes the row with the full
+    snapshot (root_phase) while still active — not the init-only partial row."""
+    with node.in_process(transient=False) as env:
+        inst = env.create_instance("j1", root_phase=TestPhase())
+        env._persister.flush()
+
+        root_phase, = env._db._conn.execute(
+            "SELECT root_phase FROM runs WHERE job_id = ?", ("j1",)).fetchone()
+        assert root_phase is not None  # CREATED snapshot persisted, not just init columns
+
+        inst.run()  # Run to completion so the environment closes cleanly

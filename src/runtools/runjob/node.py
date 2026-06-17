@@ -1,8 +1,9 @@
 import logging
 from abc import ABC, abstractmethod
+from functools import partial
 from concurrent.futures.thread import ThreadPoolExecutor
 from enum import Enum, auto
-from threading import Lock, Condition
+from threading import Condition, Event, Lock, Thread
 from typing import Dict, Optional, List, override, Tuple
 
 from runtools.runcore import util
@@ -16,6 +17,7 @@ from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifica
     DuplicateStrategy, normalize_tags
 from runtools.runcore.matching import SortOption
 from runtools.runcore.output import DEFAULT_TAIL_BUFFER_SIZE
+from runtools.runcore.db.persister import RunStatePersister
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.util import to_tuple, lock, unique_timestamp_hex
 from runtools.runjob import instance, output
@@ -104,11 +106,15 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
      - Close/exit operations wait for all instances to be detached
     """
     OBSERVERS_PRIORITY = 1000
+    PERSIST_FLUSH_INTERVAL = 1.0  # Seconds between coalesced active-state flushes
 
     def __init__(self, env_id, env_db, output_stores=(), tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE,
                  features=(), transient=True):
         self._env_id = env_id
         self._db = env_db
+        self._persister = RunStatePersister(env_db)
+        self._persister_stop = Event()
+        self._persister_thread = None
         self._output_stores = tuple(output_stores)
         self._tail_buffer_size = tail_buffer_size
         self._features = features
@@ -139,6 +145,16 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
         return self._executor.submit(fnc)
 
+    def _flush_persister_loop(self):
+        while not self._persister_stop.wait(self.PERSIST_FLUSH_INTERVAL):
+            self._persister.flush()
+
+    def _close_persister(self):
+        self._persister_stop.set()
+        if self._persister_thread:
+            self._persister_thread.join()
+        self._persister.close()  # Final flush of any remaining dirty snapshots
+
     def open(self):
         """
         Open the environment container and execute open hooks of all added features.
@@ -150,6 +166,21 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
         for feature in self._features:
             feature.on_open()
+        self._open()
+        # Started strictly last: only once the full concrete open succeeds, so a failing
+        # on_open hook or _open() propagates from __enter__ (which then skips close()) with
+        # no flush thread left running against a half-open environment.
+        self._persister_thread = Thread(target=self._flush_persister_loop, name="run-persister", daemon=True)
+        self._persister_thread.start()
+
+    def _open(self):
+        """Subclass transport/database startup. Runs after feature hooks, before the flush loop."""
+        # TODO Cleanup hardening: if _open() (or an on_open hook) fails partway, already-opened
+        #  feature/transport resources are leaked — failed open should run the matching close hooks.
+        # TODO Centralize env_db open/close ownership: InProcessNode opens+closes its own db, while
+        #  _Node borrows one opened upstream and closed by the connector. The split is why db open
+        #  lives per-subclass here instead of in the base.
+        pass
 
     def _admit_instance(self, job_id, run_id, created_at, user_params, *,
                         tags=(), auto_increment=False):
@@ -230,6 +261,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
             for feature in self._features:
                 feature.on_instance_added(job_instance)
 
+            self._persister.attach(job_instance.notifications)  # Before CREATED — first flush completes the init row
             job_instance.notify_created()
 
             if instance_id.ordinal > 1 and duplicate_strategy.stop_reason:
@@ -292,14 +324,20 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
                 removed = True
 
         if removed:
-            self._on_removed(job_instance)
-            for feature in self._features:
-                feature.on_instance_removed(job_instance)
+            try:
+                run_isolated_collect_exceptions(
+                    "Errors during instance removal",
+                    partial(self._on_removed, job_instance),
+                    *(partial(feature.on_instance_removed, job_instance) for feature in self._features),
+                )
+            except ExceptionGroup:
+                log.exception("Errors during instance removal: %s", job_instance_id)
 
         if detach:
             with self._idle_condition:
                 job_instance._state = _InstanceState.DETACHED
                 self._idle_condition.notify()
+            self._persister.detach(job_instance.notifications)
 
         return job_instance
 
@@ -330,6 +368,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         log.debug("Closing environment", extra={"env": self._env_id})
         run_isolated_collect_exceptions(
             "Errors on environment features closing",
+            self._close_persister,
             *(feature.on_close for feature in self._features),
             self._shutdown_executor,
             # Output stores own resources (e.g. boto3 S3 client connection pools)
@@ -391,8 +430,7 @@ class InProcessNode(EnvironmentNodeBase):
     def notifications(self) -> InstanceNotifications:
         return self._notifications
 
-    def open(self):
-        EnvironmentNodeBase.open(self)  # Always first
+    def _open(self):
         self._db.open()
 
     def _on_added(self, job_instance):
@@ -462,8 +500,7 @@ class _Node(EnvironmentNodeBase):
         self._connector = sibling_connector
         self._retention_policy = retention_policy
 
-    def open(self):
-        EnvironmentNodeBase.open(self)  # Execute first for opened-only-once check
+    def _open(self):
         self._connector.open()
         self._access_point.start()
 
