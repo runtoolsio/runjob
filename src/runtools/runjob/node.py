@@ -147,7 +147,10 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
     def _flush_persister_loop(self):
         while not self._persister_stop.wait(self.PERSIST_FLUSH_INTERVAL):
-            self._persister.flush()
+            try:
+                self._persister.flush()
+            except Exception:
+                log.warning("Persister flush failed; retrying next interval", exc_info=True)
 
     def _close_persister(self):
         self._persister_stop.set()
@@ -167,11 +170,8 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         for feature in self._features:
             feature.on_open()
         self._open()
-        # Started strictly last: only once the full concrete open succeeds, so a failing
-        # on_open hook or _open() propagates from __enter__ (which then skips close()) with
-        # no flush thread left running against a half-open environment.
         self._persister_thread = Thread(target=self._flush_persister_loop, name="run-persister", daemon=True)
-        self._persister_thread.start()
+        self._persister_thread.start()  # Started strictly last when everything above succeed
 
     def _open(self):
         """Subclass transport/database startup. Runs after feature hooks, before the flush loop."""
