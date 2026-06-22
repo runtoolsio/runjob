@@ -1,7 +1,7 @@
 """Tests for S3 output store + writer."""
 import gzip
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import boto3
 import pytest
@@ -9,7 +9,6 @@ from moto import mock_aws
 
 from runtools.runcore.job import iid
 from runtools.runcore.output import OutputLine, OutputStorageConfig
-from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.util.dt import utc_now
 from runtools.runjob.output.s3 import (
     S3OutputStore,
@@ -163,136 +162,6 @@ def test_roundtrip_via_backend(s3_client, store):
     assert [ol.message for ol in result] == ["hello", "world"]
     assert result[0].fields == {"foo": "bar"}
     assert result[0].level == "INFO"
-
-
-def test_retention_sorts_by_metadata_not_lastmodified(s3_client, store):
-    """LastModified order ≠ created_at order. Retention must use the metadata."""
-    # Write three runs in REVERSE chronological order (i.e. oldest run PUT last).
-    # If retention sorted by LastModified, it would keep the wrong objects.
-    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    runs = [
-        ("run3", base + timedelta(days=2)),  # newest created_at, but PUT first
-        ("run2", base + timedelta(days=1)),
-        ("run1", base),                       # oldest created_at, but PUT last
-    ]
-    for run_id, created_at in runs:
-        writer = store.create_sink(iid("myjob", run_id), created_at=created_at)
-        writer.write_line(OutputLine(run_id, 1))
-        writer.close()
-
-    # Keep only the 2 newest by created_at: run3 and run2
-    store.enforce_retention("myjob", RetentionPolicy(max_runs_per_job=2, max_runs_per_env=-1))
-
-    remaining_keys = {
-        o["Key"] for o in s3_client.list_objects_v2(
-            Bucket=BUCKET, Prefix="prod/myjob/").get("Contents", [])
-    }
-    assert remaining_keys == {
-        "prod/myjob/run3__1.jsonl.gz",
-        "prod/myjob/run2__1.jsonl.gz",
-    }
-
-
-def test_retention_sort_key_returns_numeric_epoch(s3_client, store):
-    """_sort_key_for must return a float (epoch seconds), not a formatted string.
-
-    String isoformats from metadata (...Z) and LastModified (...+00:00) would
-    misorder lexicographically. This test pins the contract that the sort key
-    is numeric so chronological order is preserved across formats.
-    """
-    # Tagged object: metadata uses ...Z format
-    canonical = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-    writer = store.create_sink(iid("myjob", "tagged"), created_at=canonical)
-    writer.write_line(OutputLine("x", 1))
-    writer.close()
-
-    # Fallback object: no metadata, sort falls back to LastModified (...+00:00)
-    s3_client.put_object(
-        Bucket=BUCKET, Key="prod/myjob/untagged__1.jsonl.gz",
-        Body=gzip.compress(b'{"message":"y","_rt":{"n":1}}\n'),
-        ContentType="application/x-ndjson", ContentEncoding="gzip",
-    )
-
-    # Both sort keys must be floats — proves the lex-sort bug is gone
-    listing = s3_client.list_objects_v2(Bucket=BUCKET, Prefix="prod/myjob/").get("Contents", [])
-    sort_keys = [store._sort_key_for(obj) for obj in listing]
-    assert all(isinstance(k, float) for k in sort_keys)
-    assert all(k > 0 for k in sort_keys)
-    # Tagged should equal canonical.timestamp() exactly
-    tagged_entry = next(o for o in listing if "tagged" in o["Key"] and "untagged" not in o["Key"])
-    assert store._sort_key_for(tagged_entry) == canonical.timestamp()
-
-
-def test_retention_falls_back_to_lastmodified_without_metadata(s3_client, store):
-    """Objects without runtools-created-at metadata fall back to LastModified order."""
-    # Write 3 raw objects with NO metadata. moto sets LastModified to PUT time —
-    # we PUT them in chronological order so LastModified is also chronological.
-    for i in range(3):
-        s3_client.put_object(
-            Bucket=BUCKET,
-            Key=f"prod/myjob/run{i}__1.jsonl.gz",
-            Body=gzip.compress(b'{"message":"x","_rt":{"n":1}}\n'),
-            ContentType="application/x-ndjson",
-            ContentEncoding="gzip",
-        )
-
-    store.enforce_retention("myjob", RetentionPolicy(max_runs_per_job=1, max_runs_per_env=-1))
-
-    remaining_keys = {
-        o["Key"] for o in s3_client.list_objects_v2(
-            Bucket=BUCKET, Prefix="prod/myjob/").get("Contents", [])
-    }
-    # The last-PUT object (run2) has the newest LastModified
-    assert remaining_keys == {"prod/myjob/run2__1.jsonl.gz"}
-
-
-def test_retention_noop_under_limit(s3_client, store):
-    writer = store.create_sink(iid("myjob", "run1"), created_at=utc_now())
-    writer.write_line(OutputLine("x", 1))
-    writer.close()
-
-    store.enforce_retention("myjob", RetentionPolicy(max_runs_per_job=10, max_runs_per_env=-1))
-
-    keys = [o["Key"] for o in s3_client.list_objects_v2(
-        Bucket=BUCKET, Prefix="prod/myjob/").get("Contents", [])]
-    assert len(keys) == 1
-
-
-def test_retention_with_empty_prefix(s3_client):
-    """Retention should work when prefix is empty (objects at bucket root)."""
-    store = S3OutputStore(s3_client, BUCKET, prefix="", compress=True)
-    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    for i, run_id in enumerate(["a", "b", "c"]):
-        writer = store.create_sink(iid("rootjob", run_id),
-                                     created_at=base + timedelta(days=i))
-        writer.write_line(OutputLine("x", 1))
-        writer.close()
-
-    store.enforce_retention("rootjob", RetentionPolicy(max_runs_per_job=1, max_runs_per_env=-1))
-
-    remaining = {o["Key"] for o in s3_client.list_objects_v2(
-        Bucket=BUCKET, Prefix="rootjob/").get("Contents", [])}
-    assert remaining == {"rootjob/c__1.jsonl.gz"}
-
-
-def test_retention_swallows_botocore_transport_errors(s3_client, store):
-    """enforce_retention is best-effort. A transport error (BotoCoreError) during
-    list/delete must be logged and swallowed — same as ClientError — so background
-    maintenance never crashes the calling scheduler.
-    """
-    writer = store.create_sink(iid("myjob", "run1"), created_at=utc_now())
-    writer.write_line(OutputLine("x", 1))
-    writer.close()
-
-    from unittest.mock import patch
-    from botocore.exceptions import EndpointConnectionError
-
-    err = EndpointConnectionError(endpoint_url="https://s3.example/")
-    with patch.object(s3_client, "get_paginator") as gp:
-        gp.return_value.paginate.side_effect = err
-        # Must not raise
-        store.enforce_retention("myjob",
-                                RetentionPolicy(max_runs_per_job=1, max_runs_per_env=-1))
 
 
 def test_create_store_factory(s3_client):

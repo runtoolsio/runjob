@@ -492,13 +492,12 @@ class _Node(EnvironmentNodeBase):
 
     def __init__(self, env_id, env_db, access_point: InstanceAccessPoint, sibling_connector: EnvironmentConnector,
                  output_stores, features, transient,
-                 *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE, retention_policy=None):
+                 *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE):
         EnvironmentNodeBase.__init__(
             self, env_id, env_db, output_stores=output_stores, tail_buffer_size=tail_buffer_size,
             features=features, transient=transient)
         self._access_point = access_point
         self._connector = sibling_connector
-        self._retention_policy = retention_policy
 
     def _open(self):
         self._connector.open()
@@ -534,18 +533,6 @@ class _Node(EnvironmentNodeBase):
     def notifications(self) -> InstanceNotifications:
         return self._connector.notifications
 
-    def _finalize_run(self, job_instance):
-        super()._finalize_run(job_instance)
-        if self._retention_policy:
-            job_id = job_instance.snap().metadata.job_id
-            run_isolated_collect_exceptions(
-                f"Retention errors for job {job_id}",
-                lambda: self._db.enforce_retention(job_id, self._retention_policy),
-                *(lambda s=s: s.enforce_retention(job_id, self._retention_policy)
-                  for s in self._output_stores),
-                suppress=True,
-            )
-
     def _on_added(self, job_instance):
         self._access_point.register_instance(job_instance)
 
@@ -567,8 +554,7 @@ class _Node(EnvironmentNodeBase):
 
 def compose(env_id, env_db, access_point: InstanceAccessPoint, sibling_connector: EnvironmentConnector,
             output_stores, features, transient,
-            *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE,
-            retention_policy=None) -> EnvironmentNode:
+            *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE) -> EnvironmentNode:
     """Internal framework plumbing: construct a concrete node from an instance access point.
 
     Consumed by ``_create()`` (dispatching by transport variant). Returns the abstract
@@ -578,7 +564,7 @@ def compose(env_id, env_db, access_point: InstanceAccessPoint, sibling_connector
     entry points for callers that just want a node.
     """
     return _Node(env_id, env_db, access_point, sibling_connector, output_stores, features, transient,
-                 tail_buffer_size=tail_buffer_size, retention_policy=retention_policy)
+                 tail_buffer_size=tail_buffer_size)
 
 
 def _create(env_db, env_config: EnvironmentConfig, *,
@@ -602,8 +588,7 @@ def _create(env_db, env_config: EnvironmentConfig, *,
         sibling_connector = build_connector(env_config.id, env_db, sibling_directory, output_stores)
         return compose(env_config.id, env_db, access_point, sibling_connector,
                        output_stores, to_tuple(plugin_features), transient=True,
-                       tail_buffer_size=effective_tail_buffer_size,
-                       retention_policy=env_config.retention.to_policy())
+                       tail_buffer_size=effective_tail_buffer_size)
 
     if isinstance(env_config.transport, InProcessTransportConfig):
         plugin_features = Plugin.create_all(env_config.plugins) if env_config.plugins else ()

@@ -14,8 +14,7 @@ from typing import List
 
 from runtools.runcore.job import InstanceID
 from runtools.runcore.output import OutputLine, OutputLocation, OutputStorageConfig
-from runtools.runcore.output.file import FileOutputBackend, SourceIndex, SourceIndexBuilder, _parse_file_config, _resolve_base_dir
-from runtools.runcore.retention import RetentionPolicy
+from runtools.runcore.output.file import FileOutputBackend, SourceIndexBuilder, _parse_file_config, _resolve_base_dir
 from runtools.runjob.output import OutputSink, OutputStore
 
 log = logging.getLogger(__name__)
@@ -77,39 +76,17 @@ class FileOutputSink(OutputSink):
 
 
 class FileOutputStore(FileOutputBackend, OutputStore):
-    """File-backed output store. Inherits read from FileOutputBackend, adds write + retention."""
+    """File-backed output store. Inherits read from FileOutputBackend, adds write."""
 
     def __init__(self, base_dir: Path, *, compress: bool = True):
         super().__init__(base_dir)
         self._compress = compress
 
     def create_sink(self, instance_id: InstanceID, *, created_at: datetime) -> FileOutputSink:
-        del created_at  # file backend uses filesystem mtime for retention
+        del created_at  # unused by the file backend
         path = self._output_path(instance_id)
         os.makedirs(path.parent, exist_ok=True)
         return FileOutputSink(str(path), compress=self._compress)
-
-    def enforce_retention(self, job_id: str, policy: RetentionPolicy):
-        job_dir = self._base_dir / job_id
-        if not job_dir.is_dir():
-            return
-
-        # Group files by logical run (stem without .gz), keep the newest mtime per run
-        runs: dict[Path, float] = {}
-        for f in list(job_dir.glob("*.jsonl")) + list(job_dir.glob("*.jsonl.gz")):
-            jsonl_path = Path(str(f).removesuffix('.gz'))
-            mtime = f.stat().st_mtime
-            runs[jsonl_path] = max(runs.get(jsonl_path, 0), mtime)
-
-        sorted_runs = sorted(runs, key=lambda p: runs[p], reverse=True)
-        if policy.max_runs_per_job >= 0:
-            for jsonl_path in sorted_runs[policy.max_runs_per_job:]:
-                try:
-                    jsonl_path.unlink(missing_ok=True)
-                    _gz_path(jsonl_path).unlink(missing_ok=True)
-                    SourceIndex.path_for(jsonl_path).unlink(missing_ok=True)
-                except OSError:
-                    log.warning("Failed to delete output file", extra={"path": str(jsonl_path)}, exc_info=True)
 
 
 def _compress_file(path: Path) -> Path | None:

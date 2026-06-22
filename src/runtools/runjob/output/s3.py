@@ -19,7 +19,7 @@ from typing import List
 
 from runtools.runcore.job import InstanceID
 from runtools.runcore.output import (
-    OutputLine, OutputLocation, OutputStorageConfig, format_timestamp, parse_timestamp,
+    OutputLine, OutputLocation, OutputStorageConfig, format_timestamp,
 )
 from runtools.runcore.output.s3 import (
     S3OutputBackend,
@@ -27,7 +27,6 @@ from runtools.runcore.output.s3 import (
     object_key,
     parse_s3_config,
 )
-from runtools.runcore.retention import RetentionPolicy
 from runtools.runjob.output import OutputStore, OutputSink
 
 try:
@@ -42,7 +41,6 @@ log = logging.getLogger(__name__)
 META_CREATED_AT = "runtools-created-at"
 META_RUN_ID = "runtools-run-id"
 META_ORDINAL = "runtools-ordinal"
-_DELETE_BATCH_MAX = 1000
 
 
 class S3OutputSink(OutputSink):
@@ -119,7 +117,7 @@ class S3OutputSink(OutputSink):
 
 
 class S3OutputStore(S3OutputBackend, OutputStore):
-    """S3 output store. Inherits read from S3OutputBackend, adds write + retention."""
+    """S3 output store. Inherits read from S3OutputBackend, adds write."""
 
     def __init__(self, client, bucket: str, prefix: str = "", *, compress: bool = True):
         super().__init__(client, bucket, prefix)
@@ -131,62 +129,6 @@ class S3OutputStore(S3OutputBackend, OutputStore):
             self._client, self._bucket, self._prefix, instance_id,
             created_at=created_at, compress=self._compress,
         )
-
-    def enforce_retention(self, job_id: str, policy: RetentionPolicy):
-        if policy.max_runs_per_job < 0:
-            return
-
-        prefix = f"{self._prefix}/{job_id}/" if self._prefix else f"{job_id}/"
-        # sort key = (epoch_seconds, key_name) — numeric primary so mixed metadata
-        # (...Z) and fallback (...+00:00) values compare correctly, plus a key-name
-        # tiebreaker for collisions at S3's 1s LastModified precision.
-        keys_with_sort: list[tuple[str, tuple[float, str]]] = []
-        paginator = self._client.get_paginator("list_objects_v2")
-        try:
-            for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
-                for obj in page.get("Contents") or ():
-                    sort_value = self._sort_key_for(obj)
-                    keys_with_sort.append((obj["Key"], (sort_value, obj["Key"])))
-        except (ClientError, BotoCoreError):
-            log.warning("Failed to list S3 objects for retention",
-                        extra={"bucket": self._bucket, "prefix": prefix}, exc_info=True)
-            return
-
-        keys_with_sort.sort(key=lambda kv: kv[1], reverse=True)
-        to_delete = [k for k, _ in keys_with_sort[policy.max_runs_per_job:]]
-        if not to_delete:
-            return
-
-        for i in range(0, len(to_delete), _DELETE_BATCH_MAX):
-            batch = to_delete[i: i + _DELETE_BATCH_MAX]
-            try:
-                self._client.delete_objects(
-                    Bucket=self._bucket,
-                    Delete={"Objects": [{"Key": k} for k in batch]},
-                )
-            except (ClientError, BotoCoreError):
-                log.warning("Failed to delete S3 objects for retention",
-                            extra={"bucket": self._bucket, "count": len(batch)}, exc_info=True)
-
-    def _sort_key_for(self, list_entry: dict) -> float:
-        """Epoch-seconds sort key. Prefers our metadata; falls back to LastModified.
-
-        Returns a float so retention sorts numerically — string isoformats from
-        metadata (``...Z``) and LastModified (``...+00:00``) would otherwise
-        misorder lexicographically. Returns 0.0 when neither is parseable, so
-        broken entries sort to the oldest position and get pruned first.
-        """
-        try:
-            head = self._client.head_object(Bucket=self._bucket, Key=list_entry["Key"])
-            meta = head.get("Metadata") or {}
-            if created := meta.get(META_CREATED_AT):
-                if dt := parse_timestamp(created):
-                    return dt.timestamp()
-        except (ClientError, BotoCoreError):
-            log.debug("HEAD failed during retention sort, falling back to LastModified",
-                      extra={"key": list_entry.get("Key")})
-        last_modified = list_entry.get("LastModified")
-        return last_modified.timestamp() if last_modified else 0.0
 
 
 def create_store(env_id: str, config: OutputStorageConfig) -> S3OutputStore:

@@ -32,7 +32,6 @@ from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import InstanceID
 from runtools.runcore.output import (OutputLine, OutputObserver, TailBuffer, Mode, OutputLineFactory, Output,
                                      TailNotSupportedError, OutputBackend, parse_timestamp)
-from runtools.runcore.retention import RetentionPolicy
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY, ObserverContext
 from runtools.runjob.phase import _current_phase
 
@@ -587,10 +586,6 @@ class OutputStore(OutputBackend, ABC):
                 use this so DB-, lifecycle-, and store-side timestamps stay
                 consistent.
         """
-
-    @abstractmethod
-    def enforce_retention(self, job_id: str, policy: RetentionPolicy):
-        """Prune old output for a job according to retention policy."""
 
 
 # ---------------------------------------------------------------------------
