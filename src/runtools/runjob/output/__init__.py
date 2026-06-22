@@ -5,7 +5,7 @@ Key Components:
     OutputPipeline: Receives output lines, runs processors, dispatches to observers.
     OutputRouter: Routes to a tail buffer + a set of OutputSinks (real-time or batched).
     OutputSink: ABC for streaming write destinations (file, S3) attached to a router.
-    OutputStore: ABC extending OutputBackend with write + retention.
+    OutputStore: ABC extending OutputBackend with write capability.
     OutputParser: Smart output parser (JSON → text log → KV → plain).
 
 Factory Functions:
@@ -572,19 +572,14 @@ class OutputRouter(OutputObserver, Output):
 
 
 class OutputStore(OutputBackend, ABC):
-    """Extends OutputBackend with write and retention capabilities."""
+    """Extends OutputBackend with write capability."""
 
     @abstractmethod
-    def create_sink(self, instance_id: InstanceID, *, created_at: datetime) -> OutputSink:
+    def create_sink(self, instance_id: InstanceID) -> OutputSink:
         """Create a per-instance writer for storing output lines.
 
         Args:
             instance_id: Fully-qualified InstanceID of the run being written.
-            created_at: Canonical creation timestamp of the run (the same value
-                threaded into RunStorage.init_run, derived from
-                root_phase.created_at). Backends that record retention metadata
-                use this so DB-, lifecycle-, and store-side timestamps stay
-                consistent.
         """
 
 

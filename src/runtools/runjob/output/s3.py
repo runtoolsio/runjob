@@ -14,13 +14,10 @@ which can drift via replication, copy, or out-of-order PUTs.
 import gzip
 import json
 import logging
-from datetime import datetime
 from typing import List
 
 from runtools.runcore.job import InstanceID
-from runtools.runcore.output import (
-    OutputLine, OutputLocation, OutputStorageConfig, format_timestamp,
-)
+from runtools.runcore.output import OutputLine, OutputLocation, OutputStorageConfig
 from runtools.runcore.output.s3 import (
     S3OutputBackend,
     build_client,
@@ -38,37 +35,26 @@ except ImportError as e:
 
 log = logging.getLogger(__name__)
 
-META_CREATED_AT = "runtools-created-at"
-META_RUN_ID = "runtools-run-id"
-META_ORDINAL = "runtools-ordinal"
-
 
 class S3OutputSink(OutputSink):
     """Buffers OutputLines in memory, flushes to S3 as a single object on close."""
 
     def __init__(self, client, bucket: str, prefix: str, instance_id: InstanceID, *,
-                 created_at: datetime, compress: bool = True):
+                 compress: bool = True):
         """Build a writer for one run's output.
 
         Args:
             client: boto3 S3 client.
             bucket: Target bucket name.
             prefix: Key prefix under the bucket (may be empty for bucket root).
-            instance_id: Fully-qualified InstanceID. ``run_id`` and ``ordinal``
-                are written into S3 metadata; the full triple drives the object
-                key via :func:`object_key`.
-            created_at: Canonical run creation timestamp (typically equal to
-                ``root_phase.created_at`` and the partial DB row's ``created``).
-                Written into S3 metadata to drive retention sort independently
-                of S3 LastModified.
+            instance_id: Fully-qualified InstanceID — drives the object key via
+                :func:`object_key`.
             compress: Gzip the payload on close. Affects ``Content-Encoding``
                 and the chosen ``.jsonl`` vs ``.jsonl.gz`` suffix.
         """
         self._client = client
         self._bucket = bucket
         self._key = object_key(prefix, instance_id, compress=compress)
-        self._instance_id = instance_id
-        self._created_at = created_at
         self._compress = compress
         self._buffer: List[OutputLine] = []
         self._closed = False
@@ -105,11 +91,6 @@ class S3OutputSink(OutputSink):
             "Key": self._key,
             "Body": gzip.compress(payload) if self._compress else payload,
             "ContentType": "application/x-ndjson",
-            "Metadata": {
-                META_CREATED_AT: format_timestamp(self._created_at),
-                META_RUN_ID: self._instance_id.run_id,
-                META_ORDINAL: str(self._instance_id.ordinal),
-            },
         }
         if self._compress:
             kwargs["ContentEncoding"] = "gzip"
@@ -123,11 +104,9 @@ class S3OutputStore(S3OutputBackend, OutputStore):
         super().__init__(client, bucket, prefix)
         self._compress = compress
 
-    def create_sink(self, instance_id: InstanceID, *,
-                      created_at: datetime) -> S3OutputSink:
+    def create_sink(self, instance_id: InstanceID) -> S3OutputSink:
         return S3OutputSink(
-            self._client, self._bucket, self._prefix, instance_id,
-            created_at=created_at, compress=self._compress,
+            self._client, self._bucket, self._prefix, instance_id, compress=self._compress,
         )
 
 

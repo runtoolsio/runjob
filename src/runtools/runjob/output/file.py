@@ -8,7 +8,6 @@ import gzip
 import json
 import logging
 import os
-from datetime import datetime
 from pathlib import Path
 from typing import List
 
@@ -82,8 +81,7 @@ class FileOutputStore(FileOutputBackend, OutputStore):
         super().__init__(base_dir)
         self._compress = compress
 
-    def create_sink(self, instance_id: InstanceID, *, created_at: datetime) -> FileOutputSink:
-        del created_at  # unused by the file backend
+    def create_sink(self, instance_id: InstanceID) -> FileOutputSink:
         path = self._output_path(instance_id)
         os.makedirs(path.parent, exist_ok=True)
         return FileOutputSink(str(path), compress=self._compress)

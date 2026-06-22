@@ -7,7 +7,6 @@ import pytest
 from runtools.runcore.job import iid
 from runtools.runcore.output import OutputLine
 from runtools.runcore.output.file import SourceIndex
-from runtools.runcore.util.dt import utc_now
 from runtools.runjob.output.file import FileOutputStore, FileOutputSink
 
 
@@ -17,7 +16,7 @@ def store(tmp_path):
 
 
 def test_create_sink(store, tmp_path):
-    writer = store.create_sink(iid('myjob', 'run1'), created_at=utc_now())
+    writer = store.create_sink(iid('myjob', 'run1'))
     assert writer.file_path == tmp_path / 'myjob' / 'run1__1.jsonl'
 
 
