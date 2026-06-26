@@ -106,13 +106,14 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
      - Close/exit operations wait for all instances to be detached
     """
     OBSERVERS_PRIORITY = 1000
-    PERSIST_FLUSH_INTERVAL = 1.0  # Seconds between coalesced active-state flushes
+    PERSIST_FLUSH_INTERVAL = 0.25  # Default seconds between coalesced active-state flushes
 
     def __init__(self, env_id, env_db, output_stores=(), tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE,
-                 features=(), transient=True):
+                 features=(), transient=True, persist_flush_interval=PERSIST_FLUSH_INTERVAL):
         self._env_id = env_id
         self._db = env_db
         self._persister = RunStatePersister(env_db)
+        self._persist_flush_interval = persist_flush_interval
         self._persister_stop = Event()
         self._persister_thread = None
         self._output_stores = tuple(output_stores)
@@ -146,7 +147,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         return self._executor.submit(fnc)
 
     def _flush_persister_loop(self):
-        while not self._persister_stop.wait(self.PERSIST_FLUSH_INTERVAL):
+        while not self._persister_stop.wait(self._persist_flush_interval):
             try:
                 self._persister.flush()
             except Exception:
