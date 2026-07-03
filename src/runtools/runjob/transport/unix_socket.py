@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from runtools.runcore import paths
-from runtools.runcore.env import UnixSocketTransportConfig
 from runtools.runcore.err import run_isolated_collect_exceptions
 from runtools.runcore.job import (
     InstanceControlEvent,
@@ -355,7 +354,7 @@ class UnixSocketInstanceAccessPoint:
 
 def create_node_transports(
         env_id: str,
-        transport_config: UnixSocketTransportConfig,
+        root_dir: Optional[Path] = None,
 ) -> tuple[UnixSocketInstanceDirectory, UnixSocketInstanceAccessPoint]:
     """Build a unix_socket node's transport pair, sharing a single layout.
 
@@ -365,8 +364,8 @@ def create_node_transports(
     one component dir.
     """
     # Sweep stale components before allocating our own — no need to scan past our live lock.
-    clean_stale_component_dirs(resolve_env_dir(env_id, transport_config.root_dir))
-    layout = StandardUnixSocketNodeLayout.create(env_id, transport_config.root_dir)
+    clean_stale_component_dirs(resolve_env_dir(env_id, root_dir))
+    layout = StandardUnixSocketNodeLayout.create(env_id, root_dir)
 
     rpc_client = UnixSocketRpcClient(layout.server_sockets_provider)
     sibling_directory = UnixSocketInstanceDirectory(layout, rpc_client, UnixSocketInstanceDiscovery(rpc_client),

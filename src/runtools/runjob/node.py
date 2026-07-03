@@ -4,13 +4,13 @@ from functools import partial
 from concurrent.futures.thread import ThreadPoolExecutor
 from enum import Enum, auto
 from threading import Condition, Event, Lock, Thread
-from typing import Dict, Optional, List, override, Tuple
+from typing import Dict, Optional, List, Tuple, assert_never, override
 
 from runtools.runcore import util
 from runtools.runcore.connector import EnvironmentConnector
 from runtools.runcore.db import sqlite
-from runtools.runcore.env import EnvironmentConfig, InProcessTransportConfig, UnixSocketTransportConfig, \
-    EnvironmentEntry, _open_environment, resolve_env_ref, ensure_environment
+from runtools.runcore.env import EnvironmentKind, LocalEnvironmentConfig, \
+    EnvironmentEntry, EnvironmentNotFoundError, resolve_env_ref, ensure_environment
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
     JobInstanceDelegate, InstanceID, \
@@ -393,13 +393,13 @@ def connect(env_ref: EnvironmentEntry | str | None = None, *,
     """
     entry = resolve_env_ref(env_ref)
     ensure_environment(entry)
-    env_db, config = _open_environment(entry)
-    try:
-        return _create(env_db, config,
-                       disable_output=disable_output, tail_buffer_size=tail_buffer_size)
-    except BaseException:
-        env_db.close()
-        raise
+    match entry.kind:
+        case EnvironmentKind.LOCAL:
+            return _connect_local(entry, disable_output=disable_output, tail_buffer_size=tail_buffer_size)
+        case EnvironmentKind.POSTGRES:
+            raise NotImplementedError("A 'postgres' environment can be observed but not produced yet")
+        case _:
+            assert_never(entry.kind)  # new kind added but not wired here
 
 
 def in_process(env_id=None, env_db=None, *, lock_factory=None, features=None, transient=True) -> 'InProcessNode':
@@ -567,34 +567,36 @@ def compose(env_id, env_db, access_point: InstanceAccessPoint, sibling_connector
                  tail_buffer_size=tail_buffer_size)
 
 
-def _create(env_db, env_config: EnvironmentConfig, *,
-            disable_output: tuple[str, ...] = (), tail_buffer_size=None) -> 'EnvironmentNodeBase':
-    """Internal: create an environment node from a database and configuration with optional runtime overrides."""
-    if isinstance(env_config.transport, UnixSocketTransportConfig):
-        from runtools.runcore.connector import compose as build_connector
-        from runtools.runjob.transport import unix_socket
+def _connect_local(entry: EnvironmentEntry, *,
+                   disable_output: tuple[str, ...] = (), tail_buffer_size=None) -> 'EnvironmentNodeBase':
+    """Node for a ``local`` environment: sqlite + unix-socket transport pair + file locks."""
+    from runtools.runcore.connector import compose as build_connector
+    from runtools.runjob.transport import unix_socket
+    # Check before open: opening a missing sqlite file would silently provision a fresh schema
+    if not sqlite.exists(entry):
+        raise EnvironmentNotFoundError(f"Database for environment '{entry.id}' not found", {entry.id})
+    env_db = sqlite.create(entry)
+    env_db.open()
+    try:
+        config = LocalEnvironmentConfig.model_validate(env_db.load_config(entry.id))
         if "all" in disable_output:
             storages = []
         else:
-            storages = [s for s in env_config.output.storages if s.type not in disable_output]
+            storages = [s for s in config.output.storages if s.type not in disable_output]
         # Cheap, in-memory builds first; transports allocate component dirs and flocks.
-        output_stores = output.create_stores(env_config.id, storages)
+        output_stores = output.create_stores(entry.id, storages)
         effective_tail_buffer_size = tail_buffer_size if tail_buffer_size is not None \
-            else env_config.output.default_tail_buffer_size
-        plugin_features = Plugin.create_all(env_config.plugins) if env_config.plugins else ()
+            else config.output.default_tail_buffer_size
+        plugin_features = Plugin.create_all(config.plugins) if config.plugins else ()
 
-        sibling_directory, access_point = unix_socket.create_node_transports(
-            env_config.id, env_config.transport)
-        sibling_connector = build_connector(env_config.id, env_db, sibling_directory, output_stores)
-        return compose(env_config.id, env_db, access_point, sibling_connector,
+        sibling_directory, access_point = unix_socket.create_node_transports(entry.id, config.root_dir)
+        sibling_connector = build_connector(entry.id, env_db, sibling_directory, output_stores)
+        return compose(entry.id, env_db, access_point, sibling_connector,
                        output_stores, to_tuple(plugin_features), transient=True,
                        tail_buffer_size=effective_tail_buffer_size)
-
-    if isinstance(env_config.transport, InProcessTransportConfig):
-        plugin_features = Plugin.create_all(env_config.plugins) if env_config.plugins else ()
-        return in_process(env_config.id, env_db, features=plugin_features)
-
-    raise AssertionError(f"Unsupported transport: {type(env_config.transport).__name__}.")
+    except BaseException:
+        env_db.close()
+        raise
 
 
 
