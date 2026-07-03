@@ -22,6 +22,17 @@ class CoordTypes(Enum):
     QUEUE = 'QUEUE'
 
 
+# Lock IDs are a cross-process protocol: nodes exclude each other only when they compute
+# identical IDs, so each format is defined exactly once here. Prefixes are framework-reserved.
+
+def _mutex_lock_id(exclusion_group):
+    return f"mutex-{exclusion_group}"
+
+
+def _queue_lock_id(group_id):
+    return f"eq-{group_id}"
+
+
 class CheckpointPhase(BasePhase[Any]):
     """
     A strict barrier that must be resumed for the pipeline to continue.
@@ -141,7 +152,7 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
     def _run(self, ctx: JobInstanceContext):
         excl_group = self.exclusion_group or ctx.metadata.job_id
         log.debug("Mutex check started", extra={"group": excl_group})
-        with ctx.environment.lock(f"mutex-{excl_group}"):  # TODO Manage lock names better
+        with ctx.environment.lock(_mutex_lock_id(excl_group)):
             excl_runs: List[JobRun] = ctx.environment.get_active_runs(self._excl_running_job_filter(ctx))
             for excl_run in excl_runs:
                 for mutex_phase in excl_run.search_phases(MutualExclusionPhase.running_mutex_filter):
@@ -302,9 +313,6 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
         self._state = QueuedState.NONE
         self._queue_changed = True
 
-    def _lock_name(self):
-        # TODO Modifiable (inheritance?)
-        return f"eq-{self._group.group_id}"
 
     @property
     def attributes(self):
@@ -346,7 +354,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
 
                     self._queue_changed = False
 
-                with ctx.environment.lock(self._lock_name()):
+                with ctx.environment.lock(_queue_lock_id(self._group.group_id)):
                     self._dispatch_next(ctx)
         finally:
             ctx.environment.notifications.remove_observer_phase(self._instance_phase_update)
