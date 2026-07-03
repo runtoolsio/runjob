@@ -35,7 +35,7 @@ class EnvironmentNode(EnvironmentConnector, ABC):
 
     @abstractmethod
     def lock(self, lock_id):
-        """TODO to separate type"""
+        """Obtain a named exclusive lock for job coordination within this environment."""
 
 
 class _InstanceState(Enum):
@@ -402,28 +402,28 @@ def connect(env_ref: EnvironmentEntry | str | None = None, *,
             assert_never(entry.kind)  # new kind added but not wired here
 
 
-def in_process(env_id=None, env_db=None, *, lock_factory=None, features=None, transient=True) -> 'InProcessNode':
+def in_process(env_id=None, env_db=None, *, lock_provider=None, features=None, transient=True) -> 'InProcessNode':
     """Create an in-process environment node for testing and development.
 
     Args:
         env_id: Environment identifier. Defaults to a unique generated ID.
         env_db: Environment database. Defaults to in-memory SQLite.
-        lock_factory: Factory for memory-based locks. Defaults to the standard memory lock factory.
+        lock_provider: Provider of coordination locks. Defaults to the in-memory provider.
         features: Features to attach to the node lifecycle.
         transient: Whether instances are removed from the node after detaching. Defaults to True.
     """
     env_id = env_id or "in_process_" + util.unique_timestamp_hex()
     env_db = env_db or sqlite.create_memory(env_id)
-    lock_factory = lock_factory or lock.default_memory_lock_factory()
-    return InProcessNode(env_id, env_db, lock_factory, to_tuple(features), transient)
+    lock_provider = lock_provider or lock.MemoryLockProvider()
+    return InProcessNode(env_id, env_db, lock_provider, to_tuple(features), transient)
 
 
 class InProcessNode(EnvironmentNodeBase):
 
-    def __init__(self, env_id, env_db, lock_factory, features, transient=True):
+    def __init__(self, env_id, env_db, lock_provider, features, transient=True):
         self._notifications = InstanceObservableNotifications()
         EnvironmentNodeBase.__init__(self, env_id, env_db, features=features, transient=transient)
-        self._lock_factory = lock_factory
+        self._lock_provider = lock_provider
 
     @property
     @override
@@ -470,7 +470,7 @@ class InProcessNode(EnvironmentNodeBase):
         return removed_ids
 
     def lock(self, lock_id):
-        return self._lock_factory(lock_id)
+        return self._lock_provider.lock(lock_id)
 
     def close(self):
         run_isolated_collect_exceptions(
@@ -491,13 +491,14 @@ class _Node(EnvironmentNodeBase):
     """
 
     def __init__(self, env_id, env_db, access_point: InstanceAccessPoint, sibling_connector: EnvironmentConnector,
-                 output_stores, features, transient,
+                 lock_provider, output_stores, features, transient,
                  *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE):
         EnvironmentNodeBase.__init__(
             self, env_id, env_db, output_stores=output_stores, tail_buffer_size=tail_buffer_size,
             features=features, transient=transient)
         self._access_point = access_point
         self._connector = sibling_connector
+        self._lock_provider = lock_provider
 
     def _open(self):
         self._connector.open()
@@ -540,8 +541,7 @@ class _Node(EnvironmentNodeBase):
         self._access_point.unregister_instance(job_instance)
 
     def lock(self, lock_id):
-        # TODO Method to separate type
-        return self._access_point.lock_factory(lock_id)
+        return self._lock_provider.lock(lock_id)
 
     def close(self):
         run_isolated_collect_exceptions(
@@ -553,17 +553,17 @@ class _Node(EnvironmentNodeBase):
 
 
 def compose(env_id, env_db, access_point: InstanceAccessPoint, sibling_connector: EnvironmentConnector,
-            output_stores, features, transient,
+            lock_provider, output_stores, features, transient,
             *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE) -> EnvironmentNode:
-    """Internal framework plumbing: construct a concrete node from an instance access point.
+    """Internal framework plumbing: construct a concrete node from its runtime parts.
 
-    Consumed by ``_create()`` (dispatching by transport variant). Returns the abstract
+    Consumed by the per-kind connect functions. Returns the abstract
     ``EnvironmentNode`` so callers depend on the interface, not the concrete class.
 
     Not part of the public API — :func:`connect` or :func:`in_process` are the supported
     entry points for callers that just want a node.
     """
-    return _Node(env_id, env_db, access_point, sibling_connector, output_stores, features, transient,
+    return _Node(env_id, env_db, access_point, sibling_connector, lock_provider, output_stores, features, transient,
                  tail_buffer_size=tail_buffer_size)
 
 
@@ -588,10 +588,11 @@ def _connect_local(entry: EnvironmentEntry, *,
         effective_tail_buffer_size = tail_buffer_size if tail_buffer_size is not None \
             else config.output.default_tail_buffer_size
         plugin_features = Plugin.create_all(config.plugins) if config.plugins else ()
+        lock_provider = lock.FileLockProvider(entry.id)
 
         sibling_directory, access_point = unix_socket.create_node_transports(entry.id, config.root_dir)
         sibling_connector = build_connector(entry.id, env_db, sibling_directory, output_stores)
-        return compose(entry.id, env_db, access_point, sibling_connector,
+        return compose(entry.id, env_db, access_point, sibling_connector, lock_provider,
                        output_stores, to_tuple(plugin_features), transient=True,
                        tail_buffer_size=effective_tail_buffer_size)
     except BaseException:

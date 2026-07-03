@@ -304,7 +304,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
 
     def _lock_name(self):
         # TODO Modifiable (inheritance?)
-        return f"eq-{self._group.group_id}.lock"
+        return f"eq-{self._group.group_id}"
 
     @property
     def attributes(self):

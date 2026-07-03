@@ -35,7 +35,6 @@ from runtools.runcore.transport.unix_socket import (
     ensure_component_dir,
     resolve_env_dir,
 )
-from runtools.runcore.util import lock
 from runtools.runcore.util.json import ErrorCode, JsonRpcError
 from runtools.runcore.util.socket import DatagramSocketClient, StreamSocketServer
 from runtools.runjob.server import (
@@ -323,11 +322,9 @@ class UnixSocketInstanceAccessPoint:
     Conforms to :class:`runtools.runjob.transport.InstanceAccessPoint`.
     """
 
-    def __init__(self, rpc_server: UnixSocketNodeServer, event_dispatcher: UnixSocketEventDispatcher,
-                 lock_factory: Callable[[str], object]):
+    def __init__(self, rpc_server: UnixSocketNodeServer, event_dispatcher: UnixSocketEventDispatcher):
         self._rpc_server = rpc_server
         self._event_dispatcher = event_dispatcher
-        self.lock_factory = lock_factory
 
     def start(self) -> None:
         self._rpc_server.start()
@@ -379,6 +376,5 @@ def create_node_transports(
             InstanceControlEvent.EVENT_TYPE: layout.listener_control_sockets_provider,
             InstanceStatusEvent.EVENT_TYPE: layout.listener_status_sockets_provider,
         }),
-        lock.default_file_lock_factory(paths.lock_dir(create=True)),
     )
     return sibling_directory, access_point

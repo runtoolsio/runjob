@@ -8,7 +8,7 @@ The :class:`InstanceAccessPoint` protocol declares what the concrete node
 Concrete bundles live in ``runtools.runjob.transport.<transport>``.
 """
 
-from typing import Callable, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from runtools.runcore.job import JobInstance
 
@@ -19,14 +19,14 @@ class InstanceAccessPoint(Protocol):
 
     ``register_instance`` / ``unregister_instance`` make an instance reachable and
     observable; how that maps onto wire resources (RPC server, event dispatch, ...) is
-    the transport's concern, not the node's. ``lock_factory`` builds ``(lock_id) ->
-    context-manager lock`` for job coordination. ``close()`` releases node-only resources.
+    the transport's concern, not the node's. ``close()`` releases node-only resources.
 
-    The node's sibling-facing connector is **not** part of this seam — it is constructed
-    separately by the transport factory (sharing whatever layout / shared state the
-    transport needs) and passed into the node.
+    Job coordination locks are **not** part of this seam — the node holds a separate
+    ``LockProvider`` (``runtools.runcore.util.lock``). The node's sibling-facing
+    connector is not part of it either — it is constructed separately by the transport
+    factory (sharing whatever layout / shared state the transport needs) and passed
+    into the node.
     """
-    lock_factory: Callable[[str], object]
 
     def start(self) -> None: ...
 
