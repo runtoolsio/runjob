@@ -4,7 +4,7 @@ from enum import Enum, auto
 from threading import Condition, Event, Lock
 from typing import Any, List
 
-from runtools.runcore.matching import criteria, JobRunCriteria, PhaseCriterion, LifecycleCriterion
+from runtools.runcore.matching import JobRunCriteria, PhaseCriterion, LifecycleCriterion
 from runtools.runcore.job import JobRun, InstancePhaseEvent
 from runtools.runcore.run import TerminationStatus, control_api, Stage
 from runtools.runjob.instance import JobInstanceContext
@@ -121,15 +121,11 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
     """
     A phase that prevents concurrent execution of protected phases within the same exclusion group.
 
-    If another instance is already running a MutualExclusionPhase with the same exclusion group,
-    this phase terminates with OVERLAP status. Otherwise, it proceeds to run the protected child phase.
-
-    Note: Current implementation doesn't implement a fair strategy for phases executed at nearly the same time.
+    Claim-then-act: the group lock is claimed without waiting when the phase runs and held for
+    the protected child's whole run — the claim's success is the overlap decision, so no state
+    is read and nothing can be stale, and a crashed holder's claim is released by the lock
+    medium. If the group lock is already held elsewhere, this phase terminates with OVERLAP.
     """
-    running_mutex_filter = PhaseCriterion(
-        phase_type=CoordTypes.MUTEX.value,
-        lifecycle=LifecycleCriterion(stage=Stage.RUNNING)
-    )
 
     def __init__(self, phase_id, protected_phase, *, exclusion_group=None):
         super().__init__(phase_id, CoordTypes.MUTEX.value, [protected_phase])
@@ -145,24 +141,16 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
     def attributes(self):
         return self._attrs
 
-    @staticmethod
-    def _excl_running_job_filter(ctx):
-        return criteria().all_except(ctx.metadata.instance_id).phase(MutualExclusionPhase.running_mutex_filter).build()
-
     def _run(self, ctx: JobInstanceContext):
         excl_group = self.exclusion_group or ctx.metadata.job_id
-        log.debug("Mutex check started", extra={"group": excl_group})
-        with ctx.environment.lock(_mutex_lock_id(excl_group)):
-            excl_runs: List[JobRun] = ctx.environment.get_active_runs(self._excl_running_job_filter(ctx))
-            for excl_run in excl_runs:
-                for mutex_phase in excl_run.search_phases(MutualExclusionPhase.running_mutex_filter):
-                    phase_excl_group = mutex_phase.attributes.get('exclusion_group') or excl_run.job_id
-                    if phase_excl_group == excl_group:
-                        log.warning("Mutex overlap found group=%s", excl_group,
-                                    extra={"instance": str(excl_run.instance_id), "group": excl_group})
-                        raise PhaseTerminated(TerminationStatus.OVERLAP)
-
-        self.run_child(self._children[0])
+        mutex_lock = ctx.environment.lock(_mutex_lock_id(excl_group))
+        if not mutex_lock.try_acquire():
+            log.warning("Mutex overlap found", extra={"group": excl_group})
+            raise PhaseTerminated(TerminationStatus.OVERLAP)
+        try:
+            self.run_child(self._children[0])
+        finally:
+            mutex_lock.release()
 
 
 class DependencyPhase(BasePhase[JobInstanceContext]):

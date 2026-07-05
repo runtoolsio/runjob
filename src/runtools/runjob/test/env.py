@@ -9,7 +9,6 @@ Usage:
     ...
     inst.stop()
 """
-from contextlib import contextmanager
 from threading import Event, Thread
 from typing import List, Optional
 
@@ -17,6 +16,7 @@ from runtools.runcore.job import (
     JobInstance, JobInstanceDelegate, JobRun, InstanceObservableNotifications, InstanceNotifications, iid,
 )
 from runtools.runcore.run import StopReason
+from runtools.runcore.util.lock import MemoryLockProvider
 from runtools.runjob import instance
 
 
@@ -63,7 +63,7 @@ class FakeEnvironment:
 
     Provides the interface that coordination phases use from ctx.environment:
     - notifications: observer registration (required by ExecutionQueue)
-    - lock(): no-op context manager
+    - lock(): real in-memory locks (claim semantics observable across instances)
     - get_active_runs(): returns a configurable list (default empty)
     - get_instance(): returns managed instances by ID
     """
@@ -71,6 +71,7 @@ class FakeEnvironment:
     def __init__(self, *, active_runs: Optional[List[JobRun]] = None):
         self._notifications = InstanceObservableNotifications()
         self._instances = {}
+        self._lock_provider = MemoryLockProvider()
         self.active_runs: List[JobRun] = active_runs or []
 
     @property
@@ -81,9 +82,8 @@ class FakeEnvironment:
     def notifications(self) -> InstanceNotifications:
         return self._notifications
 
-    @contextmanager
     def lock(self, lock_id):
-        yield
+        return self._lock_provider.lock(lock_id)
 
     def get_active_runs(self, run_match=None) -> List[JobRun]:
         if run_match:
