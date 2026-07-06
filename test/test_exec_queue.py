@@ -75,6 +75,73 @@ def test_capacity_limits_concurrent_children():
     assert queued.termination.status == TerminationStatus.COMPLETED
 
 
+def _queued_run_snapshot(fake_env, job_id, queue_phase):
+    """A JobRun snapshot whose QUEUE phase reports IN_QUEUE — an observation-lane fixture."""
+    inst = fake_env.create_instance(job_id, 'r1', queue_phase)
+    queue_phase._state = QueuedState.IN_QUEUE
+    return inst.snap()
+
+
+def test_claim_deferred_behind_visible_older_queued_instance():
+    """A permanently visible older entry (e.g. dead node) delays dispatch by a stagger step, never blocks it."""
+    fake_env = FakeEnvironment()
+    ghost = ExecutionQueue('GHOST', GROUP, TestPhase('c1'))
+    younger = ExecutionQueue('YOUNGER', GROUP, TestPhase('c2'))
+    fake_env.active_runs.append(_queued_run_snapshot(fake_env, 'ghost_job', ghost))
+
+    start = time.monotonic()
+    fake_env.create_instance('younger_job', 'r1', younger).run()
+    elapsed = time.monotonic() - start
+
+    assert younger.termination.status == TerminationStatus.COMPLETED
+    assert elapsed >= ExecutionQueue.CLAIM_STAGGER_INTERVAL
+
+
+def test_does_not_defer_behind_younger_instance():
+    fake_env = FakeEnvironment()
+    mine = ExecutionQueue('MINE', GROUP, TestPhase('c1'))
+    newer = ExecutionQueue('NEWER', GROUP, TestPhase('c2'))
+    fake_env.active_runs.append(_queued_run_snapshot(fake_env, 'newer_job', newer))
+
+    start = time.monotonic()
+    fake_env.create_instance('my_job', 'r1', mine).run()
+    elapsed = time.monotonic() - start
+
+    assert mine.termination.status == TerminationStatus.COMPLETED
+    assert elapsed < ExecutionQueue.CLAIM_STAGGER_INTERVAL
+
+
+def test_older_waiter_claims_freed_slot_before_younger():
+    """Saturated queue: when the slot frees, the visibly older waiter wins over the younger."""
+    fake_env = FakeEnvironment()
+    holder_child = TestPhase('hold', wait=True)
+    holder = ExecutionQueue('HOLDER', GROUP, holder_child)
+    older_child = TestPhase('c1', wait=True)
+    older = ExecutionQueue('OLDER', GROUP, older_child)
+    younger = ExecutionQueue('YOUNGER', GROUP, TestPhase('c2'))
+
+    fake_env.create_instance('holder_job', 'r1', holder).run(in_background=True)
+    _wait_for_state(holder, QueuedState.DISPATCHED)
+
+    older_inst = fake_env.create_instance('older_job', 'r1', older)
+    older_inst.run(in_background=True)
+    _wait_for_state(older, QueuedState.IN_QUEUE)
+    fake_env.active_runs.append(older_inst.snap())  # make the older waiter visible to the younger
+
+    fake_env.create_instance('younger_job', 'r1', younger).run(in_background=True)
+    _wait_for_state(younger, QueuedState.IN_QUEUE)
+
+    holder_child.release()  # slot freed -> both wake; the older claims immediately, the younger defers
+
+    _wait_for_state(older, QueuedState.DISPATCHED)
+    assert younger.state == QueuedState.IN_QUEUE
+
+    older_child.release()
+    _wait_for_termination(younger)
+    assert older.termination.status == TerminationStatus.COMPLETED
+    assert younger.termination.status == TerminationStatus.COMPLETED
+
+
 def test_multiple_slots_run_children_concurrently():
     group = ConcurrencyGroup('par_group', max_executions=2)
     fake_env = FakeEnvironment()

@@ -238,7 +238,14 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
     entering this phase repeatedly tries to claim any free slot, holds the claimed slot for the
     child's whole run, and releases it after — the claim's success is the dispatch decision, so
     no shared state is read and nothing can be stale, and a crashed holder's slot is released by
-    the lock medium. Dispatch order under contention is claim order (no strict FIFO).
+    the lock medium.
+
+    Dispatch order is claim order softened by seniority-staggered claims: before claiming, an
+    instance counts the visibly older queued instances of its group and delays its attempt
+    proportionally, so older waiters get first pick after each wake-up. This is politeness, not
+    protocol — the view may be stale (order inversions possible, capacity violations not), and
+    a stale entry (e.g. from a dead node) only delays claims by one stagger step, never blocks
+    them.
 
     Queue state machine (guarded by ``_queue_change_condition``)::
 
@@ -260,6 +267,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
     GROUP_ID = "group_id"
     MAX_EXEC = "max_exec"
     STATE = "state"
+    CLAIM_STAGGER_INTERVAL = 0.1  # Seconds of claim delay per visibly older queued instance
 
     def __init__(self, phase_id, concurrency_group, limited_phase, queue_rescan_timeout=30):
         super().__init__(phase_id or concurrency_group.group_id, CoordTypes.QUEUE.value, [limited_phase])
@@ -323,6 +331,13 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
 
                     self._queue_changed = False
 
+                rank = self._claim_rank(ctx)
+                if rank:
+                    # Stagger by seniority so older waiters get first pick after a wake-up;
+                    # an early notify (stop, slot freed) just advances the attempt
+                    with self._queue_change_condition:
+                        self._queue_change_condition.wait(timeout=rank * ExecutionQueue.CLAIM_STAGGER_INTERVAL)
+
                 slot_lock = self._try_claim_slot(ctx)
                 if slot_lock:
                     with self._queue_change_condition:
@@ -349,6 +364,27 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
                 log.debug("Queue slot claimed", extra={"group": self._group.group_id, "slot": slot})
                 return slot_lock
         return None
+
+    def _claim_rank(self, ctx):
+        """Soft ordering: the number of visibly older queued instances of the group.
+
+        The rank staggers claim attempts (oldest first). Politeness only — the observation view
+        may be stale, so this can invert order but never break capacity, and a stale entry only
+        delays a claim by one stagger step, never blocks it.
+        """
+        runs = ctx.environment.get_active_runs(JobRunCriteria(phase_criteria=(self._phase_filter,)))
+        rank = 0
+        for run in runs:
+            if run.instance_id == ctx.metadata.instance_id:
+                continue
+            queue_phase = run.find_first_phase(self._phase_filter)
+            if (queue_phase.variables.get(ExecutionQueue.STATE) == QueuedState.IN_QUEUE.name
+                    and queue_phase.lifecycle.created_at < self.created_at):
+                rank += 1
+        if rank:
+            log.debug("Deferring claim to older queued instances",
+                      extra={"group": self._group.group_id, "older_count": rank})
+        return rank
 
     def _stop_running(self, reason):
         with self._queue_change_condition:
