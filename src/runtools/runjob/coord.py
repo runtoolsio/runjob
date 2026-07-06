@@ -2,10 +2,10 @@ import logging
 from dataclasses import dataclass
 from enum import Enum, auto
 from threading import Condition, Event, Lock
-from typing import Any, List
+from typing import Any
 
-from runtools.runcore.matching import JobRunCriteria, PhaseCriterion, LifecycleCriterion
-from runtools.runcore.job import JobRun, InstancePhaseEvent
+from runtools.runcore.matching import JobRunCriteria, PhaseCriterion
+from runtools.runcore.job import InstancePhaseEvent
 from runtools.runcore.run import TerminationStatus, control_api, Stage
 from runtools.runjob.instance import JobInstanceContext
 from runtools.runjob.phase import BasePhase, PhaseTerminated, SequentialPhase
@@ -29,8 +29,8 @@ def _mutex_lock_id(exclusion_group):
     return f"mutex-{exclusion_group}"
 
 
-def _queue_lock_id(group_id):
-    return f"eq-{group_id}"
+def _queue_slot_lock_id(group_id, slot):
+    return f"eq-{group_id}#{slot}"
 
 
 class CheckpointPhase(BasePhase[Any]):
@@ -212,20 +212,12 @@ class QueuedState(Enum):
     IN_QUEUE = auto(), False
     DISPATCHED = auto(), True
     CANCELLED = auto(), True
-    UNKNOWN = auto(), False
 
     def __new__(cls, value, dequeued):
         obj = object.__new__(cls)
         obj._value_ = value
         obj.dequeued = dequeued
         return obj
-
-    @classmethod
-    def from_str(cls, value: str):
-        try:
-            return cls[value.upper()]
-        except KeyError:
-            return cls.UNKNOWN
 
 
 @dataclass(frozen=True)
@@ -242,9 +234,11 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
     """
     A phase that limits concurrent execution of its child phase across instances in the same concurrency group.
 
-    Instances entering this phase are queued and dispatched in FIFO order (by phase creation time).
-    Only up to ``concurrency_group.max_executions`` instances run the child phase simultaneously.
-    When a running instance's queue phase ends, a slot is freed and the next queued instance is dispatched.
+    Claim-then-act: capacity is enforced by ``max_executions`` slot locks per group. An instance
+    entering this phase repeatedly tries to claim any free slot, holds the claimed slot for the
+    child's whole run, and releases it after — the claim's success is the dispatch decision, so
+    no shared state is read and nothing can be stale, and a crashed holder's slot is released by
+    the lock medium. Dispatch order under contention is claim order (no strict FIFO).
 
     Queue state machine (guarded by ``_queue_change_condition``)::
 
@@ -252,22 +246,15 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
                     │
                     └──→ CANCELLED
 
-    - NONE → IN_QUEUE: On entry to ``_run``, before the dispatch loop starts.
-    - IN_QUEUE → DISPATCHED: When ``signal_dispatch()`` is called by another instance's ``_dispatch_next``,
-      or by this instance dispatching itself.
-    - IN_QUEUE → CANCELLED: When ``stop()`` is called before dispatch.
+    - NONE → IN_QUEUE: On entry to ``_run``, before the claim loop starts.
+    - IN_QUEUE → DISPATCHED: When this instance claims a free slot.
+    - IN_QUEUE → CANCELLED: When ``stop()`` is called before a slot is claimed.
 
-    Dispatch protocol:
-        Each iteration of the wait loop acquires the environment lock for the concurrency group and calls
-        ``_dispatch_next``. This method queries all active runs with a running QUEUE phase in the same group,
-        counts how many are already DISPATCHED, and signals the next queued instances to fill free slots.
-        The dispatched instance's ``signal_dispatch()`` transitions its state to DISPATCHED and wakes its
-        wait loop, which then breaks out and runs the child phase.
-
-    Slot-freed notifications:
-        An observer on environment phase transitions detects when a QUEUE phase in the same group ends,
-        setting ``_queue_changed`` and waking the wait loop to trigger a rescan. A periodic rescan timeout
-        (default 30s) provides a fallback in case a notification is missed.
+    Wake-ups:
+        An observer on environment phase transitions detects when a QUEUE phase in the same group
+        ends (its slot is freed), setting ``_queue_changed`` and waking the claim loop for a retry.
+        A periodic rescan timeout (default 30s) provides a fallback in case a notification is
+        missed — a spurious or late wake-up is just a failed claim attempt.
     """
 
     GROUP_ID = "group_id"
@@ -288,11 +275,6 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
         self._phase_filter = PhaseCriterion(
             phase_type=CoordTypes.QUEUE.value,
             attributes=self._attrs,
-        )
-        self._phase_filter_running = PhaseCriterion(
-            phase_type=CoordTypes.QUEUE.value,
-            attributes=self._attrs,
-            lifecycle=LifecycleCriterion(stage=Stage.RUNNING),
         )
 
         self._queue_change_condition = Condition()
@@ -321,6 +303,7 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
         return self._group
 
     def _run(self, ctx):
+        slot_lock = None
         try:
             ctx.environment.notifications.add_observer_phase(self._instance_phase_update)
 
@@ -333,8 +316,6 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
                 with self._queue_change_condition:
                     if self._state == QueuedState.CANCELLED:
                         self._raise_if_stopped()
-                    if self._state == QueuedState.DISPATCHED:
-                        break
 
                     if not self._queue_changed:
                         if self._queue_change_condition.wait(timeout=self._rescan_timeout):
@@ -342,12 +323,32 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
 
                     self._queue_changed = False
 
-                with ctx.environment.lock(_queue_lock_id(self._group.group_id)):
-                    self._dispatch_next(ctx)
+                slot_lock = self._try_claim_slot(ctx)
+                if slot_lock:
+                    with self._queue_change_condition:
+                        if self._state == QueuedState.CANCELLED:
+                            # Stopped between the claim and the transition -> give the slot back
+                            slot_lock.release()
+                            slot_lock = None
+                            self._raise_if_stopped()
+                        self._state = QueuedState.DISPATCHED
+                    break
         finally:
             ctx.environment.notifications.remove_observer_phase(self._instance_phase_update)
 
-        self.run_child(self._children[0])
+        try:
+            self.run_child(self._children[0])
+        finally:
+            slot_lock.release()
+
+    def _try_claim_slot(self, ctx):
+        """Try to claim any free slot of the concurrency group. Returns the held lock or None."""
+        for slot in range(self._group.max_executions):
+            slot_lock = ctx.environment.lock(_queue_slot_lock_id(self._group.group_id, slot))
+            if slot_lock.try_acquire():
+                log.debug("Queue slot claimed", extra={"group": self._group.group_id, "slot": slot})
+                return slot_lock
+        return None
 
     def _stop_running(self, reason):
         with self._queue_change_condition:
@@ -356,49 +357,6 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
 
             self._state = QueuedState.CANCELLED
             self._queue_change_condition.notify_all()
-
-    @control_api
-    def signal_dispatch(self):
-        with self._queue_change_condition:
-            if self._state.dequeued:
-                return False
-
-            self._state = QueuedState.DISPATCHED
-            self._queue_change_condition.notify_all()
-            return True
-
-    def _dispatch_next(self, ctx):
-        filter_ = self._phase_filter_running
-        runs: List[JobRun] = ctx.environment.get_active_runs(JobRunCriteria(phase_criteria=(filter_,)))
-        runs_sorted = sorted(runs, key=lambda run: run.find_first_phase(filter_).lifecycle.created_at)
-        ids_dispatched = {r.instance_id for r in runs_sorted if
-                          r.find_first_phase(filter_).variables[
-                              ExecutionQueue.STATE] == QueuedState.DISPATCHED.name}
-        free_slots = self._group.max_executions - len(ids_dispatched)
-
-        if free_slots <= 0:
-            log.debug("Exec limit reached",
-                      extra={"slots": self._group.max_executions, "dispatched": len(ids_dispatched)})
-            return
-
-        log.debug("Dispatching from queue", extra={"slots": free_slots})
-        for next_dispatch in runs_sorted:
-            if next_dispatch.instance_id in ids_dispatched:
-                continue
-            inst = ctx.environment.get_instance(next_dispatch.instance_id)
-            if not inst:
-                continue
-            ctrl = inst.find_phase_control(filter_)
-            if not ctrl:
-                continue
-            dispatched = ctrl.signal_dispatch()
-            if dispatched:
-                log.debug("Dispatched", extra={"run": str(next_dispatch.metadata)})
-                free_slots -= 1
-                if free_slots <= 0:
-                    return
-            else:
-                log.debug("Not dispatched", extra={"run": str(next_dispatch.metadata)})
 
     def _instance_phase_update(self, event: InstancePhaseEvent):
         with self._queue_change_condition:
