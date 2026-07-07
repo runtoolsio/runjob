@@ -9,7 +9,7 @@ from typing import Dict, Optional, List, Tuple, assert_never, override
 from runtools.runcore import util
 from runtools.runcore.connector import EnvironmentConnector
 from runtools.runcore.db import sqlite
-from runtools.runcore.env import EnvironmentKind, LocalEnvironmentConfig, \
+from runtools.runcore.env import EnvironmentKind, LocalEnvironmentConfig, PostgresEnvironmentConfig, \
     EnvironmentEntry, EnvironmentNotFoundError, resolve_env_ref, ensure_environment
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
@@ -18,6 +18,7 @@ from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifica
 from runtools.runcore.matching import SortOption
 from runtools.runcore.output import DEFAULT_TAIL_BUFFER_SIZE
 from runtools.runcore.db.persister import RunStatePersister
+from runtools.runcore.transport import InstanceDirectory
 from runtools.runcore.plugins import Plugin
 from runtools.runcore.util import to_tuple, lock, unique_timestamp_hex
 from runtools.runjob import instance, output
@@ -178,9 +179,8 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         """Subclass transport/database startup. Runs after feature hooks, before the flush loop."""
         # TODO Cleanup hardening: if _open() (or an on_open hook) fails partway, already-opened
         #  feature/transport resources are leaked — failed open should run the matching close hooks.
-        # TODO Centralize env_db open/close ownership: InProcessNode opens+closes its own db, while
-        #  _Node borrows one opened upstream and closed by the connector. The split is why db open
-        #  lives per-subclass here instead of in the base.
+        # Note: db open lives per-subclass — the per-kind connect functions must open the db to read
+        #  the config before composing, while InProcessNode creates its own and opens it here.
         pass
 
     def _admit_instance(self, job_id, run_id, created_at, user_params, *,
@@ -344,6 +344,24 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
     def _on_removed(self, job_instance):
         pass
 
+    def read_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._db.read_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+
+    def iter_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
+        return self._db.iter_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+
+    def read_run_stats(self, run_match=None):
+        return self._db.read_run_stats(run_match)
+
+    def remove_history_runs(self, run_match):
+        active = self.get_active_runs(run_match)
+        if active:
+            raise ValueError(f"Cannot remove active runs: {', '.join(str(r.instance_id) for r in active)}")
+        removed_ids = self._db.remove_runs(run_match)
+        for backend in self._output_stores:
+            backend.delete_output(*removed_ids)
+        return removed_ids
+
     def _shutdown_executor(self):
         if self._executor:
             self._executor.shutdown()
@@ -397,7 +415,7 @@ def connect(env_ref: EnvironmentEntry | str | None = None, *,
         case EnvironmentKind.LOCAL:
             return _connect_local(entry, disable_output=disable_output, tail_buffer_size=tail_buffer_size)
         case EnvironmentKind.POSTGRES:
-            raise NotImplementedError("A 'postgres' environment can be observed but not produced yet")
+            return _connect_postgres(entry, disable_output=disable_output, tail_buffer_size=tail_buffer_size)
         case _:
             assert_never(entry.kind)  # new kind added but not wired here
 
@@ -451,24 +469,6 @@ class InProcessNode(EnvironmentNodeBase):
     def get_instances(self, run_match=None) -> List[JobInstance]:
         return [i for i in self.instances if not run_match or run_match(i.snap())]
 
-    def read_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._db.read_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
-
-    def iter_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._db.iter_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
-
-    def read_run_stats(self, run_match=None):
-        return self._db.read_run_stats(run_match)
-
-    def remove_history_runs(self, run_match):
-        active = self.get_active_runs(run_match)
-        if active:
-            raise ValueError(f"Cannot remove active runs: {', '.join(str(r.instance_id) for r in active)}")
-        removed_ids = self._db.remove_runs(run_match)
-        for backend in self._output_stores:
-            backend.delete_output(*removed_ids)
-        return removed_ids
-
     def lock(self, lock_id):
         return self._lock_provider.lock(lock_id)
 
@@ -481,58 +481,51 @@ class InProcessNode(EnvironmentNodeBase):
         )
 
 
-class _Node(EnvironmentNodeBase):
-    """Generic environment node that delegates transport-specific behavior to an ``InstanceAccessPoint``.
+class _ComposedNode(EnvironmentNodeBase):
+    """Generic environment node composed from its per-kind runtime parts.
 
-    The node owns its job instances and holds a sibling-facing :class:`EnvironmentConnector`
-    handed in by the factory. The access point exposes instances to the env (register /
-    unregister); the sibling connector owns its own transport pieces (directory, layout)
-    and closes them during teardown.
+    The node owns its job instances plus the sibling-facing :class:`InstanceDirectory`
+    (the consumer view of the rest of the environment). The access point exposes
+    instances to the env (register / unregister); live reads merge the node's own
+    instances with the directory's view, own instances winning (the directory may lag
+    for them on polled kinds or duplicate them as proxies on wire kinds).
     """
 
-    def __init__(self, env_id, env_db, access_point: InstanceAccessPoint, sibling_connector: EnvironmentConnector,
+    def __init__(self, env_id, env_db, access_point: InstanceAccessPoint, directory: InstanceDirectory,
                  lock_provider, output_stores, features, transient,
                  *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE):
         EnvironmentNodeBase.__init__(
             self, env_id, env_db, output_stores=output_stores, tail_buffer_size=tail_buffer_size,
             features=features, transient=transient)
         self._access_point = access_point
-        self._connector = sibling_connector
+        self._directory = directory
         self._lock_provider = lock_provider
 
     def _open(self):
-        self._connector.open()
+        self._directory.open()
         self._access_point.start()
 
     def get_active_runs(self, run_match=None):
-        return self._connector.get_active_runs(run_match)
+        return [i.snap() for i in self.get_instances(run_match)]
 
     def get_instances(self, run_match=None):
-        return self._connector.get_instances(run_match)
+        instances = {i.id: i for i in self._directory.get_instances(run_match)}
+        for own in self.instances:
+            if not run_match or run_match(own.snap()):
+                instances[own.id] = own
+        return list(instances.values())
 
     def get_instance(self, instance_id):
         for inst in self.instances:
             if inst.id == instance_id:
                 return inst
 
-        return self._connector.get_instance(instance_id)
-
-    def read_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._connector.read_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
-
-    def iter_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
-        return self._connector.iter_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
-
-    def read_run_stats(self, run_match=None):
-        return self._connector.read_run_stats(run_match)
-
-    def remove_history_runs(self, run_match):
-        return self._connector.remove_history_runs(run_match)
+        return self._directory.get_instance(instance_id)
 
     @property
     @override
     def notifications(self) -> InstanceNotifications:
-        return self._connector.notifications
+        return self._directory.notifications
 
     def _on_added(self, job_instance):
         self._access_point.register_instance(job_instance)
@@ -548,11 +541,12 @@ class _Node(EnvironmentNodeBase):
             "Errors during closing environment node",
             lambda: EnvironmentNodeBase.close(self),  # waits for instances to detach
             self._access_point.close,                 # node-only wire resources
-            self._connector.close,                    # directory + db + output_backends
+            self._directory.close,                    # sibling view (may read the db - close first)
+            self._db.close,
         )
 
 
-def compose(env_id, env_db, access_point: InstanceAccessPoint, sibling_connector: EnvironmentConnector,
+def compose(env_id, env_db, access_point: InstanceAccessPoint, directory: InstanceDirectory,
             lock_provider, output_stores, features, transient,
             *, tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE) -> EnvironmentNode:
     """Internal framework plumbing: construct a concrete node from its runtime parts.
@@ -563,14 +557,13 @@ def compose(env_id, env_db, access_point: InstanceAccessPoint, sibling_connector
     Not part of the public API — :func:`connect` or :func:`in_process` are the supported
     entry points for callers that just want a node.
     """
-    return _Node(env_id, env_db, access_point, sibling_connector, lock_provider, output_stores, features, transient,
-                 tail_buffer_size=tail_buffer_size)
+    return _ComposedNode(env_id, env_db, access_point, directory, lock_provider, output_stores, features, transient,
+                         tail_buffer_size=tail_buffer_size)
 
 
 def _connect_local(entry: EnvironmentEntry, *,
                    disable_output: tuple[str, ...] = (), tail_buffer_size=None) -> 'EnvironmentNodeBase':
     """Node for a ``local`` environment: sqlite + unix-socket transport pair + file locks."""
-    from runtools.runcore.connector import compose as build_connector
     from runtools.runjob.transport import unix_socket
     # Check before open: opening a missing sqlite file would silently provision a fresh schema
     if not sqlite.exists(entry):
@@ -591,9 +584,44 @@ def _connect_local(entry: EnvironmentEntry, *,
         lock_provider = lock.FileLockProvider(entry.id)
 
         sibling_directory, access_point = unix_socket.create_node_transports(entry.id, config.root_dir)
-        sibling_connector = build_connector(entry.id, env_db, sibling_directory, output_stores)
-        return compose(entry.id, env_db, access_point, sibling_connector, lock_provider,
+        return compose(entry.id, env_db, access_point, sibling_directory, lock_provider,
                        output_stores, to_tuple(plugin_features), transient=True,
+                       tail_buffer_size=effective_tail_buffer_size)
+    except BaseException:
+        env_db.close()
+        raise
+
+
+def _connect_postgres(entry: EnvironmentEntry, *,
+                      disable_output: tuple[str, ...] = (), tail_buffer_size=None) -> 'EnvironmentNodeBase':
+    """Node for a ``postgres`` environment: postgres storage + polling directory + advisory locks.
+
+    Instances are exposed by the run-state persister's snapshots, which remote polling
+    directories read; the access point is an empty receiver until signals-as-state lands,
+    so remote control of this node's instances is unsupported (consumer proxies raise).
+    """
+    from runtools.runcore.db import postgres
+    from runtools.runcore.transport.db import PollingInstanceDirectory
+    from runtools.runjob.transport.postgres import PostgresInstanceAccessPoint
+
+    env_db = postgres.create(entry)
+    # No exists pre-check: open() is validate-only (never DDL) and raises the more precise
+    # EnvironmentStoreNotProvisionedError for a missing store
+    env_db.open()
+    try:
+        config = PostgresEnvironmentConfig.model_validate(env_db.load_config(entry.id))
+        if "all" in disable_output:
+            storages = []
+        else:
+            storages = [s for s in config.output.storages if s.type not in disable_output]
+        output_stores = output.create_stores(entry.id, storages)
+        effective_tail_buffer_size = tail_buffer_size if tail_buffer_size is not None \
+            else config.output.default_tail_buffer_size
+        plugin_features = Plugin.create_all(config.plugins) if config.plugins else ()
+        lock_provider = postgres.create_lock_provider(entry)
+
+        return compose(entry.id, env_db, PostgresInstanceAccessPoint(), PollingInstanceDirectory(env_db),
+                       lock_provider, output_stores, to_tuple(plugin_features), transient=True,
                        tail_buffer_size=effective_tail_buffer_size)
     except BaseException:
         env_db.close()

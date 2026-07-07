@@ -4,7 +4,7 @@ Each transport ships its own module here with the concrete node-side bundle, lay
 and RPC server. Connector-side transport pieces live under ``runtools.runcore.transport``.
 
 The :class:`InstanceAccessPoint` protocol declares what the concrete node
-(``runtools.runjob.node._Node``) holds to expose its instances to the environment.
+(``runtools.runjob.node._ComposedNode``) holds to expose its instances to the environment.
 Concrete bundles live in ``runtools.runjob.transport.<transport>``.
 """
 

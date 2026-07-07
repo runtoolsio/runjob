@@ -97,7 +97,10 @@ def test_claim_deferred_behind_visible_older_queued_instance():
     assert elapsed >= ExecutionQueue.CLAIM_STAGGER_INTERVAL
 
 
-def test_does_not_defer_behind_younger_instance():
+def test_does_not_defer_behind_younger_instance(monkeypatch):
+    # A large stagger makes the timing margins load-proof: a wrong deferral costs >= 2s,
+    # while an undeferred trivial run stays far under the 1s assertion budget
+    monkeypatch.setattr(ExecutionQueue, 'CLAIM_STAGGER_INTERVAL', 2.0)
     fake_env = FakeEnvironment()
     mine = ExecutionQueue('MINE', GROUP, TestPhase('c1'))
     newer = ExecutionQueue('NEWER', GROUP, TestPhase('c2'))
@@ -108,7 +111,7 @@ def test_does_not_defer_behind_younger_instance():
     elapsed = time.monotonic() - start
 
     assert mine.termination.status == TerminationStatus.COMPLETED
-    assert elapsed < ExecutionQueue.CLAIM_STAGGER_INTERVAL
+    assert elapsed < 1.0
 
 
 def test_older_waiter_claims_freed_slot_before_younger():
