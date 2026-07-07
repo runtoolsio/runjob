@@ -1,4 +1,5 @@
 import logging
+import time
 from abc import ABC, abstractmethod
 from functools import partial
 from concurrent.futures.thread import ThreadPoolExecutor
@@ -8,7 +9,7 @@ from typing import Dict, Optional, List, Tuple, assert_never, override
 
 from runtools.runcore import util
 from runtools.runcore.connector import EnvironmentConnector
-from runtools.runcore.db import sqlite
+from runtools.runcore.db import HEARTBEAT_INTERVAL, sqlite
 from runtools.runcore.env import EnvironmentKind, LocalEnvironmentConfig, PostgresEnvironmentConfig, \
     EnvironmentEntry, EnvironmentNotFoundError, resolve_env_ref, ensure_environment
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
@@ -110,11 +111,13 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
     PERSIST_FLUSH_INTERVAL = 0.25  # Default seconds between coalesced active-state flushes
 
     def __init__(self, env_id, env_db, output_stores=(), tail_buffer_size=DEFAULT_TAIL_BUFFER_SIZE,
-                 features=(), transient=True, persist_flush_interval=PERSIST_FLUSH_INTERVAL):
+                 features=(), transient=True, persist_flush_interval=PERSIST_FLUSH_INTERVAL,
+                 heartbeat_interval=HEARTBEAT_INTERVAL):
         self._env_id = env_id
         self._db = env_db
         self._persister = RunStatePersister(env_db)
         self._persist_flush_interval = persist_flush_interval
+        self._heartbeat_interval = heartbeat_interval
         self._persister_stop = Event()
         self._persister_thread = None
         self._output_stores = tuple(output_stores)
@@ -148,11 +151,21 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         return self._executor.submit(fnc)
 
     def _flush_persister_loop(self):
+        # Heartbeats ride the flush thread on purpose: they attest the persistence lane consumers
+        # depend on, so a wedged flush thread reads as lost instead of alive-but-frozen
+        next_heartbeat = time.monotonic()  # first touch on the first tick
         while not self._persister_stop.wait(self._persist_flush_interval):
             try:
                 self._persister.flush()
             except Exception:
                 log.warning("Persister flush failed; retrying next interval", exc_info=True)
+            if time.monotonic() >= next_heartbeat:
+                try:
+                    self._db.touch_heartbeats([i.id for i in self.instances])
+                    next_heartbeat = time.monotonic() + self._heartbeat_interval
+                except Exception:
+                    # next_heartbeat unchanged -> retry on the next flush tick, not in a full interval
+                    log.warning("Heartbeat touch failed; retrying next interval", exc_info=True)
 
     def _close_persister(self):
         self._persister_stop.set()

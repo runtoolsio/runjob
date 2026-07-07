@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass
 from typing import List
 
@@ -211,3 +212,28 @@ def test_created_snapshot_completes_init_row():
         assert root_phase is not None  # CREATED snapshot persisted, not just init columns
 
         inst.run()  # Run to completion so the environment closes cleanly
+
+
+def test_node_touches_heartbeats_of_active_instances():
+    with node.in_process(transient=True) as env:
+        # Tight intervals so the flush loop beats within the test's window
+        env._persist_flush_interval = 0.02
+        env._heartbeat_interval = 0.05
+        child = TestPhase('work', wait=True)
+        inst = env.create_instance('hb_job', 'r1', child)
+        inst.run(in_background=True)
+
+        deadline = time.monotonic() + 2
+        previous_age = None
+        while time.monotonic() < deadline:
+            versions = env._db.active_run_versions()  # the row materializes after the first flush
+            if versions:
+                [(_, _, age)] = versions
+                if previous_age is not None and age < previous_age:
+                    break  # age dropped => a touch refreshed the heartbeat
+                previous_age = age
+            time.sleep(0.02)
+        else:
+            raise TimeoutError("Heartbeat was not touched within 2s")
+
+        child.release()
