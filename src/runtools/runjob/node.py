@@ -610,10 +610,11 @@ def _connect_postgres(entry: EnvironmentEntry, *,
     """Node for a ``postgres`` environment: postgres storage + polling directory + advisory locks.
 
     Instances are exposed by the run-state persister's snapshots, which remote polling
-    directories read; the access point is an empty receiver until signals-as-state lands,
-    so remote control of this node's instances is unsupported (consumer proxies raise).
+    directories read; inbound commands arrive through the signals mailbox, applied by the
+    access point's reconciler (design point 5).
     """
     from runtools.runcore.db import postgres
+    from runtools.runcore.proxy import SnapshotJobInstanceProxy
     from runtools.runcore.transport.db import PollingInstanceDirectory
     from runtools.runjob.transport.postgres import PostgresInstanceAccessPoint
 
@@ -633,7 +634,8 @@ def _connect_postgres(entry: EnvironmentEntry, *,
         plugin_features = Plugin.create_all(config.plugins) if config.plugins else ()
         lock_provider = postgres.create_lock_provider(entry)
 
-        return compose(entry.id, env_db, PostgresInstanceAccessPoint(), PollingInstanceDirectory(env_db),
+        return compose(entry.id, env_db, PostgresInstanceAccessPoint(env_db),
+                       PollingInstanceDirectory(env_db, lambda run: SnapshotJobInstanceProxy(run, env_db)),
                        lock_provider, output_stores, to_tuple(plugin_features), transient=True,
                        tail_buffer_size=effective_tail_buffer_size)
     except BaseException:

@@ -75,7 +75,10 @@ def test_phase_op_release(job_instances, client, server):
     _, j2 = job_instances
     client.exec_phase_op(j2.id, APPROVAL, 'release')
 
-    assert j2.find_phase_control_by_id(APPROVAL).is_released
+    # The RPC server resolves the control through the instance, so the op lands in the
+    # run's control record — same apply path as local callers and the signal reconciler
+    [request] = j2.snap().control_requests
+    assert (request.op, request.phase_id) == ('release', APPROVAL)
 
 
 def test_tail(job_instances, client, server):

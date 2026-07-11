@@ -49,7 +49,6 @@ class TestPhase(BasePhase[JobInstanceContext]):
         else:
             raise InvalidStateError('Wait not set')
 
-    @control_api
     @property
     def is_released(self):
         return self.wait.is_set()

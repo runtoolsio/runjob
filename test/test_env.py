@@ -5,7 +5,7 @@ from typing import List
 import pytest
 
 from runtools.runcore.job import DuplicateInstanceError, DuplicateStrategy, JobInstance
-from runtools.runcore.run import Stage
+from runtools.runcore.run import Stage, control_api
 from runtools.runjob import node
 from runtools.runcore.job import Feature
 from runtools.runjob.test.phase import TestPhase
@@ -237,3 +237,45 @@ def test_node_touches_heartbeats_of_active_instances():
             raise TimeoutError("Heartbeat was not touched within 2s")
 
         child.release()
+
+
+def test_stop_recorded_as_control_request():
+    with node.in_process(transient=False) as env:
+        child = TestPhase('work', wait=True)
+        inst = env.create_instance('ctl_job', 'r1', child)
+        inst.run(in_background=True)
+        while not child.started_at:
+            time.sleep(0.01)
+
+        inst.stop()
+        while not inst.snap().lifecycle.is_ended:
+            time.sleep(0.01)
+
+        [restored] = env.read_runs()
+        [request] = restored.control_requests
+        assert request.op == 'stop'
+        assert request.applied_at is not None
+
+
+def test_control_recorded_before_op_is_invoked():
+    """An op can immediately finalize the run (approve unblocking the last gate), so the record
+    must already be in the snapshot when the op runs — a late append never reaches a terminal row."""
+    requests_at_apply = []
+
+    class CapturingPhase(TestPhase):
+        @control_api
+        def release(self):
+            requests_at_apply.append(tuple(inst.snap().control_requests))
+            super().release()
+
+    with node.in_process(transient=False) as env:
+        child = CapturingPhase('work', wait=True)
+        inst = env.create_instance('ctl_job', 'r1', child)
+        inst.run(in_background=True)
+        while not child.started_at:
+            time.sleep(0.01)
+
+        inst.find_phase_control_by_id('work').release()
+
+        [at_apply] = requests_at_apply
+        assert [r.op for r in at_apply] == ['release']

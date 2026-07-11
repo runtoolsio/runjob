@@ -56,7 +56,6 @@ class CheckpointPhase(BasePhase[Any]):
             raise PhaseTerminated(TerminationStatus.TIMEOUT)
         log.debug("Checkpoint resumed", extra={"phase": self.id})
 
-    @control_api
     @property
     def is_idle(self):
         return self.stage == Stage.RUNNING and not self._event.is_set()
@@ -65,7 +64,6 @@ class CheckpointPhase(BasePhase[Any]):
     def resume(self):
         self._event.set()
 
-    @control_api
     @property
     def is_resumed(self):
         return self._event.is_set() and not self._stop_reason
@@ -99,7 +97,6 @@ class ApprovalPhase(BasePhase[Any]):
         log.debug("Approval granted", extra={"phase": self.id})
         self.run_child(self._children[0])
 
-    @control_api
     @property
     def is_idle(self):
         return self.stage == Stage.RUNNING and not self._event.is_set()
@@ -108,7 +105,6 @@ class ApprovalPhase(BasePhase[Any]):
     def approve(self):
         self._event.set()
 
-    @control_api
     @property
     def approved(self):
         return self._event.is_set() and not self._stop_reason
@@ -133,7 +129,6 @@ class MutualExclusionPhase(BasePhase[JobInstanceContext]):
         self._attrs = {'exclusion_group': self._exclusion_group}
 
     @property
-    @control_api
     def exclusion_group(self):
         return self._exclusion_group
 
@@ -301,12 +296,10 @@ class ExecutionQueue(BasePhase[JobInstanceContext]):
         return {ExecutionQueue.STATE: self._state.name}
 
     @property
-    @control_api
     def state(self):
         return self._state
 
     @property
-    @control_api
     def execution_group(self):
         return self._group
 

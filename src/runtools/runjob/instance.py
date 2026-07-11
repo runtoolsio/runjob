@@ -15,12 +15,12 @@ import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
 from threading import Thread
-from typing import Optional, List, override
+from typing import Callable, Optional, List, override
 
-from runtools.runcore.job import (JobInstance, JobRun, JobInstanceMetadata, InstanceNotifications,
+from runtools.runcore.job import (ControlRequest, JobInstance, JobRun, JobInstanceMetadata, InstanceNotifications,
                                   InstanceObservableNotifications, InstancePhaseEvent, InstanceOutputEvent,
-                                  InstanceLifecycleEvent, InstanceControlEvent, ControlAction, InstanceStatusEvent)
-from runtools.runcore.run import Fault, PhaseTransitionEvent, JobCompletionError, Stage, StopReason
+                                  InstanceLifecycleEvent, InstanceControlEvent, InstanceStatusEvent, STOP_OP)
+from runtools.runcore.run import Fault, PhaseControl, PhaseTransitionEvent, JobCompletionError, Stage, StopReason
 from runtools.runcore.util import utc_now
 from runtools.runjob.capture import StdLogOutputCapture
 from runtools.runjob.output import OutputContext, OutputPipeline, InMemoryTailBuffer, OutputRouter
@@ -110,6 +110,34 @@ def create(instance_id, environment, root_phase, *,
     return inst
 
 
+class _RecordingPhaseControl:
+    """Instance-boundary view of a phase control: ops record into the run before invoking.
+
+    The phase owns the raw capability (:class:`PhaseControl`); the instance owns its audited
+    exposure — every command path (local caller, RPC server, signal reconciler) resolves controls
+    through the instance and so converges on this record-then-invoke point. Control ops are
+    positional-only fire-and-forget commands (``control_api`` rejects properties), so the only
+    non-callable members passing through are the structural ``phase_id``/``phase_type``.
+    """
+
+    def __init__(self, delegate: PhaseControl, record: Callable[[ControlRequest], None]):
+        self._delegate = delegate
+        self._record = record
+
+    def __getattr__(self, name):
+        attr = getattr(self._delegate, name)  # AttributeError = validation, before anything records
+        if not callable(attr):
+            return attr
+
+        def op(*args):
+            # Record before invoking: the op may immediately let the run finalize, and the terminal
+            # snapshot must already carry the record (late appends never reach a terminal row)
+            self._record(ControlRequest(name, utc_now(), phase_id=self._delegate.phase_id, args=args))
+            return attr(*args)
+
+        return op
+
+
 class _JobInstance(JobInstance):
 
     def __init__(self, instance_id, root_phase, env,
@@ -124,6 +152,7 @@ class _JobInstance(JobInstance):
         self._output_capture = output_capture
         self._ctx = JobInstanceContext(self._metadata, env, status_tracker, self._output_pipeline)
         self._faults: List[Fault] = []
+        self._control_requests: List[ControlRequest] = []
 
     def _activate(self):
         """Called at the end of ``create()`` to avoid exposing a partially initialized instance."""
@@ -157,7 +186,10 @@ class _JobInstance(JobInstance):
         return self._ctx.tracker
 
     def find_phase_control(self, phase_filter):
-        return self._root_phase.find_phase_control(phase_filter)
+        control = self._root_phase.find_phase_control(phase_filter)
+        if control is None:
+            return None
+        return _RecordingPhaseControl(control, self._record_control)
 
     @property
     def output(self):
@@ -170,7 +202,8 @@ class _JobInstance(JobInstance):
             self._root_phase.snap(),
             self._output_router.locations if self._output_router else None,
             tuple(self._faults),
-            status
+            status,
+            tuple(self._control_requests),
         )
 
     @contextmanager
@@ -240,9 +273,15 @@ class _JobInstance(JobInstance):
         return t
 
     def stop(self, reason=StopReason.STOPPED):
+        self._record_control(ControlRequest(STOP_OP, utc_now(), args=(reason.name,)))
         self._root_phase.stop(reason)
+
+    def _record_control(self, request: ControlRequest):
+        """Record a control op accepted at the apply point and notify the live lane. The snapshot is
+        taken after the append, so the event and any persisted state carry the new record."""
+        self._control_requests.append(request)
         try:
-            event = InstanceControlEvent(self.snap(), ControlAction.STOP_REQUESTED, utc_now())
+            event = InstanceControlEvent(self.snap(), request, utc_now())
             self._notifications.control_notification.observer_proxy.instance_control_update(event)
         except ExceptionGroup as eg:
             log.error("Control observer error", exc_info=eg)

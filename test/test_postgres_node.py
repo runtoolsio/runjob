@@ -138,3 +138,49 @@ def test_duplicate_run_rejected_across_nodes(pg_entry):
             node_b.create_instance('dup_job', 'r1', TestPhase('other'))
 
         child.release()
+
+
+def test_remote_stop_via_signal(pg_entry):
+    control_events = []
+
+    class ControlRecorder:
+        def instance_control_update(self, event):
+            control_events.append(event)
+
+    child = _BlockingPhase('work')
+    with node.connect(pg_entry) as env_node, connector.connect(pg_entry) as conn:
+        conn.notifications.add_observer_control(ControlRecorder())
+        env_node.create_instance('stoppable', 'r1', child).run(in_background=True)
+        _wait_until(lambda: [i for i in conn.get_instances() if i.job_id == 'stoppable'],
+                    message="Run not observed by remote connector")
+
+        [proxy] = [i for i in conn.get_instances() if i.job_id == 'stoppable']
+        proxy.stop()  # -> signal row -> node reconciler -> instance.stop -> recorded + state lane
+
+        _wait_until(lambda: conn.read_runs(), timeout=15, message="Run did not stop")
+        [ended] = conn.read_runs()
+        [request] = ended.control_requests
+        assert request.op == 'stop'
+        _wait_until(lambda: control_events, message="Control event not synthesized for consumer")
+        assert control_events[0].request.op == 'stop'
+
+
+def test_remote_approve_via_signal(pg_entry):
+    from runtools.runcore.matching import PhaseCriterion
+    from runtools.runjob.coord import ApprovalPhase
+
+    gated = ApprovalPhase('gate', TestPhase('protected'))
+    with node.connect(pg_entry) as env_node, connector.connect(pg_entry) as conn:
+        env_node.create_instance('approvable', 'r1', gated).run(in_background=True)
+        _wait_until(lambda: [i for i in conn.get_instances() if i.job_id == 'approvable'],
+                    message="Run not observed by remote connector")
+
+        [proxy] = [i for i in conn.get_instances() if i.job_id == 'approvable']
+        control = proxy.find_phase_control(PhaseCriterion(phase_id='gate'))
+        control.approve()  # -> signal -> reconciler -> ApprovalPhase.approve() -> job proceeds
+
+        _wait_until(lambda: conn.read_runs(), timeout=15, message="Run did not complete after approval")
+        [ended] = conn.read_runs()
+        assert ended.lifecycle.is_ended
+        [request] = ended.control_requests
+        assert (request.op, request.phase_id) == ('approve', 'gate')
