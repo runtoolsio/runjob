@@ -11,7 +11,7 @@ from runtools.runcore import util
 from runtools.runcore.connector import EnvironmentConnector
 from runtools.runcore.db import HEARTBEAT_INTERVAL, sqlite
 from runtools.runcore.env import EnvironmentKind, LocalEnvironmentConfig, PostgresEnvironmentConfig, \
-    EnvironmentEntry, EnvironmentNotFoundError, resolve_env_ref, ensure_environment
+    EnvironmentEntry, EnvironmentNotFoundError, resolve_env_ref, ensure_environment, open_configured_db
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
     JobInstanceDelegate, InstanceID, \
@@ -582,9 +582,7 @@ def _connect_local(entry: EnvironmentEntry, *,
     if not sqlite.exists(entry):
         raise EnvironmentNotFoundError(f"Database for environment '{entry.id}' not found", {entry.id})
     env_db = sqlite.create(entry)
-    env_db.open()
-    try:
-        config = LocalEnvironmentConfig.model_validate(env_db.load_config(entry.id))
+    with open_configured_db(env_db, entry.id, LocalEnvironmentConfig) as config:
         if "all" in disable_output:
             storages = []
         else:
@@ -600,9 +598,6 @@ def _connect_local(entry: EnvironmentEntry, *,
         return compose(entry.id, env_db, access_point, sibling_directory, lock_provider,
                        output_stores, to_tuple(plugin_features), transient=True,
                        tail_buffer_size=effective_tail_buffer_size)
-    except BaseException:
-        env_db.close()
-        raise
 
 
 def _connect_postgres(entry: EnvironmentEntry, *,
@@ -621,9 +616,7 @@ def _connect_postgres(entry: EnvironmentEntry, *,
     env_db = postgres.create(entry)
     # No exists pre-check: open() is validate-only (never DDL) and raises the more precise
     # EnvironmentStoreNotProvisionedError for a missing store
-    env_db.open()
-    try:
-        config = PostgresEnvironmentConfig.model_validate(env_db.load_config(entry.id))
+    with open_configured_db(env_db, entry.id, PostgresEnvironmentConfig) as config:
         if "all" in disable_output:
             storages = []
         else:
@@ -638,9 +631,6 @@ def _connect_postgres(entry: EnvironmentEntry, *,
                        PollingInstanceDirectory(env_db, lambda run: SnapshotJobInstanceProxy(run, env_db)),
                        lock_provider, output_stores, to_tuple(plugin_features), transient=True,
                        tail_buffer_size=effective_tail_buffer_size)
-    except BaseException:
-        env_db.close()
-        raise
 
 
 
