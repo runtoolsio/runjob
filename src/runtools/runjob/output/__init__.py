@@ -30,7 +30,7 @@ from typing import Optional, Callable, List, Iterable
 
 from runtools.runcore.err import RuntoolsException
 from runtools.runcore.job import InstanceID
-from runtools.runcore.output import (OutputLine, OutputObserver, TailBuffer, Mode, OutputLineFactory, Output,
+from runtools.runcore.output import (OutputLine, OutputObserver, TailBuffer, OutputLineFactory, Output,
                                      TailNotSupportedError, OutputBackend, parse_timestamp)
 from runtools.runcore.util.observer import ObservableNotification, DEFAULT_OBSERVER_PRIORITY, ObserverContext
 from runtools.runjob.phase import _current_phase
@@ -455,7 +455,7 @@ class InMemoryTailBuffer(TailBuffer):
                 evicted = self._lines.popleft()
                 self._current_bytes -= self._estimate_size(evicted)
 
-    def get_lines(self, mode: Mode = Mode.TAIL, max_lines: int = 0) -> List[OutputLine]:
+    def get_lines(self, max_lines: int = 0) -> List[OutputLine]:
         if max_lines < 0:
             raise ValueError("Count cannot be negative")
 
@@ -463,14 +463,7 @@ class InMemoryTailBuffer(TailBuffer):
             output = list(self._lines)
         if not max_lines:
             return output
-
-        match mode:
-            case Mode.TAIL:
-                return output[-max_lines:]
-            case Mode.HEAD:
-                return output[:max_lines]
-            case _:
-                assert False, f"Unhandled mode: {mode}"
+        return output[-max_lines:]
 
 
 class OutputSink(ABC):
@@ -559,10 +552,10 @@ class OutputRouter(OutputObserver, Output):
                 chunk = lines_to_flush[i: i + batch_sz]
                 sink.write_lines(chunk)
 
-    def tail(self, mode: Mode = Mode.TAIL, max_lines: int = 0):
+    def tail(self, max_lines: int = 0):
         if not self.tail_buffer:
             raise TailNotSupportedError
-        return self.tail_buffer.get_lines(mode, max_lines)
+        return self.tail_buffer.get_lines(max_lines)
 
     def close(self):
         if self._batch_buffer:

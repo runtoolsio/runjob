@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Union, override
 
 from itertools import zip_longest
 from runtools.runcore.job import InstanceID, JobInstance
-from runtools.runcore.output import Mode
 from runtools.runcore.run import StopReason
 from runtools.runcore.util.json import ErrorCode, JsonRpcError
 
@@ -124,14 +123,11 @@ class GetOutputTailMethod(JsonRpcMethod):
         return [
             INSTANCE_ID_PARAM,
             MethodParameter("max_lines", int, required=False, default=100),
-            MethodParameter("mode", str, required=False, default=Mode.TAIL.name),
         ]
 
     @override
-    def execute(self, job_instance, max_lines, mode):
-        # Mode[mode] raises KeyError on unknown values, surfacing as an internal error rather
-        # than invalid-params — same idiom as StopReason[...] in StopInstanceMethod.
-        return [line.serialize() for line in job_instance.output.tail(Mode[mode], max_lines=max_lines)]
+    def execute(self, job_instance, max_lines):
+        return [line.serialize() for line in job_instance.output.tail(max_lines=max_lines)]
 
 
 class ExecPhaseOpMethod(JsonRpcMethod):

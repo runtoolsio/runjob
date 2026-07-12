@@ -1,5 +1,5 @@
 import pytest
-from runtools.runcore.output import OutputLine, Mode
+from runtools.runcore.output import OutputLine
 from runtools.runjob.output import InMemoryTailBuffer
 
 
@@ -35,11 +35,7 @@ def test_get_lines_with_max_lines():
     output.add_line(OutputLine("line2", 2))
     output.add_line(OutputLine("line3", 3))
 
-    head_lines = output.get_lines(mode=Mode.HEAD, max_lines=2)
-    assert len(head_lines) == 2
-    assert [line.message for line in head_lines] == ["line1", "line2"]
-
-    tail_lines = output.get_lines(mode=Mode.TAIL, max_lines=2)
+    tail_lines = output.get_lines(max_lines=2)
     assert len(tail_lines) == 2
     assert [line.message for line in tail_lines] == ["line2", "line3"]
 
