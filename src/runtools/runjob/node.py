@@ -118,8 +118,8 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         self._persister = RunStatePersister(env_db)
         self._persist_flush_interval = persist_flush_interval
         self._heartbeat_interval = heartbeat_interval
-        self._persister_stop = Event()
-        self._persister_thread = None
+        self._flush_stop = Event()
+        self._flush_thread = None
         self._output_stores = tuple(output_stores)
         self._tail_buffer_size = tail_buffer_size
         self._features = features
@@ -150,11 +150,11 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
         return self._executor.submit(fnc)
 
-    def _flush_persister_loop(self):
+    def _flush_loop(self):
         # Heartbeats ride the flush thread on purpose: they attest the persistence lane consumers
         # depend on, so a wedged flush thread reads as lost instead of alive-but-frozen
         next_heartbeat = time.monotonic()  # first touch on the first tick
-        while not self._persister_stop.wait(self._persist_flush_interval):
+        while not self._flush_stop.wait(self._persist_flush_interval):
             try:
                 self._persister.flush()
             except Exception:
@@ -167,10 +167,10 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
                     # next_heartbeat unchanged -> retry on the next flush tick, not in a full interval
                     log.warning("Heartbeat touch failed; retrying next interval", exc_info=True)
 
-    def _close_persister(self):
-        self._persister_stop.set()
-        if self._persister_thread:
-            self._persister_thread.join()
+    def _close_flushing(self):
+        self._flush_stop.set()
+        if self._flush_thread:
+            self._flush_thread.join()
         self._persister.close()  # Final flush of any remaining dirty snapshots
 
     def open(self):
@@ -185,8 +185,8 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         for feature in self._features:
             feature.on_open()
         self._open()
-        self._persister_thread = Thread(target=self._flush_persister_loop, name="run-persister", daemon=True)
-        self._persister_thread.start()  # Started strictly last when everything above succeed
+        self._flush_thread = Thread(target=self._flush_loop, name="node-flush", daemon=True)
+        self._flush_thread.start()  # Started strictly last when everything above succeed
 
     def _open(self):
         """Subclass transport/database startup. Runs after feature hooks, before the flush loop."""
@@ -252,7 +252,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         try:
             writers = [store.create_sink(instance_id) for store in self._output_stores]
             tail_buffer = InMemoryTailBuffer(max_bytes=self._tail_buffer_size) if self._tail_buffer_size else None
-            output_router = OutputRouter(tail_buffer=tail_buffer, sinks=writers)
+            output_router = OutputRouter(tail_buffer=tail_buffer, output_sinks=writers)
             create_kwargs = dict(
                 output_router=output_router,
                 output_processors=output_processors,
@@ -399,7 +399,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         log.debug("Closing environment", extra={"env": self._env_id})
         run_isolated_collect_exceptions(
             "Errors on environment features closing",
-            self._close_persister,
+            self._close_flushing,
             *(feature.on_close for feature in self._features),
             self._shutdown_executor,
             # Output stores own resources (e.g. boto3 S3 client connection pools)
@@ -627,7 +627,7 @@ def _connect_postgres(entry: EnvironmentEntry, *,
         plugin_features = Plugin.create_all(config.plugins) if config.plugins else ()
         lock_provider = postgres.create_lock_provider(entry)
 
-        return compose(entry.id, env_db, PostgresInstanceAccessPoint(env_db),
+        return compose(entry.id, env_db, PostgresInstanceAccessPoint(env_db, tail_cap=config.output.tail_cap),
                        PollingInstanceDirectory(env_db, lambda run: SnapshotJobInstanceProxy(run, env_db)),
                        lock_provider, output_stores, to_tuple(plugin_features), transient=True,
                        tail_buffer_size=effective_tail_buffer_size)

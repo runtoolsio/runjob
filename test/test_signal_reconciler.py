@@ -7,6 +7,8 @@ import pytest
 
 from runtools.runcore.db import sqlite
 from runtools.runcore.job import InstanceID
+from runtools.runcore.output import OutputLine
+from runtools.runcore.run import TerminationStatus
 from runtools.runcore.test.job import fake_job_run
 from runtools.runcore.util import utc_now
 from runtools.runjob.transport.postgres import PostgresInstanceAccessPoint
@@ -40,7 +42,7 @@ def _active_target(db, job_id):
 def test_sweep_takes_only_aged_signals_without_attested_target(db):
     """A crashed node's runs stay non-ended forever — a stale heartbeat, not lifecycle state,
     is what marks their pending signals unappliable."""
-    access_point = PostgresInstanceAccessPoint(db)
+    access_point = PostgresInstanceAccessPoint(db, tail_cap=0)
     alive = _active_target(db, 'alive')                       # owner attesting -> live target
     crashed = _active_target(db, 'crashed')                   # non-ended row, owner stopped heartbeating
     _backdate_heartbeat(db, 'crashed', minutes=5)
@@ -61,3 +63,36 @@ def test_sweep_takes_only_aged_signals_without_attested_target(db):
     assert db.read_signals([crashed]) == []
     assert db.read_signals([ghost]) == []
     assert [s.op for s in db.read_signals([fresh_ghost])] == ['stop']
+
+
+def test_sweep_takes_output_tails_of_unattested_instances(db):
+    access_point = PostgresInstanceAccessPoint(db, tail_cap=0)
+    alive = _active_target(db, 'alive')                       # owner attesting -> tail stays
+    crashed = _active_target(db, 'crashed')                   # non-ended row, owner stopped heartbeating
+    _backdate_heartbeat(db, 'crashed', minutes=5)
+    db.append_output([(alive, OutputLine('a', 1)), (crashed, OutputLine('c', 1))])
+
+    access_point._sweep_orphans()
+
+    assert [line.message for line in db.read_output_tail(alive, max_lines=0)] == ['a']
+    assert db.read_output_tail(crashed, max_lines=0) == []
+
+
+def test_sweep_lets_recently_ended_tail_linger(db):
+    """Ended runs' tails are not deleted at finalize — a short linger covers a follower's last
+    incremental poll; only tails of runs ended past the linger window are swept."""
+    access_point = PostgresInstanceAccessPoint(db, tail_cap=0)
+    fresh = fake_job_run('fresh_done', created_at=utc_now(), term_status=TerminationStatus.COMPLETED)
+    old = fake_job_run('old_done', created_at=utc_now() - timedelta(minutes=10),
+                       term_status=TerminationStatus.COMPLETED)
+    for run in (fresh, old):
+        iid = run.metadata.instance_id
+        db.init_run(iid.job_id, iid.run_id, created_at=run.lifecycle.created_at)
+        db.store_runs(run)
+    db.append_output([(fresh.metadata.instance_id, OutputLine('f', 1)),
+                      (old.metadata.instance_id, OutputLine('o', 1))])
+
+    access_point._sweep_orphans()
+
+    assert [line.message for line in db.read_output_tail(fresh.metadata.instance_id, max_lines=0)] == ['f']
+    assert db.read_output_tail(old.metadata.instance_id, max_lines=0) == []

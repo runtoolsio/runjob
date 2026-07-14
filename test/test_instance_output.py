@@ -68,7 +68,7 @@ def test_output_persistence_failure_records_fault_and_propagates():
     on root_phase unchanged (it reflects what the program actually did).
     """
     phase = TestPhase()  # succeeds, terminates COMPLETED
-    router = OutputRouter(sinks=[_FailingOnCloseWriter()])
+    router = OutputRouter(output_sinks=[_FailingOnCloseWriter()])
     inst = instance.create(iid('j1', 'i1'), None, phase, output_router=router)
 
     with pytest.raises(RuntimeError, match="simulated S3 PUT failure"):

@@ -184,3 +184,18 @@ def test_remote_approve_via_signal(pg_entry):
         assert ended.lifecycle.is_ended
         [request] = ended.control_requests
         assert (request.op, request.phase_id) == ('approve', 'gate')
+
+
+def test_node_publishes_output_tail(pg_entry):
+    from runtools.runcore.db import postgres
+
+    child = TestPhase('work', output_text='tail me')
+    with node.connect(pg_entry) as env_node, postgres.create(pg_entry) as env_db:
+        inst = env_node.create_instance('tailed', 'r1', child)
+        inst.run()
+
+        # The publisher flushes on the node's persister cadence; the ended run's tail lingers
+        _wait_until(lambda: env_db.read_output_tail(inst.id, max_lines=0),
+                    message="Output tail not published")
+        [line] = env_db.read_output_tail(inst.id, max_lines=0)
+        assert line.message == 'tail me'

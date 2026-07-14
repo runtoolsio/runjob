@@ -493,14 +493,19 @@ class OutputSink(ABC):
 
 
 class OutputRouter(OutputObserver, Output):
-    """Routes OutputLine instances to multiple sinks and an optional tail buffer."""
+    """Routes OutputLine instances to durable sinks and an optional in-memory tail buffer.
 
-    def __init__(self, *, tail_buffer=None, sinks=(), max_batch: int = 100):
+    ``output_sinks`` persist output — their locations become the run's ``output_locations``.
+    The ``tail_buffer`` is the live-view side: it gets every line as it arrives and never
+    contributes a location.
+    """
+
+    def __init__(self, *, tail_buffer=None, output_sinks=(), max_batch: int = 100):
         super().__init__()
         self.tail_buffer = tail_buffer
-        self.sinks = list(sinks)
-        self.realtime_sinks: List[OutputSink] = [s for s in self.sinks if not s.batch_size]
-        self.batch_sinks: List[OutputSink] = [s for s in self.sinks if s.batch_size]
+        self.output_sinks = list(output_sinks)
+        self.realtime_sinks: List[OutputSink] = [s for s in self.output_sinks if not s.batch_size]
+        self.batch_sinks: List[OutputSink] = [s for s in self.output_sinks if s.batch_size]
         self.max_batch = max_batch
         self._batch_lock = Lock()
         self._batch_buffer: List[OutputLine] = []
@@ -523,7 +528,7 @@ class OutputRouter(OutputObserver, Output):
 
     @property
     def locations(self):
-        return [sink.location for sink in self.sinks]
+        return [sink.location for sink in self.output_sinks]
 
     def new_output(self, output_line: OutputLine):
         if self.tail_buffer:
@@ -560,7 +565,7 @@ class OutputRouter(OutputObserver, Output):
     def close(self):
         if self._batch_buffer:
             self._flush_batch_buffer()
-        for sink in self.sinks:
+        for sink in self.output_sinks:
             sink.close()
 
 
