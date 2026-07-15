@@ -628,7 +628,7 @@ def _connect_postgres(entry: EnvironmentEntry, *,
         lock_provider = postgres.create_lock_provider(entry)
 
         return compose(entry.id, env_db, PostgresInstanceAccessPoint(env_db, tail_cap=config.output.tail_cap),
-                       PollingInstanceDirectory(env_db, lambda run: SnapshotJobInstanceProxy(run, env_db)),
+                       PollingInstanceDirectory(env_db, lambda run: SnapshotJobInstanceProxy(run, env_db, env_db)),
                        lock_provider, output_stores, to_tuple(plugin_features), transient=True,
                        tail_buffer_size=effective_tail_buffer_size)
 

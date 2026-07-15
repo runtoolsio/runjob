@@ -26,14 +26,17 @@ class _BlockingPhase(BasePhase):
     """Blocks until released — unlike TestPhase(wait=True), whose wait self-expires after 2s,
     which is shorter than the observation lane's worst-case flush + idle-poll latency."""
 
-    def __init__(self, phase_id):
+    def __init__(self, phase_id, output_text=None):
         super().__init__(phase_id, 'TEST')
         self.block = Event()
+        self.output_text = output_text
 
     def release(self):
         self.block.set()
 
     def _run(self, ctx):
+        if ctx and self.output_text:
+            ctx.output_pipeline.new_output(self.output_text)
         self.block.wait(30)
 
     def _stop_running(self, reason):
@@ -199,3 +202,18 @@ def test_node_publishes_output_tail(pg_entry):
                     message="Output tail not published")
         [line] = env_db.read_output_tail(inst.id, max_lines=0)
         assert line.message == 'tail me'
+
+
+def test_remote_tail_read_via_proxy(pg_entry):
+    child = _BlockingPhase('work', output_text='tail me')
+    with node.connect(pg_entry) as env_node, connector.connect(pg_entry) as conn:
+        env_node.create_instance('tailed_live', 'r1', child).run(in_background=True)
+        _wait_until(lambda: [i for i in conn.get_instances() if i.job_id == 'tailed_live'],
+                    message="Run not observed by remote connector")
+        [proxy] = [i for i in conn.get_instances() if i.job_id == 'tailed_live']
+
+        # Line -> publisher (access point tick) -> output_tail table -> remote proxy read
+        _wait_until(lambda: proxy.output.tail(), timeout=15, message="Tail not readable remotely")
+        assert [line.message for line in proxy.output.tail()] == ['tail me']
+
+        child.release()
