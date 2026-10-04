@@ -333,6 +333,9 @@ class UnixSocketInstanceAccessPoint:
         self._rpc_server.register_instance(job_instance)
         job_instance.notifications.add_observer_all_events(self._event_dispatcher)
 
+    def finalize_instance(self, job_instance: JobInstance) -> None:
+        """Nothing to settle: events are dispatched synchronously as they occur."""
+
     def unregister_instance(self, job_instance: JobInstance) -> None:
         job_instance.notifications.remove_observer_all_events(self._event_dispatcher)
         self._rpc_server.unregister_instance(job_instance)

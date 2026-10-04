@@ -1,6 +1,9 @@
 """Node-side output tail publisher — instance output events staged and flushed coalesced to
 the environment db, driven by calling ``flush()`` directly (the access point's poll loop is
 never started). Backed by a real in-memory SQLite store standing in for any OutputTailStorage."""
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from threading import Event
+
 import pytest
 
 from runtools.runcore.db import sqlite
@@ -115,8 +118,8 @@ def test_failed_prune_is_retried_on_next_flush(db, monkeypatch):
     assert [line.ordinal for line in db.read_output_tail(a, max_lines=0)] == [2, 3, 4]
 
 
-def test_unregistered_instance_gets_final_prune(db):
-    """An instance ending mid-accumulation gets a final prune at unregistration (finalize),
+def test_finalized_instance_gets_final_prune(db):
+    """An instance ending mid-accumulation gets a final prune when finalized,
     so its tail does not stay over cap waiting for output that never comes."""
     publisher = OutputTailPublisher(db, cap=3)
     a = InstanceID('a_job', 'r1', 1)
@@ -125,8 +128,70 @@ def test_unregistered_instance_gets_final_prune(db):
     publisher.flush()                      # 2 rows persisted, counter below cap
     for n in (3, 4):
         _publish(publisher, a, n)
-    publisher.finalize(a)                  # instance unregistered with its final lines still staged
+    publisher.finalize(a)                  # instance finalized with its final lines still staged
 
     publisher.flush()
 
     assert [line.ordinal for line in db.read_output_tail(a, max_lines=0)] == [2, 3, 4]
+
+
+def test_completion_flush_waits_for_periodic_write_in_flight(db, monkeypatch):
+    publisher = OutputTailPublisher(db, cap=100)
+    iid = InstanceID('job', 'r1', 1)
+    _publish(publisher, iid, 1)
+    writing, resume, completing = Event(), Event(), Event()
+    append = db.append_output
+
+    def paused_append(lines):
+        writing.set()
+        assert resume.wait(5)
+        append(lines)
+
+    def completion_flush():
+        completing.set()
+        publisher.flush()
+
+    monkeypatch.setattr(db, 'append_output', paused_append)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        periodic = executor.submit(publisher.flush)
+        try:
+            assert writing.wait(5)
+            completion = executor.submit(completion_flush)
+            assert completing.wait(5)
+            with pytest.raises(TimeoutError):
+                completion.result(timeout=0.1)
+        finally:
+            resume.set()
+        periodic.result(timeout=5)
+        completion.result(timeout=5)
+
+    assert [line.ordinal for line in db.read_output_tail(iid, 0)] == [1]
+
+
+def test_finalize_during_in_flight_flush_still_forces_final_prune(db, monkeypatch):
+    publisher = OutputTailPublisher(db, cap=3)
+    iid = InstanceID('job', 'r1', 1)
+    for n in (1, 2, 3):
+        _publish(publisher, iid, n)
+    publisher.flush()  # reaches cap: pruned, counter cleared
+    for n in (4, 5):
+        _publish(publisher, iid, n)
+    writing, resume = Event(), Event()
+    append = db.append_output
+
+    def paused_append(lines):
+        writing.set()
+        assert resume.wait(5)
+        append(lines)
+
+    monkeypatch.setattr(db, 'append_output', paused_append)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        periodic = executor.submit(publisher.flush)
+        assert writing.wait(5)  # lines 4-5 are mid-write: neither staged nor counted yet
+        finalizing = executor.submit(publisher.finalize, iid)
+        resume.set()
+        periodic.result(timeout=5)
+        finalizing.result(timeout=5)
+    publisher.flush()  # the completion flush
+
+    assert [line.ordinal for line in db.read_output_tail(iid, 0)] == [3, 4, 5]

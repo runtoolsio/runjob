@@ -366,22 +366,42 @@ class OutputParser:
         return replace(output_line, **kwargs) if kwargs else output_line
 
 
+def in_output_processing() -> bool:
+    """Whether the current thread is inside an :meth:`OutputPipeline.new_output` call — any output it
+    produces now is dropped by the re-entrancy guard."""
+    return getattr(_thread_local, 'processing_output', False)
+
+
 class OutputPipeline:
     """Receives output lines, runs them through a processor chain, and dispatches to observers.
 
     Processors are called in order. If any returns None, the line is dropped and observers are not notified.
+
+    Lines are published in ordinal order: ordinal assignment, processing and dispatch are serialized,
+    because ordinal-cursor consumers (a polled follower reading ``after_ordinal``) would otherwise skip
+    a line whose producer thread was overtaken by another's higher ordinal.
     """
 
     def __init__(self, processors: Iterable[OutputProcessor] = ()):
         self._processors: tuple[OutputProcessor, ...] = tuple(processors)
         self._output_notification = ObservableNotification[OutputObserver]()
         self._line_factory = OutputLineFactory()
+        self._publish_lock = Lock()
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['_publish_lock']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._publish_lock = Lock()
 
     def new_output(self, message: str, is_error: bool = False,
                    source: str | None = None, timestamp: str | datetime | None = None,
                    level: str | None = None, logger: str | None = None,
                    thread: str | None = None, fields: dict | None = None):
-        if getattr(_thread_local, 'processing_output', False):
+        if in_output_processing():
             return
         _thread_local.processing_output = True
 
@@ -389,13 +409,13 @@ class OutputPipeline:
             if source is None:
                 phase = _current_phase.get(None)
                 source = phase.id if phase else None
-            output_line = self._line_factory(message, is_error, source, timestamp, level, logger, thread, fields)
-
-            for processor in self._processors:
-                output_line = processor(output_line)
-                if output_line is None:
-                    return
-            self._output_notification.observer_proxy.new_output(output_line)
+            with self._publish_lock:
+                output_line = self._line_factory(message, is_error, source, timestamp, level, logger, thread, fields)
+                for processor in self._processors:
+                    output_line = processor(output_line)
+                    if output_line is None:
+                        return
+                self._output_notification.observer_proxy.new_output(output_line)
         finally:
             _thread_local.processing_output = False
 

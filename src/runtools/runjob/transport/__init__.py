@@ -32,6 +32,13 @@ class InstanceAccessPoint(Protocol):
 
     def register_instance(self, job_instance: JobInstance) -> None: ...
 
+    def finalize_instance(self, job_instance: JobInstance) -> None:
+        """The node is about to store the instance's terminal state; settle anything still pending
+        for it, so the terminal row cannot overtake what consumers should see first.
+
+        Failures propagate; the node logs them and stores the terminal state regardless.
+        """
+
     def unregister_instance(self, job_instance: JobInstance) -> None: ...
 
     def close(self) -> None: ...

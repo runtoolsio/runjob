@@ -80,10 +80,16 @@ class PostgresInstanceAccessPoint:
         if self._tail_publisher:
             job_instance.notifications.add_observer_output(self._tail_publisher)
 
+    def finalize_instance(self, job_instance) -> None:
+        """Publish the instance's final tail lines (with its last prune) before its terminal state is
+        stored; waits for any periodic flush already in flight."""
+        if self._tail_publisher:
+            self._tail_publisher.finalize(job_instance.id)
+            self._tail_publisher.flush()
+
     def unregister_instance(self, job_instance) -> None:
         if self._tail_publisher:
             job_instance.notifications.remove_observer_output(self._tail_publisher)
-            self._tail_publisher.finalize(job_instance.id)
         with self._lock:
             self._instances.pop(job_instance.id, None)
 

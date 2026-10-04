@@ -543,6 +543,17 @@ class _ComposedNode(EnvironmentNodeBase):
     def _on_added(self, job_instance):
         self._access_point.register_instance(job_instance)
 
+    def _finalize_run(self, job_instance):
+        # Best effort: the tail is a cache and must never cost the authoritative terminal write.
+        # A failed flush keeps its lines staged for the periodic retry — that restores the stored
+        # tail for later pulls, not delivery to followers, who evict the proxy on the terminal row.
+        try:
+            self._access_point.finalize_instance(job_instance)
+        except Exception:
+            log.warning("Access point finalization failed; terminal state stored anyway",
+                        extra={"instance": str(job_instance.id)}, exc_info=True)
+        super()._finalize_run(job_instance)
+
     def _on_removed(self, job_instance):
         self._access_point.unregister_instance(job_instance)
 

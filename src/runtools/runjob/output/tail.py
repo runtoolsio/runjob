@@ -4,7 +4,8 @@ Owned by the db-transport access point: at instance registration the access poin
 the publisher to the instance's output notifications — the unix kind already publishes
 instance events through registration-time observer subscription; the postgres kind does the
 same for the output tail. Staged lines are drained by the access point's poll loop — one
-batched write per node per cadence, so transaction rate scales with nodes, not instances.
+batched write per node per cadence. Completion also flushes pending lines before terminal
+state is stored.
 """
 
 import logging
@@ -25,6 +26,7 @@ class OutputTailPublisher(InstanceOutputObserver):
     def __init__(self, db: OutputTailStorage, cap: int):
         self._db = db
         self._cap = cap
+        self._flush_lock = Lock()  # Completion must wait for any periodic write already in flight
         self._lock = Lock()  # Guards _staged and _unpruned — never held across DB I/O
         self._staged: List[Tuple[InstanceID, OutputLine]] = []
         self._unpruned = Counter()  # Lines appended per instance since its last prune
@@ -37,25 +39,33 @@ class OutputTailPublisher(InstanceOutputObserver):
     def finalize(self, instance_id: InstanceID):
         """Force a final prune on the instance's next (and last) flush.
 
-        Called at instance unregistration: an ended instance produces no further output to
+        Called when the instance is finalized: an ended instance produces no further output to
         trip the amortized threshold, so without this its tail could stay over cap until the
         sweep removes it entirely. Skipped when the instance has no pending work — its tail
         is already within cap.
+
+        Waits out an in-flight flush: mid-write, its batch is in neither ``_staged`` nor
+        ``_unpruned``, so inspecting then would miss the pending work.
         """
-        with self._lock:
+        with self._flush_lock, self._lock:
             if instance_id in self._unpruned or any(iid == instance_id for iid, _ in self._staged):
                 self._unpruned[instance_id] = self._cap
 
     def flush(self):
         """Write the staged lines — one batched statement for the whole node.
 
-        Single-threaded by contract (the access point's poll loop). A failed write retains
-        the batch for the next tick — appends are idempotent per (instance, line ordinal), so
+        Periodic and completion flushes are serialized through the entire write and prune.
+        A failed write retains the batch for the next tick — appends are idempotent per
+        (instance, line ordinal), so
         re-writes are harmless. Pruning is amortized: an instance is pruned after ~``cap``
         appended lines, not on every flush; a failed prune keeps its counter and is retried
         on the next tick even when nothing new is staged (a quiet instance must not hold
         its over-cap rows until it happens to produce output again).
         """
+        with self._flush_lock:
+            self._flush()
+
+    def _flush(self):
         with self._lock:
             staged, self._staged = self._staged, []
         if staged:

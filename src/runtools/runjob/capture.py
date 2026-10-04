@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Callable, ContextManager, Optional, Protocol
 
 from runtools.runcore.output import TRACKING_PREFIX
-from runtools.runjob.output import OutputPipeline
+from runtools.runjob.output import OutputPipeline, in_output_processing
 
 
 class OutputCapture(Protocol):
@@ -94,6 +94,19 @@ class _PipelineForwardingHandler(logging.Handler):
         super().__init__()
         self._pipeline = pipeline
         self._capture_filter = capture_filter
+
+    def handle(self, record):
+        # No handler lock: emit() keeps no state of its own and the pipeline serializes publication,
+        # so the publish lock is the only lock on this path — taking both would form a lock cycle.
+        # Any state added to emit() needs its own guard.
+        if in_output_processing():
+            return False  # Nested output is dropped by the pipeline anyway; skip extracting it
+        rv = self.filter(record)
+        if isinstance(rv, logging.LogRecord):
+            record = rv  # Filters may return a replacement record
+        if rv:
+            self.emit(record)
+        return rv
 
     def emit(self, record):
         if not self._capture_filter():
