@@ -130,6 +130,7 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         # Fields guarded by lock below:
         self._reserved_runs: List[Tuple[str, str]] = []
         self._managed_instances: Dict[InstanceID, JobInstanceManaged] = {}
+        self._pending_terminal_runs: Dict[InstanceID, JobRun] = {}  # Failed terminal writes awaiting retry
         self._opened = False
         self._closing = False
         self._executor = None
@@ -159,9 +160,16 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
                 self._persister.flush()
             except Exception:
                 log.warning("Persister flush failed; retrying next interval", exc_info=True)
+            try:
+                self._store_pending_terminal_runs()
+            except Exception:
+                log.warning("Terminal write retry failed; retrying next interval", exc_info=True)
             if time.monotonic() >= next_heartbeat:
                 try:
-                    self._db.touch_heartbeats([i.id for i in self.instances])
+                    # Pending terminal writes too: their owner is alive and retrying, so the run is not lost
+                    with self._lock:
+                        pending_ids = set(self._pending_terminal_runs)
+                    self._db.touch_heartbeats({i.id for i in self.instances} | pending_ids)
                     next_heartbeat = time.monotonic() + self._heartbeat_interval
                 except Exception:
                     # next_heartbeat unchanged -> retry on the next flush tick, not in a full interval
@@ -171,6 +179,13 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         self._flush_stop.set()
         if self._flush_thread:
             self._flush_thread.join()
+        try:
+            self._store_pending_terminal_runs()  # Last attempt — the retry loop has stopped
+        except Exception:
+            with self._lock:
+                unstored = [str(instance_id) for instance_id in self._pending_terminal_runs]
+            log.error("Terminal state not stored; runs left to operator resolution",
+                      extra={"instances": unstored}, exc_info=True)
         self._persister.close()  # Final flush of any remaining dirty snapshots
 
     def open(self):
@@ -296,11 +311,36 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
         return job_instance
 
     def _finalize_run(self, job_instance):
-        """Persist the final run snapshot. Called after router close so output locations are finalized."""
+        """Persist the final run snapshot. Called after router close so output locations are finalized.
+
+        A failed write keeps the snapshot pending for the flush thread to retry.
+        """
         snap = job_instance.snap()
-        if snap.lifecycle.is_ended and self._db.store_runs(snap):
+        if not snap.lifecycle.is_ended:
+            return
+        try:
+            self._store_terminal_runs(snap)
+        except Exception:
+            log.warning("Terminal write failed; retrying on flush", extra={"instance": str(job_instance.id)},
+                        exc_info=True)
+            with self._lock:
+                self._pending_terminal_runs[snap.instance_id] = snap
+
+    def _store_pending_terminal_runs(self):
+        """Retry the failed terminal writes. Raises on failure, keeping them pending."""
+        with self._lock:
+            pending = list(self._pending_terminal_runs.values())
+        if not pending:
+            return
+        self._store_terminal_runs(*pending)
+        with self._lock:
+            for snap in pending:
+                del self._pending_terminal_runs[snap.instance_id]
+
+    def _store_terminal_runs(self, *snaps):
+        for instance_id in self._db.store_runs(*snaps):
             # The stored result wins — possibly this node's own earlier write, or an operator's resolution
-            log.warning("Run already finalized; terminal state not stored", extra={"instance": str(job_instance.id)})
+            log.warning("Run already finalized; terminal state not stored", extra={"instance": str(instance_id)})
 
     def _on_added(self, job_instance):
         pass

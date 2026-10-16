@@ -229,6 +229,89 @@ def test_finalization_never_overwrites_an_already_terminal_row(caplog):
         assert "Run already finalized" in caplog.text
 
 
+def _fail_terminal_writes(db, times):
+    """Make the next ``times`` terminal writes fail like a storage outage; returns the IDs stored afterwards."""
+    store_runs = db.store_runs
+    stored = []
+
+    def flaky_store_runs(*runs):
+        nonlocal times
+        if times:
+            times -= 1
+            raise ConnectionError("storage unavailable")
+        refused = store_runs(*runs)
+        stored.extend(run.instance_id for run in runs)
+        return refused
+
+    db.store_runs = flaky_store_runs
+    return stored
+
+
+def _wait_until(condition, timeout=2):
+    deadline = time.monotonic() + timeout
+    while not condition():
+        if time.monotonic() > deadline:
+            raise TimeoutError("Condition not met")
+        time.sleep(0.02)
+
+
+def test_failed_terminal_write_is_retried_on_flush():
+    with node.in_process(transient=False) as env:
+        env._persist_flush_interval = 0.02
+        _fail_terminal_writes(env._db, times=1)
+        inst = env.create_instance("j1", "r1", root_phase=TestPhase())
+
+        inst.run()  # the terminal write fails and stays pending
+
+        _wait_until(lambda: env._db.read_runs())
+        [stored] = env._db.read_runs()
+        assert stored.lifecycle.termination.status == TerminationStatus.COMPLETED
+
+
+def test_pending_terminal_write_keeps_heartbeating():
+    with node.in_process(transient=True) as env:
+        env._persist_flush_interval = 0.02
+        env._heartbeat_interval = 0.05
+        _fail_terminal_writes(env._db, times=10 ** 6)
+        inst = env.create_instance("j1", "r1", root_phase=TestPhase())
+        env._persister.flush()  # the active row the terminal write would complete
+
+        inst.run()  # ends and leaves the node, its terminal write pending
+
+        assert not env.instances
+        ages = []
+
+        def heartbeat_touched():
+            [(_, _, age)] = env._db.active_run_versions()
+            ages.append(age)
+            return len(ages) > 1 and ages[-1] < ages[-2]  # age dropped => a touch refreshed the heartbeat
+
+        _wait_until(heartbeat_touched)
+
+
+def test_close_makes_last_attempt_at_pending_terminal_writes():
+    env = node.in_process(transient=False)
+    env._persist_flush_interval = 60  # no retry tick before close
+    stored = _fail_terminal_writes(env._db, times=1)
+    with env:
+        inst = env.create_instance("j1", "r1", root_phase=TestPhase())
+        inst.run()
+        assert not stored
+
+    assert stored == [inst.id]
+
+
+def test_terminal_write_still_failing_at_close_is_left_to_operator(caplog):
+    env = node.in_process(transient=False)
+    env._persist_flush_interval = 60  # no retry tick before close
+    stored = _fail_terminal_writes(env._db, times=2)
+    with env:
+        env.create_instance("j1", "r1", root_phase=TestPhase()).run()
+
+    assert not stored
+    assert "runs left to operator resolution" in caplog.text
+
+
 def test_node_touches_heartbeats_of_active_instances():
     with node.in_process(transient=True) as env:
         # Tight intervals so the flush loop beats within the test's window
