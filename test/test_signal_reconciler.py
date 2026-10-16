@@ -78,6 +78,18 @@ def test_sweep_takes_output_tails_of_unattested_instances(db):
     assert db.read_output_tail(crashed, max_lines=0) == []
 
 
+def test_sweep_keeps_tail_of_run_not_yet_persisted(db):
+    """A fresh run's first tail lines can land before the persister's first snapshot — its
+    init-only row is attested from birth, so the tail must not count as orphaned."""
+    access_point = PostgresInstanceAccessPoint(db, tail_cap=0)
+    fresh = db.init_run('fresh', 'r1', created_at=utc_now())  # no snapshot stored yet
+    db.append_output([(fresh, OutputLine('first', 1))])
+
+    access_point._sweep_orphans()
+
+    assert [line.message for line in db.read_output_tail(fresh, max_lines=0)] == ['first']
+
+
 def test_sweep_lets_recently_ended_tail_linger(db):
     """Ended runs' tails are not deleted at finalize — a short linger covers a follower's last
     incremental poll; only tails of runs ended past the linger window are swept."""

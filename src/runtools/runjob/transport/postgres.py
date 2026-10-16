@@ -137,7 +137,8 @@ class PostgresInstanceAccessPoint:
         """Remove aged signals and output tails whose target can no longer serve them.
 
         Orphan-hood is reconciler policy composed from storage primitives: rows come from the
-        signal and output-tail domains, target liveness from the run domain's version scan. A
+        signal and output-tail domains, target liveness from the run domain's heartbeat attestation
+        (init-only rows included — a fresh run's first tail lines can precede its first snapshot). A
         target counts as live only while its owner attests it with a fresh heartbeat — a crashed
         node's runs stay non-ended forever, so lifecycle state alone would keep their rows around
         indefinitely. The signal age bound is only a race guard; an owner wedged past staleness
@@ -150,15 +151,14 @@ class PostgresInstanceAccessPoint:
         tail_instances = self._db.output_tail_instances()
         if not old_signals and not tail_instances:
             return
-        attested = {v.instance_id for v in self._db.active_run_versions()
-                    if v.heartbeat_age is not None and v.heartbeat_age <= HEARTBEAT_STALE_AFTER}
+        live = set(self._db.live_instances(HEARTBEAT_STALE_AFTER))  # incl. not-yet-persisted runs
 
-        orphan_signals = [s for s in old_signals if s.instance_id not in attested]
+        orphan_signals = [s for s in old_signals if s.instance_id not in live]
         for signal in orphan_signals:
             log.warning("Orphan signal swept: never applied signal=%s", signal)
         self._db.delete_signals([s.signal_id for s in orphan_signals])
 
-        stale_tails = [i for i in tail_instances if i not in attested]
+        stale_tails = [i for i in tail_instances if i not in live]
         if stale_tails:
             linger_cutoff = utc_now() - timedelta(seconds=TAIL_LINGER_AFTER_END)
             lingering = {r.instance_id for r in self._db.read_runs(JobRunCriteria.instances_match(stale_tails))
