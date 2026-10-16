@@ -298,8 +298,9 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
     def _finalize_run(self, job_instance):
         """Persist the final run snapshot. Called after router close so output locations are finalized."""
         snap = job_instance.snap()
-        if snap.lifecycle.is_ended:
-            self._db.store_runs(snap)
+        if snap.lifecycle.is_ended and self._db.store_runs(snap):
+            # The stored result wins — possibly this node's own earlier write, or an operator's resolution
+            log.warning("Run already finalized; terminal state not stored", extra={"instance": str(job_instance.id)})
 
     def _on_added(self, job_instance):
         pass

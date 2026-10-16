@@ -5,7 +5,8 @@ from typing import List
 import pytest
 
 from runtools.runcore.job import DuplicateInstanceError, DuplicateStrategy, JobInstance
-from runtools.runcore.run import Stage, control_api
+from runtools.runcore.run import Stage, TerminationStatus, control_api
+from runtools.runcore.test.job import fake_job_run
 from runtools.runjob import node
 from runtools.runcore.job import Feature
 from runtools.runjob.test.phase import TestPhase
@@ -212,6 +213,20 @@ def test_created_snapshot_completes_init_row():
         assert run_document is not None  # CREATED snapshot persisted, not just init columns
 
         inst.run()  # Run to completion so the environment closes cleanly
+
+
+def test_finalization_never_overwrites_an_already_terminal_row(caplog):
+    with node.in_process(transient=False) as env:
+        inst = env.create_instance("j1", "r1", root_phase=TestPhase())
+        env._persister.flush()
+        resolved = fake_job_run("j1", "r1", term_status=TerminationStatus.FAILED)  # e.g. an operator's claim
+        env._db.store_runs(resolved)
+
+        inst.run()  # completes, then finalization tries to store COMPLETED
+
+        [stored] = env._db.read_runs()
+        assert stored.lifecycle.termination.status == TerminationStatus.FAILED
+        assert "Run already finalized" in caplog.text
 
 
 def test_node_touches_heartbeats_of_active_instances():
