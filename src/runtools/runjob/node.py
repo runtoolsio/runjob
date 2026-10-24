@@ -9,13 +9,13 @@ from typing import Dict, Optional, List, Tuple, assert_never, override
 
 from runtools.runcore import util
 from runtools.runcore.connector import EnvironmentConnector
-from runtools.runcore.db import HEARTBEAT_INTERVAL, sqlite
+from runtools.runcore.db import sqlite
 from runtools.runcore.env import EnvironmentKind, LocalEnvironmentConfig, PostgresEnvironmentConfig, \
     EnvironmentEntry, EnvironmentNotFoundError, resolve_env_ref, ensure_environment, open_configured_db
 from runtools.runcore.err import InvalidStateError, run_isolated_collect_exceptions
 from runtools.runcore.job import JobRun, JobInstance, InstanceObservableNotifications, InstanceNotifications, \
     JobInstanceDelegate, InstanceID, \
-    DuplicateStrategy, normalize_tags
+    DuplicateStrategy, normalize_tags, HEARTBEAT_INTERVAL
 from runtools.runcore.matching import SortOption
 from runtools.runcore.output import DEFAULT_TAIL_BUFFER_SIZE
 from runtools.runcore.db.persister import RunStatePersister
@@ -400,6 +400,9 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
 
     def read_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._db.read_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
+
+    def read_active_runs(self, run_match=None):
+        return self._db.read_active_runs(run_match)
 
     def iter_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._db.iter_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)

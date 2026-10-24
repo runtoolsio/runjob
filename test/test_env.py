@@ -279,12 +279,12 @@ def test_pending_terminal_write_keeps_heartbeating():
         inst.run()  # ends and leaves the node, its terminal write pending
 
         assert not env.instances
-        ages = []
+        heartbeats = []
 
         def heartbeat_touched():
-            [(_, _, age)] = env._db.active_run_versions()
-            ages.append(age)
-            return len(ages) > 1 and ages[-1] < ages[-2]  # age dropped => a touch refreshed the heartbeat
+            [(_, _, heartbeat_at)] = env._db.active_run_heads()
+            heartbeats.append(heartbeat_at)
+            return len(heartbeats) > 1 and heartbeats[-1] > heartbeats[-2]
 
         _wait_until(heartbeat_touched)
 
@@ -322,14 +322,14 @@ def test_node_touches_heartbeats_of_active_instances():
         inst.run(in_background=True)
 
         deadline = time.monotonic() + 2
-        previous_age = None
+        previous_heartbeat = None
         while time.monotonic() < deadline:
-            versions = env._db.active_run_versions()  # the row materializes after the first flush
-            if versions:
-                [(_, _, age)] = versions
-                if previous_age is not None and age < previous_age:
-                    break  # age dropped => a touch refreshed the heartbeat
-                previous_age = age
+            heads = env._db.active_run_heads()  # the row materializes after the first flush
+            if heads:
+                [(_, _, heartbeat_at)] = heads
+                if previous_heartbeat is not None and heartbeat_at > previous_heartbeat:
+                    break
+                previous_heartbeat = heartbeat_at
             time.sleep(0.02)
         else:
             raise TimeoutError("Heartbeat was not touched within 2s")

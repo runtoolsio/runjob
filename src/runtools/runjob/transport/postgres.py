@@ -12,8 +12,8 @@ import logging
 from datetime import timedelta
 from threading import Event, Lock, Thread, current_thread
 
-from runtools.runcore.db import EnvironmentDatabase, HEARTBEAT_STALE_AFTER
-from runtools.runcore.job import STOP_OP
+from runtools.runcore.db import EnvironmentDatabase
+from runtools.runcore.job import HEARTBEAT_STALE_AFTER, STOP_OP
 from runtools.runcore.matching import JobRunCriteria
 from runtools.runcore.run import StopReason
 from runtools.runcore.util import utc_now
