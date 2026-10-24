@@ -12,7 +12,7 @@ import logging
 from datetime import timedelta
 from threading import Event, Lock, Thread, current_thread
 
-from runtools.runcore.db import EnvironmentDatabase
+from runtools.runcore.db import EnvironmentDatabase, TAIL_LINGER_AFTER_END
 from runtools.runcore.job import HEARTBEAT_STALE_AFTER, STOP_OP
 from runtools.runcore.matching import JobRunCriteria
 from runtools.runcore.run import StopReason
@@ -24,7 +24,6 @@ log = logging.getLogger(__name__)
 SIGNAL_POLL_INTERVAL = 1.0        # Seconds between mailbox polls; the durability floor (doorbell is an add-on)
 ORPHAN_SWEEP_INTERVAL = 60.0      # Seconds between sweeps of rows whose instance is gone
 ORPHAN_SIGNAL_MAX_AGE = 60.0      # Seconds a pending signal may age before the sweep may take it
-TAIL_LINGER_AFTER_END = 10.0      # Seconds an ended run's tail stays readable (covers a follower's last poll)
 
 
 def _apply_signal(instance, signal):
