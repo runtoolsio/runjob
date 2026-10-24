@@ -14,7 +14,6 @@ from threading import Event, Lock, Thread, current_thread
 
 from runtools.runcore.db import EnvironmentDatabase, TAIL_LINGER_AFTER_END
 from runtools.runcore.job import HEARTBEAT_STALE_AFTER, STOP_OP
-from runtools.runcore.matching import JobRunCriteria
 from runtools.runcore.run import StopReason
 from runtools.runcore.util import utc_now
 from runtools.runjob.output.tail import OutputTailPublisher
@@ -160,8 +159,8 @@ class PostgresInstanceAccessPoint:
         stale_tails = [i for i in tail_instances if i not in live]
         if stale_tails:
             linger_cutoff = utc_now() - timedelta(seconds=TAIL_LINGER_AFTER_END)
-            lingering = {r.instance_id for r in self._db.read_runs(JobRunCriteria.instances_match(stale_tails))
-                         if r.lifecycle.termination and r.lifecycle.termination.terminated_at > linger_cutoff}
+            lingering = {i for i, ended in self._db.read_run_ends(stale_tails).items()
+                         if ended and ended > linger_cutoff}
             self._db.delete_output_tails([i for i in stale_tails if i not in lingering])
 
     def close(self) -> None:
