@@ -72,7 +72,7 @@ def create(instance_id, environment, root_phase, *,
            error_hook=None,
            features=(),
            tags=(),
-           **user_params) -> JobInstance:
+           **user_params) -> '_JobInstance':
     """Create a job instance.
 
     Args:

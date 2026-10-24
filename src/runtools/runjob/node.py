@@ -79,7 +79,7 @@ class JobInstanceManaged(JobInstanceDelegate):
 
     def _run_and_detach(self):
         try:
-            return super().run()
+            return self._wrapped.run()
         finally:
             try:
                 self._env._finalize_run(self)
