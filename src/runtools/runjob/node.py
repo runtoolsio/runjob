@@ -401,9 +401,6 @@ class EnvironmentNodeBase(EnvironmentNode, ABC):
     def read_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._db.read_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 
-    def read_active_runs(self, run_match=None):
-        return self._db.read_active_runs(run_match)
-
     def iter_runs(self, run_match=None, sort=SortOption.ENDED, *, asc=True, limit=-1, offset=0, last=False):
         return self._db.iter_runs(run_match, sort, asc=asc, limit=limit, offset=offset, last=last)
 

@@ -219,7 +219,7 @@ def test_finalization_never_overwrites_an_already_terminal_row(caplog):
     with node.in_process(transient=False) as env:
         inst = env.create_instance("j1", "r1", root_phase=TestPhase())
         env._persister.flush()
-        resolved = fake_job_run("j1", "r1", term_status=TerminationStatus.FAILED)  # e.g. an operator's claim
+        resolved = fake_job_run("j1", "r1", term_status=TerminationStatus.FAILED)  # e.g. an operator's mark-lost
         env._db.store_runs(resolved)
 
         inst.run()  # completes, then finalization tries to store COMPLETED
