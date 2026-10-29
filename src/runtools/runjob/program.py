@@ -5,6 +5,7 @@ This module contains the `ProgramPhase` class, a phase implementation that runs 
 
 import io
 import logging
+import os
 import signal
 from subprocess import Popen, PIPE
 from threading import Lock, Thread
@@ -20,6 +21,14 @@ USE_SHELL = False  # For testing only
 log = logging.getLogger(__name__)
 
 
+def _has_controlling_terminal() -> bool:
+    try:
+        os.close(os.open('/dev/tty', os.O_RDWR))
+        return True
+    except OSError:
+        return False
+
+
 class ProgramPhase(BasePhase[OutputContext]):
     TYPE = 'PROGRAM'
 
@@ -29,6 +38,7 @@ class ProgramPhase(BasePhase[OutputContext]):
         self.read_output: bool = read_output
         self._stop_lock = Lock()
         self._popen: Optional[Popen] = None
+        self._own_group = False
         self._status = None
 
     @property
@@ -43,9 +53,13 @@ class ProgramPhase(BasePhase[OutputContext]):
             self._raise_if_stopped()
             stdout = PIPE if self.read_output else None
             stderr = PIPE if self.read_output else None
+            # Without a terminal the program gets its own process group, so a stop reaches every process it
+            # started — a surviving child would keep the output pipes open and the run from ending. With a
+            # terminal it stays in the caller's group, where Ctrl+C and terminal input reach it.
+            self._own_group = not _has_controlling_terminal()
             try:
                 self._popen = Popen( " ".join(self.args) if USE_SHELL else self.args, stdout=stdout, stderr=stderr,
-                                     shell=USE_SHELL)
+                                     shell=USE_SHELL, process_group=0 if self._own_group else None)
             except OSError as e:
                 sys.stderr.write(str(e) + "\n")
                 # TODO: Move exception level up
@@ -84,7 +98,14 @@ class ProgramPhase(BasePhase[OutputContext]):
 
     def _stop_running(self, reason):
         with self._stop_lock:
-            if self._popen:
+            if not self._popen:
+                return
+            if self._own_group:
+                try:
+                    os.killpg(self._popen.pid, signal.SIGTERM)  # Also after the program itself has exited
+                except ProcessLookupError:
+                    pass  # Nothing left to stop
+            else:
                 self._popen.terminate()
 
     def _process_output(self, run_ctx, infile, is_err):
