@@ -21,12 +21,19 @@ USE_SHELL = False  # For testing only
 log = logging.getLogger(__name__)
 
 
-def _has_controlling_terminal() -> bool:
+def _in_terminal_foreground() -> bool:
+    """Whether this process runs in the foreground of its controlling terminal — the only place where Ctrl+C and
+    terminal input reach its process group."""
     try:
-        os.close(os.open('/dev/tty', os.O_RDWR))
-        return True
+        tty = os.open('/dev/tty', os.O_RDWR)
+    except OSError:
+        return False  # No controlling terminal: cron, systemd, setsid
+    try:
+        return os.tcgetpgrp(tty) == os.getpgrp()  # Not equal: started in the background (`&`, `nohup … &`)
     except OSError:
         return False
+    finally:
+        os.close(tty)
 
 
 class ProgramPhase(BasePhase[OutputContext]):
@@ -53,10 +60,10 @@ class ProgramPhase(BasePhase[OutputContext]):
             self._raise_if_stopped()
             stdout = PIPE if self.read_output else None
             stderr = PIPE if self.read_output else None
-            # Without a terminal the program gets its own process group, so a stop reaches every process it
-            # started — a surviving child would keep the output pipes open and the run from ending. With a
-            # terminal it stays in the caller's group, where Ctrl+C and terminal input reach it.
-            self._own_group = not _has_controlling_terminal()
+            # Unless in a terminal's foreground, the program gets its own process group, so a stop reaches every
+            # process it started — a surviving child would keep the output pipes open and the run from ending. In
+            # the foreground it stays in the caller's group, where Ctrl+C and terminal input reach it.
+            self._own_group = not _in_terminal_foreground()
             try:
                 self._popen = Popen( " ".join(self.args) if USE_SHELL else self.args, stdout=stdout, stderr=stderr,
                                      shell=USE_SHELL, process_group=0 if self._own_group else None)
