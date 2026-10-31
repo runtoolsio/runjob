@@ -152,7 +152,7 @@ class DependencyPhase(BasePhase[JobInstanceContext]):
     """
     A phase that checks if a required dependency is currently active.
 
-    If no active runs match the dependency criteria (excluding self), this phase
+    If no active runs match the dependency criteria (excluding self and lost runs), this phase
     terminates with UNSATISFIED status. Otherwise, it completes successfully.
     """
 
@@ -168,7 +168,7 @@ class DependencyPhase(BasePhase[JobInstanceContext]):
         log.debug("Searching active dependency", extra={"match": str(self._dependency_match)})
 
         matching_runs = [r for r in ctx.environment.get_active_runs(self._dependency_match) if
-                         r.instance_id != ctx.metadata.instance_id]
+                         r.instance_id != ctx.metadata.instance_id and not r.is_lost()]
         if not matching_runs:
             log.debug("Active dependency not found", extra={"match": str(self._dependency_match)})
             raise PhaseTerminated(TerminationStatus.UNSATISFIED)
