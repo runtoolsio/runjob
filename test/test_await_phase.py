@@ -1,8 +1,13 @@
 import time
 
-from runtools.runcore.run import TerminationStatus
+from runtools.runcore.matching import criteria
+from runtools.runcore.run import Stage, TerminationStatus
+from runtools.runjob import node
 from runtools.runjob.coord import AwaitPhase
 from runtools.runjob.test.env import FakeEnvironment
+from runtools.runjob.test.phase import TestPhase
+
+DEP_ENDED = criteria().pattern('dep@r1').reached_stage(Stage.ENDED).build()
 
 
 def _wait_for_running(phase, timeout=2):
@@ -61,3 +66,37 @@ def test_await_stopped_before_satisfied():
     _wait_for_termination(await_phase)
 
     assert await_phase.termination.status == TerminationStatus.STOPPED
+
+
+def test_ended_run_in_history_satisfies_by_default():
+    with node.in_process() as env:
+        env.create_instance('dep', 'r1', TestPhase()).run()
+        await_phase = AwaitPhase(DEP_ENDED, timeout=2)
+
+        env.create_instance('job', 'run1', await_phase).run(in_background=True)
+        _wait_for_termination(await_phase)
+
+    assert await_phase.termination.status == TerminationStatus.COMPLETED
+
+
+def test_ended_run_in_history_ignored_without_search_past():
+    with node.in_process() as env:
+        env.create_instance('dep', 'r1', TestPhase()).run()
+        await_phase = AwaitPhase(DEP_ENDED, timeout=0.2, search_past=False)
+
+        env.create_instance('job', 'run1', await_phase).run(in_background=True)
+        _wait_for_termination(await_phase)
+
+    assert await_phase.termination.status == TerminationStatus.TIMEOUT
+
+
+def test_run_ending_while_waiting_satisfies_without_search_past():
+    with node.in_process() as env:
+        await_phase = AwaitPhase(DEP_ENDED, timeout=2, search_past=False)
+        env.create_instance('job', 'run1', await_phase).run(in_background=True)
+        _wait_for_running(await_phase)
+
+        env.create_instance('dep', 'r1', TestPhase()).run()
+        _wait_for_termination(await_phase)
+
+    assert await_phase.termination.status == TerminationStatus.COMPLETED

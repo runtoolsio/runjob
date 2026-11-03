@@ -176,19 +176,24 @@ class DependencyPhase(BasePhase[JobInstanceContext]):
 
 
 class AwaitPhase(BasePhase[JobInstanceContext]):
-    """A phase that waits until each given criterion is satisfied by a matching run in the environment."""
+    """A phase that waits until each given criterion is satisfied by a matching run in the environment.
 
-    def __init__(self, *criteria: JobRunCriteria, timeout=0, phase_id=None):
+    With ``search_past`` (default), runs already in history or active count; otherwise only matches arriving after
+    the phase starts waiting.
+    """
+
+    def __init__(self, *criteria: JobRunCriteria, timeout=0, search_past=True, phase_id=None):
         super().__init__(phase_id or 'await', CoordTypes.AWAIT.value)
         self._criteria = criteria
         self._timeout = timeout
+        self._search_past = search_past
         self._watcher = None
         self._watcher_lock = Lock()
 
     def _run(self, ctx):
         with self._watcher_lock:
             self._raise_if_stopped()
-            self._watcher = ctx.environment.watcher(*self._criteria, search_past=True)
+            self._watcher = ctx.environment.watcher(*self._criteria, search_past=self._search_past)
 
         if not self._watcher.wait(timeout=self._timeout or None):
             self._raise_if_stopped()
